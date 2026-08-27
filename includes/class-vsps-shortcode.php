@@ -99,12 +99,13 @@ class VSPS_Shortcode {
 		$layout = in_array( $atts['layout'], array( 'full', 'bar', 'calendar', 'float' ), true ) ? $atts['layout'] : 'full';
 
 		$config = array(
-			'locationId' => $location_id,
-			'typeIds'    => $type_ids,
-			'days'       => min( 14, max( 1, absint( $atts['days'] ) ) ),
-			'mode'       => $mode,
-			'linkUrl'    => esc_url_raw( $atts['link_url'] ),
-			'layout'     => $layout,
+			'locationId'    => $location_id,
+			'typeIds'       => $type_ids,
+			'days'          => min( 14, max( 1, absint( $atts['days'] ) ) ),
+			'mode'          => $mode,
+			'linkUrl'       => esc_url_raw( $atts['link_url'] ),
+			'layout'        => $layout,
+			'defaultTypeId' => absint( $settings['default_type'] ),
 		);
 
 		$style = '--vsps-primary:' . esc_attr( $settings['primary_color'] ) . ';';

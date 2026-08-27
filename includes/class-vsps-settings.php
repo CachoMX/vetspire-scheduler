@@ -54,6 +54,7 @@ class VSPS_Settings {
 			'analytics_enabled' => empty( $input['analytics_enabled'] ) ? 0 : 1,
 			'primary_color'     => sanitize_hex_color( isset( $input['primary_color'] ) ? $input['primary_color'] : '#2f6f4f' ),
 			'layout'            => in_array( isset( $input['layout'] ) ? $input['layout'] : 'full', array( 'full', 'bar', 'calendar', 'float' ), true ) ? $input['layout'] : 'full',
+			'default_type'      => absint( isset( $input['default_type'] ) ? $input['default_type'] : 0 ) ? (string) absint( $input['default_type'] ) : '',
 			'default_location'  => $default_location,
 			// One site = one location: the REST layer only allows the selected one.
 			'allowed_locations' => $default_location,
@@ -215,6 +216,30 @@ class VSPS_Settings {
 										</option>
 									<?php endforeach; ?>
 								</select>
+								<?php
+								$types = array();
+								if ( $default_id ) {
+									$vsps_api_ref = vsps_api();
+									$types        = VSPS_Cache::remember( array( 'admin-types', $default_id ), function () use ( $vsps_api_ref, $default_id ) {
+										return $vsps_api_ref->get_bookable_types( $default_id );
+									}, 600 );
+									if ( is_wp_error( $types ) ) {
+										$types = array();
+									}
+								}
+								?>
+								<p style="margin-bottom:0;margin-top:12px;">
+									<label for="vsps_default_type"><strong>Primary appointment type</strong></label><br />
+									<select id="vsps_default_type" name="<?php echo esc_attr( $opt ); ?>[default_type]" style="margin-top:6px;min-width:280px;" <?php disabled( empty( $types ) ); ?>>
+										<option value="">Auto (first available type)</option>
+										<?php foreach ( $types as $type ) : ?>
+											<option value="<?php echo esc_attr( absint( $type['id'] ) ); ?>" <?php selected( absint( $settings['default_type'] ), absint( $type['id'] ) ); ?>>
+												<?php echo esc_html( $type['name'] ); ?> (<?php echo esc_html( $type['duration'] ); ?> min)
+											</option>
+										<?php endforeach; ?>
+									</select>
+								</p>
+								<p class="description">The Bar and Floating designs book this type; Full and Calendar preselect it in their dropdown.<?php echo $default_id ? '' : ' Select and save a location first.'; ?></p>
 							</div>
 						</div>
 
@@ -270,9 +295,10 @@ class VSPS_Settings {
 												'locationId' => $default_id,
 												'typeIds'    => array(),
 												'days'       => 7,
-												'mode'       => 'link',
-												'linkUrl'    => '#vsps-preview',
-												'layout'     => $settings['layout'],
+												'mode'          => 'link',
+												'linkUrl'       => '#vsps-preview',
+												'layout'        => $settings['layout'],
+												'defaultTypeId' => absint( $settings['default_type'] ),
 											) ) ); ?>"<?php echo $default_id ? '' : ' data-vsps-noinit="1"'; ?>>
 											<h3 class="vsps-title">Book an Appointment</h3>
 											<div class="vsps-body"><p class="vsps-loading">Loading available times…</p></div>
@@ -345,6 +371,8 @@ class VSPS_Settings {
 						var cfg = JSON.parse(preview.getAttribute('data-vsps-config'));
 						cfg.locationId = locationId;
 						cfg.layout = currentLayout();
+						var typeSel = document.getElementById('vsps_default_type');
+						cfg.defaultTypeId = ( typeSel && ! typeSel.disabled ) ? parseInt(typeSel.value, 10) || 0 : 0;
 						preview.setAttribute('data-vsps-config', JSON.stringify(cfg));
 						preview.className = 'vsps-widget';
 						if (picker) { preview.style.setProperty('--vsps-primary', picker.value); }
@@ -361,7 +389,21 @@ class VSPS_Settings {
 						flash();
 					});
 				}
-				if (locSel) { locSel.addEventListener('change', reinit); }
+				if (locSel) {
+					locSel.addEventListener('change', function () {
+						// The type list belongs to the previously saved location.
+						var typeSel = document.getElementById('vsps_default_type');
+						if (typeSel && locSel.value !== <?php echo wp_json_encode( (string) $default_id ); ?>) {
+							typeSel.value = '';
+							typeSel.disabled = true;
+						} else if (typeSel) {
+							typeSel.disabled = typeSel.options.length <= 1;
+						}
+						reinit();
+					});
+				}
+				var typeSelMain = document.getElementById('vsps_default_type');
+				if (typeSelMain) { typeSelMain.addEventListener('change', reinit); }
 				document.querySelectorAll('.vsps-layout-radio').forEach(function (radio) {
 					radio.addEventListener('change', function () {
 						document.querySelectorAll('.vsps-card').forEach(function (c) { c.classList.remove('is-selected'); });

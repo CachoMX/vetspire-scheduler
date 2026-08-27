@@ -177,6 +177,16 @@
 					self.showMessage(I18N.noOptions);
 					return;
 				}
+				// Admin-chosen primary type goes first (bar/float book it; the
+				// dropdown in full/calendar preselects it).
+				if (self.config.defaultTypeId) {
+					var primary = types.filter(function (t) {
+						return parseInt(t.id, 10) === parseInt(self.config.defaultTypeId, 10);
+					})[0];
+					if (primary) {
+						types = [primary].concat(types.filter(function (t) { return t !== primary; }));
+					}
+				}
 				self.state.types = types;
 				self.state.typeId = types[0].id;
 				self.renderShell();

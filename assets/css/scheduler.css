@@ -12,6 +12,8 @@
 	padding: 20px;
 	max-width: 640px;
 	font-family: inherit;
+	font-size: 15px;
+	line-height: 1.45;
 	color: var(--vsps-text);
 	background: #fff;
 	box-sizing: border-box;
@@ -163,6 +165,8 @@
 
 /* Modal */
 .vsps-overlay {
+	font-size: 15px;
+	line-height: 1.45;
 	position: fixed;
 	inset: 0;
 	background: rgba(0, 0, 0, 0.5);
