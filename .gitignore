@@ -1,0 +1,5 @@
+# NEVER commit or deploy credentials. The Vetspire API key is admin-level.
+.env
+*.log
+node_modules/
+dist/

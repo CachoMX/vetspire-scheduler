@@ -1,0 +1,13 @@
+# Deny direct HTTP access to dotfiles (e.g. a stray .env) and to the tests dir.
+<IfModule mod_authz_core.c>
+	<FilesMatch "^\.">
+		Require all denied
+	</FilesMatch>
+</IfModule>
+<IfModule !mod_authz_core.c>
+	<FilesMatch "^\.">
+		Order allow,deny
+		Deny from all
+	</FilesMatch>
+</IfModule>
+RedirectMatch 403 ^/wp-content/plugins/vetspire-scheduler/tests/

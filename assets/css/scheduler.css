@@ -1,0 +1,533 @@
+/* Vetspire Scheduler widget — brandable via --vsps-primary on .vsps-widget.
+ * Every rule is double-scoped (.vsps-widget / .vsps-overlay prefix) so theme
+ * and Elementor-kit button/input styles (e.g. `.elementor-kit-X button`,
+ * specificity 0-1-1) never override the widget (ours are 0-2-0+). */
+
+.vsps-widget {
+	--vsps-primary: #2f6f4f;
+	--vsps-border: #e0e0e0;
+	--vsps-text: #222;
+	border: 1px solid var(--vsps-border);
+	border-radius: 12px;
+	padding: 20px;
+	max-width: 640px;
+	font-family: inherit;
+	color: var(--vsps-text);
+	background: #fff;
+	box-sizing: border-box;
+}
+
+.vsps-widget *,
+.vsps-widget *::before,
+.vsps-widget *::after,
+.vsps-overlay *,
+.vsps-overlay *::before,
+.vsps-overlay *::after {
+	box-sizing: border-box;
+}
+
+/* Neutralize common theme button decoration inside the widget & modal. */
+.vsps-widget button,
+.vsps-overlay button {
+	background-image: none;
+	text-shadow: none;
+	box-shadow: none;
+	text-transform: none;
+	letter-spacing: normal;
+	min-height: 0;
+	line-height: 1.4;
+	margin: 0;
+}
+
+.vsps-widget .vsps-title {
+	margin: 0 0 12px;
+	font-size: 1.25em;
+	color: var(--vsps-text);
+}
+
+.vsps-widget .vsps-loading,
+.vsps-widget .vsps-message,
+.vsps-overlay .vsps-message {
+	color: #666;
+	margin: 8px 0;
+}
+
+.vsps-widget .vsps-label {
+	display: block;
+	font-size: 0.85em;
+	font-weight: 600;
+	margin-bottom: 4px;
+	color: var(--vsps-text);
+}
+
+.vsps-widget .vsps-type-select {
+	width: 100%;
+	padding: 8px 10px;
+	border: 1px solid var(--vsps-border);
+	border-radius: 8px;
+	margin-bottom: 14px;
+	font-size: 1em;
+	background: #fff;
+	color: var(--vsps-text);
+}
+
+.vsps-widget .vsps-single-type {
+	font-weight: 600;
+	margin: 0 0 10px;
+	color: var(--vsps-text);
+}
+
+/* Date carousel */
+.vsps-widget .vsps-dates {
+	display: flex;
+	gap: 8px;
+	overflow-x: auto;
+	padding-bottom: 8px;
+	margin-bottom: 12px;
+	-webkit-overflow-scrolling: touch;
+}
+
+.vsps-widget .vsps-date-btn {
+	flex: 0 0 auto;
+	min-width: 92px;
+	padding: 8px 10px;
+	border: 1px solid var(--vsps-border);
+	border-radius: 10px;
+	background: #fff;
+	cursor: pointer;
+	text-align: center;
+	font: inherit;
+	color: var(--vsps-text);
+}
+
+.vsps-widget .vsps-date-btn:hover,
+.vsps-widget .vsps-date-btn:focus {
+	background: #f4f6f5;
+	color: var(--vsps-text);
+}
+
+.vsps-widget .vsps-date-btn:disabled {
+	opacity: 0.45;
+	cursor: default;
+	background: #fff;
+	color: var(--vsps-text);
+}
+
+.vsps-widget .vsps-date-btn.is-active,
+.vsps-widget .vsps-date-btn.is-active:hover,
+.vsps-widget .vsps-date-btn.is-active:focus {
+	border-color: var(--vsps-primary);
+	background: var(--vsps-primary);
+	color: #fff;
+}
+
+.vsps-widget .vsps-date-label {
+	display: block;
+	font-weight: 600;
+	font-size: 0.9em;
+	color: inherit;
+}
+
+.vsps-widget .vsps-date-count {
+	display: block;
+	font-size: 0.75em;
+	opacity: 0.8;
+	color: inherit;
+}
+
+/* Time chips */
+.vsps-widget .vsps-slot-grid {
+	display: grid;
+	grid-template-columns: repeat(auto-fill, minmax(90px, 1fr));
+	gap: 8px;
+}
+
+.vsps-widget .vsps-slot-btn {
+	padding: 10px 6px;
+	border: 1px solid var(--vsps-primary);
+	border-radius: 8px;
+	background: #fff;
+	color: var(--vsps-primary);
+	font-weight: 600;
+	font-size: 0.9em;
+	cursor: pointer;
+	font-family: inherit;
+	transition: background 0.15s, color 0.15s;
+}
+
+.vsps-widget .vsps-slot-btn:hover,
+.vsps-widget .vsps-slot-btn:focus-visible {
+	background: var(--vsps-primary);
+	color: #fff;
+}
+
+/* Modal */
+.vsps-overlay {
+	position: fixed;
+	inset: 0;
+	background: rgba(0, 0, 0, 0.5);
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	z-index: 99999;
+	padding: 16px;
+}
+
+.vsps-overlay .vsps-modal {
+	background: #fff;
+	border-radius: 12px;
+	padding: 24px;
+	width: 100%;
+	max-width: 440px;
+	max-height: 90vh;
+	overflow-y: auto;
+	color: #222;
+}
+
+.vsps-overlay .vsps-modal-title {
+	margin: 0 0 4px;
+	font-size: 1.15em;
+	color: #222;
+}
+
+.vsps-overlay .vsps-modal-sub {
+	margin: 0 0 16px;
+	color: #555;
+}
+
+.vsps-overlay .vsps-form .vsps-row {
+	display: flex;
+	gap: 8px;
+	margin-bottom: 10px;
+}
+
+.vsps-overlay .vsps-form input,
+.vsps-overlay .vsps-form select,
+.vsps-overlay .vsps-form textarea {
+	width: 100%;
+	padding: 9px 10px;
+	border: 1px solid #ccc;
+	border-radius: 8px;
+	font: inherit;
+	color: #222;
+	background: #fff;
+	margin: 0;
+}
+
+.vsps-overlay .vsps-form textarea {
+	margin-bottom: 10px;
+	resize: vertical;
+}
+
+.vsps-overlay .vsps-error {
+	color: #b00020;
+	margin: 4px 0 8px;
+	font-size: 0.9em;
+}
+
+.vsps-overlay .vsps-actions {
+	display: flex;
+	gap: 8px;
+	justify-content: flex-end;
+	margin-top: 6px;
+}
+
+.vsps-overlay .vsps-btn-primary,
+.vsps-overlay .vsps-btn-secondary {
+	padding: 10px 18px;
+	border-radius: 8px;
+	font: inherit;
+	font-weight: 600;
+	cursor: pointer;
+}
+
+.vsps-overlay .vsps-btn-primary,
+.vsps-overlay .vsps-btn-primary:hover,
+.vsps-overlay .vsps-btn-primary:focus {
+	background: var(--vsps-primary, #2f6f4f);
+	border: 1px solid var(--vsps-primary, #2f6f4f);
+	color: #fff;
+}
+
+.vsps-overlay .vsps-btn-primary:disabled {
+	opacity: 0.6;
+	cursor: default;
+}
+
+.vsps-overlay .vsps-btn-secondary,
+.vsps-overlay .vsps-btn-secondary:hover,
+.vsps-overlay .vsps-btn-secondary:focus {
+	background: #fff;
+	border: 1px solid #ccc;
+	color: #444;
+}
+
+@media (max-width: 480px) {
+	.vsps-overlay .vsps-form .vsps-row {
+		flex-direction: column;
+	}
+}
+
+/* ---------- layout: bar (Thrive-style strip) ---------- */
+
+.vsps-widget.vsps-layout-bar {
+	max-width: none;
+	padding: 14px 20px;
+}
+
+.vsps-widget.vsps-layout-bar .vsps-title {
+	display: none;
+}
+
+.vsps-widget .vsps-bar {
+	display: flex;
+	align-items: center;
+	gap: 18px;
+	flex-wrap: wrap;
+}
+
+.vsps-widget .vsps-bar-label {
+	display: flex;
+	flex-direction: column;
+	min-width: 150px;
+}
+
+.vsps-widget .vsps-bar-title {
+	font-weight: 700;
+	color: var(--vsps-text);
+}
+
+.vsps-widget .vsps-bar-date {
+	font-size: 0.85em;
+	color: #666;
+}
+
+.vsps-widget .vsps-bar-chips {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	flex-wrap: wrap;
+	flex: 1;
+}
+
+.vsps-widget .vsps-bar-chip {
+	padding: 8px 14px;
+	border: 1px solid var(--vsps-primary);
+	border-radius: 999px;
+	background: var(--vsps-primary);
+	color: #fff;
+	font-weight: 600;
+	font-size: 0.9em;
+	cursor: pointer;
+	font-family: inherit;
+}
+
+.vsps-widget .vsps-bar-chip:hover,
+.vsps-widget .vsps-bar-chip:focus {
+	background: #fff;
+	color: var(--vsps-primary);
+}
+
+.vsps-widget .vsps-bar-viewall {
+	background: none;
+	border: none;
+	color: var(--vsps-primary);
+	font-weight: 600;
+	text-decoration: underline;
+	cursor: pointer;
+	font-family: inherit;
+	font-size: 0.95em;
+	padding: 6px;
+}
+
+.vsps-widget .vsps-bar-cta,
+.vsps-widget .vsps-bar-cta:hover,
+.vsps-widget .vsps-bar-cta:focus {
+	padding: 12px 22px;
+	border-radius: 8px;
+	background: var(--vsps-primary);
+	border: 1px solid var(--vsps-primary);
+	color: #fff;
+	font-weight: 700;
+	cursor: pointer;
+	font-family: inherit;
+}
+
+/* ---------- layout: calendar (Chewy-style) ---------- */
+
+.vsps-widget.vsps-layout-calendar {
+	max-width: 420px;
+}
+
+.vsps-widget .vsps-cal-head {
+	display: flex;
+	justify-content: space-between;
+	align-items: center;
+	margin-bottom: 8px;
+}
+
+.vsps-widget .vsps-cal-month {
+	font-weight: 700;
+	font-size: 1.05em;
+	color: var(--vsps-text);
+}
+
+.vsps-widget .vsps-cal-arrow {
+	background: none;
+	border: none;
+	color: var(--vsps-primary);
+	font-size: 1.3em;
+	cursor: pointer;
+	padding: 2px 8px;
+	font-family: inherit;
+}
+
+.vsps-widget .vsps-cal-arrow:disabled {
+	opacity: 0.3;
+	cursor: default;
+}
+
+.vsps-widget .vsps-cal-grid {
+	display: grid;
+	grid-template-columns: repeat(7, 1fr);
+	gap: 2px;
+	margin-bottom: 10px;
+}
+
+.vsps-widget .vsps-cal-dow {
+	text-align: center;
+	font-size: 0.75em;
+	color: #999;
+	padding: 4px 0;
+}
+
+.vsps-widget .vsps-cal-day {
+	aspect-ratio: 1;
+	border: none;
+	background: none;
+	border-radius: 50%;
+	font: inherit;
+	font-size: 0.95em;
+	color: var(--vsps-text);
+	cursor: pointer;
+}
+
+.vsps-widget .vsps-cal-day:disabled {
+	color: #ccc;
+	text-decoration: line-through;
+	cursor: default;
+}
+
+.vsps-widget .vsps-cal-day:not(:disabled):hover,
+.vsps-widget .vsps-cal-day:not(:disabled):focus {
+	background: #eef3f0;
+	color: var(--vsps-text);
+}
+
+.vsps-widget .vsps-cal-day.is-active,
+.vsps-widget .vsps-cal-day.is-active:hover,
+.vsps-widget .vsps-cal-day.is-active:focus {
+	background: var(--vsps-primary);
+	color: #fff;
+	font-weight: 700;
+}
+
+.vsps-widget .vsps-cal-caption {
+	color: #666;
+	font-size: 0.9em;
+	margin: 4px 0 10px;
+}
+
+.vsps-widget .vsps-cal-slots {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 8px;
+}
+
+.vsps-widget .vsps-cal-chip {
+	padding: 9px 16px;
+	border: 1px solid var(--vsps-border);
+	border-radius: 999px;
+	background: #fff;
+	color: var(--vsps-text);
+	font-weight: 600;
+	font-size: 0.9em;
+	cursor: pointer;
+	font-family: inherit;
+}
+
+.vsps-widget .vsps-cal-chip:hover,
+.vsps-widget .vsps-cal-chip:focus {
+	border-color: var(--vsps-primary);
+	background: var(--vsps-primary);
+	color: #fff;
+}
+
+/* ---------- layout: float (VCA-style card) ---------- */
+
+.vsps-widget.vsps-layout-float {
+	max-width: 460px;
+	border-radius: 16px;
+	box-shadow: 0 8px 30px rgba(0, 0, 0, 0.12);
+	border: none;
+}
+
+.vsps-widget.vsps-layout-float .vsps-title {
+	display: none;
+}
+
+.vsps-widget .vsps-float-title {
+	margin: 0 0 14px;
+	font-size: 1.1em;
+	color: var(--vsps-text);
+}
+
+.vsps-widget .vsps-float-row {
+	display: flex;
+	gap: 10px;
+	flex-wrap: wrap;
+	margin-bottom: 12px;
+}
+
+.vsps-widget .vsps-float-slot {
+	flex: 1 1 100px;
+	padding: 12px 8px;
+	border: 1px solid #333;
+	border-radius: 4px;
+	background: #fff;
+	cursor: pointer;
+	text-align: center;
+	font-family: inherit;
+	color: var(--vsps-text);
+}
+
+.vsps-widget .vsps-float-slot:hover,
+.vsps-widget .vsps-float-slot:focus {
+	border-color: var(--vsps-primary);
+	background: var(--vsps-primary);
+	color: #fff;
+}
+
+.vsps-widget .vsps-float-time {
+	display: block;
+	font-weight: 700;
+	color: inherit;
+}
+
+.vsps-widget .vsps-float-date {
+	display: block;
+	font-size: 0.85em;
+	color: inherit;
+	opacity: 0.85;
+}
+
+.vsps-widget .vsps-float-more {
+	background: none;
+	border: none;
+	color: var(--vsps-text);
+	text-decoration: underline;
+	cursor: pointer;
+	font-family: inherit;
+	font-size: 0.95em;
+	padding: 4px 0;
+}
