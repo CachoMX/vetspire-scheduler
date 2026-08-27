@@ -3,7 +3,7 @@
  * Plugin Name: Vetspire Scheduler
  * Plugin URI:  https://vetcelerator.com
  * Description: Embeddable appointment scheduler powered by the Vetspire API. Shows live available times and books appointments on-site so analytics attribution is preserved.
- * Version:     1.3.0
+ * Version:     1.4.0
  * Author:      Vetcelerator
  * License:     GPL-2.0+
  * Text Domain: vetspire-scheduler
@@ -13,7 +13,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-define( 'VSPS_VERSION', '1.3.0' );
+define( 'VSPS_VERSION', '1.4.0' );
 define( 'VSPS_PLUGIN_DIR', plugin_dir_path( __FILE__ ) );
 define( 'VSPS_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
 define( 'VSPS_OPTION_KEY', 'vsps_settings' );
@@ -62,6 +62,17 @@ function vsps_api() {
 		return null;
 	}
 	return new VSPS_Api( $settings['api_token'], $settings['api_endpoint'] );
+}
+
+// Automatic updates from GitHub Releases (release assets carry the built zip).
+if ( file_exists( VSPS_PLUGIN_DIR . 'lib/plugin-update-checker/plugin-update-checker.php' ) ) {
+	require_once VSPS_PLUGIN_DIR . 'lib/plugin-update-checker/plugin-update-checker.php';
+	$vsps_update_checker = YahnisElsts\PluginUpdateChecker\v5\PucFactory::buildUpdateChecker(
+		'https://github.com/CachoMX/vetspire-scheduler/',
+		__FILE__,
+		'vetspire-scheduler'
+	);
+	$vsps_update_checker->getVcsApi()->enableReleaseAssets();
 }
 
 // "Settings | Appointments" quick links on the Plugins list row.
