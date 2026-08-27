@@ -112,6 +112,7 @@ class VSPS_Shortcode {
 			'linkUrl'       => esc_url_raw( $atts['link_url'] ),
 			'layout'        => $layout,
 			'defaultTypeId' => absint( $settings['default_type'] ),
+			'extendedPet'   => (int) $settings['extended_pet_fields'],
 		);
 
 		$style = '--vsps-primary:' . esc_attr( $settings['primary_color'] ) . ';';

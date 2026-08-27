@@ -52,6 +52,7 @@ class VSPS_Settings {
 			'api_endpoint'      => esc_url_raw( isset( $input['api_endpoint'] ) ? $input['api_endpoint'] : 'https://api.vetspire.com/graphql' ),
 			'cache_ttl'         => isset( $current['cache_ttl'] ) ? (int) $current['cache_ttl'] : 300,
 			'analytics_enabled' => empty( $input['analytics_enabled'] ) ? 0 : 1,
+			'extended_pet_fields' => empty( $input['extended_pet_fields'] ) ? 0 : 1,
 			'primary_color'     => sanitize_hex_color( isset( $input['primary_color'] ) ? $input['primary_color'] : '#2f6f4f' ),
 			'layout'            => in_array( isset( $input['layout'] ) ? $input['layout'] : 'full', array( 'full', 'bar', 'calendar', 'float' ), true ) ? $input['layout'] : 'full',
 			'default_type'      => absint( isset( $input['default_type'] ) ? $input['default_type'] : 0 ) ? (string) absint( $input['default_type'] ) : '',
@@ -262,6 +263,18 @@ class VSPS_Settings {
 										value="<?php echo esc_attr( $color ); ?>" style="width:56px;height:32px;padding:2px;cursor:pointer;vertical-align:middle;margin-left:8px;" />
 									<span class="description">Buttons and highlights.</span>
 								</p>
+							</div>
+						</div>
+
+						<div class="vsps-box">
+							<h2>Booking Form</h2>
+							<div class="inside">
+								<label>
+									<input type="checkbox" name="<?php echo esc_attr( $opt ); ?>[extended_pet_fields]"
+										value="1" <?php checked( 1, (int) $settings['extended_pet_fields'] ); ?> />
+									Ask for extended pet details (breed, sex, age, spayed/neutered — all optional)
+								</label>
+								<p class="description" style="margin-bottom:0;">Off = shortest form (contact + pet name and species) — shorter forms convert better. On adds the optional fields in the same single screen.</p>
 							</div>
 						</div>
 

@@ -52,7 +52,15 @@
 		website: 'Visit Website',
 		reviews: 'Google Reviews',
 		directions: 'Get Directions',
-		callUs: 'Call Us'
+		callUs: 'Call Us',
+		breed: 'Breed (optional)',
+		sexLabel: 'Sex (optional)',
+		male: 'Male',
+		female: 'Female',
+		ageYears: 'Age in years (optional)',
+		neuteredQ: 'Spayed / Neutered? (optional)',
+		yes: 'Yes',
+		no: 'No'
 	};
 	var I18N = {};
 	(function () {
@@ -745,6 +753,12 @@
 			'<input required type="tel" name="phone" placeholder="__PHONE__" autocomplete="tel"></div>' +
 			'<div class="vsps-row"><input required name="pet_name" placeholder="__PET__">' +
 			'<select name="species"><option value="Canine">__DOG__</option><option value="Feline">__CAT__</option><option value="Other">__OTHER__</option></select></div>' +
+			(self.config.extendedPet ?
+				'<div class="vsps-row"><input name="breed" placeholder="__BREED__">' +
+				'<select name="sex"><option value="">__SEXLABEL__</option><option value="MALE">__MALE__</option><option value="FEMALE">__FEMALE__</option></select></div>' +
+				'<div class="vsps-row"><input type="number" name="age" min="0" max="40" placeholder="__AGE__">' +
+				'<select name="neutered"><option value="">__NEUTERED__</option><option value="yes">__YES__</option><option value="no">__NO__</option></select></div>'
+			: '') +
 			'<textarea name="notes" placeholder="__REASON__" rows="2"></textarea>' +
 			'<input type="text" name="website" tabindex="-1" autocomplete="off" aria-hidden="true" style="position:absolute;left:-9999px;">' +
 			'<p class="vsps-error" style="display:none;"></p>' +
@@ -756,6 +770,10 @@
 			.replace('__EMAIL__', escAttr(I18N.email)).replace('__PHONE__', escAttr(I18N.phone))
 			.replace('__PET__', escAttr(I18N.petName)).replace('__REASON__', escAttr(I18N.reason))
 			.replace('__DOG__', escHtml(I18N.dog)).replace('__CAT__', escHtml(I18N.cat)).replace('__OTHER__', escHtml(I18N.other))
+			.replace('__BREED__', escAttr(I18N.breed)).replace('__SEXLABEL__', escHtml(I18N.sexLabel))
+			.replace('__MALE__', escHtml(I18N.male)).replace('__FEMALE__', escHtml(I18N.female))
+			.replace('__AGE__', escAttr(I18N.ageYears)).replace('__NEUTERED__', escHtml(I18N.neuteredQ))
+			.replace('__YES__', escHtml(I18N.yes)).replace('__NO__', escHtml(I18N.no))
 			.replace('__CANCEL__', escHtml(I18N.cancel)).replace('__CONFIRM__', escHtml(I18N.confirm));
 		modal.appendChild(form);
 
@@ -796,8 +814,10 @@
 				patient: {
 					name: fd.get('pet_name'),
 					species: fd.get('species'),
-					breed: '',
-					sex: ''
+					breed: fd.get('breed') || '',
+					sex: fd.get('sex') || '',
+					age: fd.get('age') || '',
+					neutered: fd.get('neutered') || ''
 				}
 			};
 

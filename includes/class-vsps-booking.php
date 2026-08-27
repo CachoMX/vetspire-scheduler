@@ -110,6 +110,13 @@ class VSPS_Booking {
 			if ( '' !== $args['patient']['sex'] ) {
 				$patient_input['sex'] = $args['patient']['sex'];
 			}
+			if ( ! empty( $args['patient']['age'] ) ) {
+				$patient_input['birthYear']      = (int) gmdate( 'Y' ) - (int) $args['patient']['age'];
+				$patient_input['isEstimatedAge'] = true;
+			}
+			if ( ! empty( $args['patient']['neutered'] ) ) {
+				$patient_input['neutered'] = 'yes' === $args['patient']['neutered'];
+			}
 			$patient = $api->create_patient( $client['id'], $patient_input );
 			if ( is_wp_error( $patient ) ) {
 				return $patient;

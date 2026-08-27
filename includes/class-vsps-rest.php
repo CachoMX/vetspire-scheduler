@@ -345,10 +345,12 @@ class VSPS_Rest {
 				'phone'       => preg_replace( '/[^0-9+\-\s().]/', '', isset( $client['phone'] ) ? $client['phone'] : '' ),
 			),
 			'patient'             => array(
-				'name'    => sanitize_text_field( isset( $patient['name'] ) ? $patient['name'] : '' ),
-				'species' => sanitize_text_field( isset( $patient['species'] ) ? $patient['species'] : '' ),
-				'breed'   => sanitize_text_field( isset( $patient['breed'] ) ? $patient['breed'] : '' ),
-				'sex'     => self::valid_sex( isset( $patient['sex'] ) ? $patient['sex'] : '' ),
+				'name'     => sanitize_text_field( isset( $patient['name'] ) ? $patient['name'] : '' ),
+				'species'  => sanitize_text_field( isset( $patient['species'] ) ? $patient['species'] : '' ),
+				'breed'    => sanitize_text_field( isset( $patient['breed'] ) ? $patient['breed'] : '' ),
+				'sex'      => self::valid_sex( isset( $patient['sex'] ) ? $patient['sex'] : '' ),
+				'age'      => min( 40, absint( isset( $patient['age'] ) ? $patient['age'] : 0 ) ),
+				'neutered' => in_array( isset( $patient['neutered'] ) ? $patient['neutered'] : '', array( 'yes', 'no' ), true ) ? $patient['neutered'] : '',
 			),
 		);
 
