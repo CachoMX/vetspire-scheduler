@@ -314,14 +314,6 @@
 			var addr = el('p', 'vsps-drawer-address', info.address);
 			drawer.appendChild(addr);
 		}
-		if (info.phone) {
-			var phoneP = el('p', 'vsps-drawer-phone', '');
-			var tel = el('a', null, info.phone);
-			tel.href = 'tel:' + info.phone.replace(/[^0-9+]/g, '');
-			phoneP.appendChild(el('strong', null, I18N.callUs + ': '));
-			phoneP.appendChild(tel);
-			drawer.appendChild(phoneP);
-		}
 		var chip = this.locationChip();
 		if (chip) { drawer.appendChild(chip); }
 
@@ -345,6 +337,12 @@
 			self.openFullModal();
 		});
 		drawer.appendChild(book);
+
+		if (info.phone) {
+			var call = el('a', 'vsps-drawer-call', I18N.callUs + ' ' + info.phone);
+			call.href = 'tel:' + info.phone.replace(/[^0-9+]/g, '');
+			drawer.appendChild(call);
+		}
 
 		var links = el('p', 'vsps-drawer-links', '');
 		function addLink(href, text) {
