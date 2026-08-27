@@ -49,6 +49,15 @@ class VSPS_Rest {
 			),
 		) );
 
+		register_rest_route( self::NS, '/location-info', array(
+			'methods'             => 'GET',
+			'callback'            => array( __CLASS__, 'get_location_info' ),
+			'permission_callback' => '__return_true',
+			'args'                => array(
+				'location_id' => $numeric,
+			),
+		) );
+
 		register_rest_route( self::NS, '/book', array(
 			'methods'             => 'POST',
 			'callback'            => array( __CLASS__, 'book' ),
@@ -152,6 +161,121 @@ class VSPS_Rest {
 			);
 		}
 		return rest_ensure_response( array( 'days' => $result ) );
+	}
+
+	/** Clinic profile + computed open/closed status for the location drawer. */
+	public static function get_location_info( WP_REST_Request $request ) {
+		$api = self::api_or_error();
+		if ( is_wp_error( $api ) ) {
+			return $api;
+		}
+		$location_id = $request['location_id'];
+		if ( ! self::location_allowed( $location_id ) ) {
+			return new WP_Error( 'vsps_location', 'This location is not enabled for online booking.', array( 'status' => 403 ) );
+		}
+		$info = VSPS_Cache::remember( array( 'locinfo', (int) $location_id ), function () use ( $api, $location_id ) {
+			return $api->get_location_info( $location_id );
+		}, 300 );
+		if ( is_wp_error( $info ) || null === $info ) {
+			return new WP_Error( 'vsps_upstream', 'Could not load location info.', array( 'status' => 502 ) );
+		}
+
+		$hours  = isset( $info['locationHours'] ) ? $info['locationHours'] : null;
+		$status = self::open_status( $hours, $info['timezone'] );
+
+		// Only public-safe fields leave the server.
+		return rest_ensure_response( array(
+			'name'       => $info['displayName'] ? $info['displayName'] : $info['name'],
+			'address'    => (string) $info['addressString'],
+			'phone'      => (string) $info['phoneNumber'],
+			'googleLink' => (string) $info['googleLink'],
+			'website'    => (string) $info['url'],
+			'latitude'   => $info['latitude'],
+			'longitude'  => $info['longitude'],
+			'status'     => $status,
+			'weekly'     => self::weekly_hours( $hours ),
+		) );
+	}
+
+	/** Formats minute-of-day ranges into an "open now / opens next" status. */
+	private static function open_status( $hours, $timezone ) {
+		if ( empty( $hours ) || empty( $timezone ) ) {
+			return null;
+		}
+		try {
+			$now = new DateTimeImmutable( 'now', new DateTimeZone( $timezone ) );
+		} catch ( Exception $e ) {
+			return null;
+		}
+		$keys    = array( 'sundayRanges', 'mondayRanges', 'tuesdayRanges', 'wednesdayRanges', 'thursdayRanges', 'fridayRanges', 'saturdayRanges' );
+		$minutes = (int) $now->format( 'G' ) * 60 + (int) $now->format( 'i' );
+		$dow     = (int) $now->format( 'w' );
+
+		$today = isset( $hours[ $keys[ $dow ] ] ) && is_array( $hours[ $keys[ $dow ] ] ) ? $hours[ $keys[ $dow ] ] : array();
+		foreach ( $today as $range ) {
+			if ( $minutes >= $range[0] && $minutes < $range[1] ) {
+				return array(
+					'open'  => true,
+					'label' => 'Open Today Until ' . self::fmt_minutes( $range[1] ),
+				);
+			}
+		}
+		// Closed: find the next opening within a week.
+		foreach ( $today as $range ) {
+			if ( $minutes < $range[0] ) {
+				return array(
+					'open'  => false,
+					'label' => 'Closed · Opens Today at ' . self::fmt_minutes( $range[0] ),
+				);
+			}
+		}
+		for ( $i = 1; $i <= 7; $i++ ) {
+			$next   = ( $dow + $i ) % 7;
+			$ranges = isset( $hours[ $keys[ $next ] ] ) && is_array( $hours[ $keys[ $next ] ] ) ? $hours[ $keys[ $next ] ] : array();
+			if ( ! empty( $ranges ) ) {
+				$day = 1 === $i ? 'Tomorrow' : $now->modify( "+{$i} days" )->format( 'l' );
+				return array(
+					'open'  => false,
+					'label' => 'Closed · Opens ' . $day . ' at ' . self::fmt_minutes( $ranges[0][0] ),
+				);
+			}
+		}
+		return null;
+	}
+
+	/** Weekly hours as [day, "9:00 AM – 7:00 PM"|"Closed"] rows, Monday first. */
+	private static function weekly_hours( $hours ) {
+		if ( empty( $hours ) ) {
+			return array();
+		}
+		$days = array(
+			'Monday'    => 'mondayRanges',
+			'Tuesday'   => 'tuesdayRanges',
+			'Wednesday' => 'wednesdayRanges',
+			'Thursday'  => 'thursdayRanges',
+			'Friday'    => 'fridayRanges',
+			'Saturday'  => 'saturdayRanges',
+			'Sunday'    => 'sundayRanges',
+		);
+		$out = array();
+		foreach ( $days as $label => $key ) {
+			$ranges = isset( $hours[ $key ] ) && is_array( $hours[ $key ] ) ? $hours[ $key ] : array();
+			$parts  = array();
+			foreach ( $ranges as $range ) {
+				$parts[] = self::fmt_minutes( $range[0] ) . ' – ' . self::fmt_minutes( $range[1] );
+			}
+			$out[] = array( $label, $parts ? implode( ', ', $parts ) : 'Closed' );
+		}
+		return $out;
+	}
+
+	private static function fmt_minutes( $mins ) {
+		$mins = (int) $mins;
+		$h    = intdiv( $mins, 60 ) % 24;
+		$m    = $mins % 60;
+		$suffix = $h >= 12 ? 'PM' : 'AM';
+		$h12    = 0 === $h % 12 ? 12 : $h % 12;
+		return $h12 . ':' . str_pad( (string) $m, 2, '0', STR_PAD_LEFT ) . ' ' . $suffix;
 	}
 
 	public static function book( WP_REST_Request $request ) {

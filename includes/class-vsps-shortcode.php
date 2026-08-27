@@ -93,6 +93,12 @@ class VSPS_Shortcode {
 				'moreAppointments' => __( 'More available appointments »', 'vetspire-scheduler' ),
 				'showingTimesFor' => __( 'Showing available times for', 'vetspire-scheduler' ),
 				'back'           => __( '‹ Back', 'vetspire-scheduler' ),
+				'currentlyViewing' => __( 'Currently Viewing', 'vetspire-scheduler' ),
+				'hoursTitle'     => __( 'Hours', 'vetspire-scheduler' ),
+				'website'        => __( 'Visit Website', 'vetspire-scheduler' ),
+				'reviews'        => __( 'Google Reviews', 'vetspire-scheduler' ),
+				'directions'     => __( 'Get Directions', 'vetspire-scheduler' ),
+				'callUs'         => __( 'Call Us', 'vetspire-scheduler' ),
 			),
 		) );
 

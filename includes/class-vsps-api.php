@@ -68,6 +68,24 @@ class VSPS_Api {
 		return is_wp_error( $data ) ? $data : ( isset( $data['location'] ) ? $data['location'] : null );
 	}
 
+	/** Public clinic profile for the location drawer (address, phone, hours…). */
+	public function get_location_info( $location_id ) {
+		$data = $this->request(
+			'query ($id: ID!) {
+				location(id: $id) {
+					id name displayName timezone addressString phoneNumber
+					latitude longitude googleLink url
+					locationHours {
+						mondayRanges tuesdayRanges wednesdayRanges thursdayRanges
+						fridayRanges saturdayRanges sundayRanges
+					}
+				}
+			}',
+			array( 'id' => (string) $location_id )
+		);
+		return is_wp_error( $data ) ? $data : ( isset( $data['location'] ) ? $data['location'] : null );
+	}
+
 	/** Appointment types enabled for a location, online-bookable only. */
 	public function get_bookable_types( $location_id ) {
 		$data = $this->request(

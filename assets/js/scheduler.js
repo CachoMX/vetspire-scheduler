@@ -46,7 +46,13 @@
 		firstAvailable: 'Book First Available Appointment',
 		moreAppointments: 'More available appointments »',
 		showingTimesFor: 'Showing available times for',
-		back: '‹ Back'
+		back: '‹ Back',
+		currentlyViewing: 'Currently Viewing',
+		hoursTitle: 'Hours',
+		website: 'Visit Website',
+		reviews: 'Google Reviews',
+		directions: 'Get Directions',
+		callUs: 'Call Us'
 	};
 	var I18N = {};
 	(function () {
@@ -193,10 +199,169 @@
 				self.state.typeId = types[0].id;
 				self.renderShell();
 				self.loadAvailability();
+				self.loadLocationInfo();
 			})
 			.catch(function () {
 				self.showMessage(I18N.loadFailed);
 			});
+	};
+
+	Widget.prototype.loadLocationInfo = function () {
+		var self = this;
+		if (this.config._embedded) { return; }
+		fetchJson(CFG.restUrl + '/location-info?location_id=' + this.config.locationId)
+			.then(function (info) {
+				self.locInfo = info;
+				self.applyLocationInfo();
+			})
+			.catch(function () { /* optional enrichment; stay silent */ });
+	};
+
+	Widget.prototype.locationChip = function () {
+		var st = this.locInfo && this.locInfo.status;
+		if (!st) { return null; }
+		return el('span', 'vsps-chip ' + (st.open ? 'vsps-chip-open' : 'vsps-chip-closed'), st.label);
+	};
+
+	Widget.prototype.applyLocationInfo = function () {
+		var self = this;
+		if (!this.locInfo) { return; }
+		if ('bar' === this.layout) {
+			if (this.barLabel) { this.fillBarLabel(this.barLabel); }
+			return;
+		}
+		if ('float' === this.layout) { return; }
+		// full / calendar: one compact line under the title.
+		if (this.locLine) { return; }
+		var line = el('div', 'vsps-locline');
+		var nameBtn = el('button', 'vsps-locline-name', '');
+		nameBtn.type = 'button';
+		nameBtn.appendChild(el('span', null, '\ud83d\udccd ' + this.locInfo.name));
+		nameBtn.appendChild(el('span', 'vsps-locline-arrow', '\u203a'));
+		nameBtn.addEventListener('click', function () { self.openDrawer(); });
+		line.appendChild(nameBtn);
+		var chip = this.locationChip();
+		if (chip) { line.appendChild(chip); }
+		this.locLine = line;
+		this.body.insertBefore(line, this.body.firstChild ? this.body.firstChild.nextSibling : null);
+	};
+
+	Widget.prototype.fillBarLabel = function (label) {
+		var self = this;
+		label.innerHTML = '';
+		if (this.locInfo) {
+			label.appendChild(el('span', 'vsps-bar-viewing', I18N.currentlyViewing));
+			var nameBtn = el('button', 'vsps-bar-name', '');
+			nameBtn.type = 'button';
+			nameBtn.appendChild(el('span', null, this.locInfo.name));
+			nameBtn.appendChild(el('span', 'vsps-locline-arrow', '\u203a'));
+			nameBtn.addEventListener('click', function () { self.openDrawer(); });
+			label.appendChild(nameBtn);
+			var chip = this.locationChip();
+			if (chip) { label.appendChild(chip); }
+		} else {
+			label.appendChild(el('span', 'vsps-bar-title', this.barIsToday ? I18N.todaysAvailability : I18N.availability));
+			if (!this.barIsToday && this.barDate) {
+				label.appendChild(el('span', 'vsps-bar-date', formatDateLabel(this.barDate)));
+			}
+		}
+	};
+
+	/** Thrive-style slide-in drawer with map, contact info and hours. */
+	Widget.prototype.openDrawer = function () {
+		var self = this;
+		var info = this.locInfo;
+		if (!info) { return; }
+		track('location_details_open', { location_id: this.config.locationId });
+
+		var overlay = el('div', 'vsps-overlay vsps-drawer-overlay');
+		var drawer = el('aside', 'vsps-drawer');
+		overlay.appendChild(drawer);
+		try {
+			var primary = window.getComputedStyle(this.root).getPropertyValue('--vsps-primary');
+			if (primary) { overlay.style.setProperty('--vsps-primary', primary.trim()); }
+		} catch (e) { /* non-blocking */ }
+
+		function onKeydown(e) { if (e.key === 'Escape') { close(); } }
+		function close() {
+			document.removeEventListener('keydown', onKeydown);
+			overlay.remove();
+		}
+		document.addEventListener('keydown', onKeydown);
+		overlay.addEventListener('click', function (e) { if (e.target === overlay) { close(); } });
+
+		var closeBtn = el('button', 'vsps-modal-close', '\u00d7');
+		closeBtn.type = 'button';
+		closeBtn.setAttribute('aria-label', I18N.close);
+		closeBtn.addEventListener('click', close);
+		drawer.appendChild(closeBtn);
+
+		// Map (keyless Google embed; lat/long when present, address otherwise).
+		var query = (info.latitude && info.longitude)
+			? info.latitude + ',' + info.longitude
+			: (info.address || info.name).replace(/\n/g, ', ');
+		if (query) {
+			var map = document.createElement('iframe');
+			map.className = 'vsps-drawer-map';
+			map.setAttribute('loading', 'lazy');
+			map.setAttribute('referrerpolicy', 'no-referrer-when-downgrade');
+			map.src = 'https://maps.google.com/maps?q=' + encodeURIComponent(query) + '&z=14&output=embed';
+			drawer.appendChild(map);
+		}
+
+		drawer.appendChild(el('h4', 'vsps-drawer-name', info.name));
+		if (info.address) {
+			var addr = el('p', 'vsps-drawer-address', info.address);
+			drawer.appendChild(addr);
+		}
+		if (info.phone) {
+			var phoneP = el('p', 'vsps-drawer-phone', '');
+			var tel = el('a', null, info.phone);
+			tel.href = 'tel:' + info.phone.replace(/[^0-9+]/g, '');
+			phoneP.appendChild(el('strong', null, I18N.callUs + ': '));
+			phoneP.appendChild(tel);
+			drawer.appendChild(phoneP);
+		}
+		var chip = this.locationChip();
+		if (chip) { drawer.appendChild(chip); }
+
+		if (info.weekly && info.weekly.length) {
+			drawer.appendChild(el('h5', 'vsps-drawer-hours-title', I18N.hoursTitle));
+			var table = el('table', 'vsps-drawer-hours');
+			var todayName = new Date().toLocaleDateString('en-US', { weekday: 'long' });
+			info.weekly.forEach(function (row) {
+				var tr = el('tr', row[0] === todayName ? 'is-today' : null);
+				tr.appendChild(el('td', null, row[0]));
+				tr.appendChild(el('td', null, row[1]));
+				table.appendChild(tr);
+			});
+			drawer.appendChild(table);
+		}
+
+		var book = el('button', 'vsps-btn-primary vsps-drawer-book', I18N.bookOnline);
+		book.type = 'button';
+		book.addEventListener('click', function () {
+			close();
+			self.openFullModal();
+		});
+		drawer.appendChild(book);
+
+		var links = el('p', 'vsps-drawer-links', '');
+		function addLink(href, text) {
+			var a = el('a', null, text);
+			a.href = href;
+			a.target = '_blank';
+			a.rel = 'noopener';
+			links.appendChild(a);
+		}
+		if (info.address) {
+			addLink('https://www.google.com/maps/dir/?api=1&destination=' + encodeURIComponent(info.address.replace(/\n/g, ', ')), I18N.directions);
+		}
+		if (info.website) { addLink(info.website, I18N.website); }
+		if (info.googleLink) { addLink(info.googleLink, I18N.reviews); }
+		if (links.childNodes.length) { drawer.appendChild(links); }
+
+		document.body.appendChild(overlay);
 	};
 
 	Widget.prototype.showMessage = function (text) {
@@ -402,10 +567,10 @@
 		var bar = el('div', 'vsps-bar');
 
 		var label = el('div', 'vsps-bar-label');
-		label.appendChild(el('span', 'vsps-bar-title', isToday ? I18N.todaysAvailability : I18N.availability));
-		if (!isToday) {
-			label.appendChild(el('span', 'vsps-bar-date', formatDateLabel(day.date)));
-		}
+		this.barLabel = label;
+		this.barIsToday = isToday;
+		this.barDate = day.date;
+		this.fillBarLabel(label);
 		bar.appendChild(label);
 
 		var chips = el('div', 'vsps-bar-chips');
