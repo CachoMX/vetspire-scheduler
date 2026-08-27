@@ -760,7 +760,7 @@
 				'<select name="neutered"><option value="">__NEUTERED__</option><option value="yes">__YES__</option><option value="no">__NO__</option></select></div>'
 			: '') +
 			'<textarea name="notes" placeholder="__REASON__" rows="2"></textarea>' +
-			'<input type="text" name="website" tabindex="-1" autocomplete="off" aria-hidden="true" style="position:absolute;left:-9999px;">' +
+			'<input type="text" name="vsps_hp" tabindex="-1" autocomplete="nope-937" aria-hidden="true" style="position:absolute;left:-9999px;">' +
 			'<p class="vsps-error" style="display:none;"></p>' +
 			'<div class="vsps-actions">' +
 			'<button type="button" class="vsps-btn-secondary">__CANCEL__</button>' +
@@ -804,7 +804,7 @@
 				schedule_id: slot.scheduleId || '',
 				duration: type.duration,
 				notes: fd.get('notes') || '',
-				website: fd.get('website') || '',
+				vsps_hp: fd.get('vsps_hp') || '',
 				client: {
 					given_name: fd.get('given_name'),
 					family_name: fd.get('family_name'),

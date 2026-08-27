@@ -284,8 +284,10 @@ class VSPS_Rest {
 			return $api;
 		}
 
-		// Honeypot: bots fill every field; humans never see this one.
-		if ( '' !== (string) $request->get_param( 'website' ) ) {
+		// Honeypot: bots fill every field; humans never see this one. The field
+		// name is deliberately meaningless — browser autofill matches fields
+		// named "website" and was rejecting real bookings.
+		if ( '' !== (string) $request->get_param( 'vsps_hp' ) ) {
 			return new WP_Error( 'vsps_spam', 'Booking rejected.', array( 'status' => 400 ) );
 		}
 
