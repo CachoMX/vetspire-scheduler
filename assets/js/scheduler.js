@@ -164,7 +164,9 @@
 
 	Widget.prototype.init = function () {
 		var self = this;
-		track('widget_view', { location_id: this.config.locationId, layout: this.layout });
+		if (!this.config._embedded) {
+			track('widget_view', { location_id: this.config.locationId, layout: this.layout });
+		}
 		fetchJson(CFG.restUrl + '/types?location_id=' + this.config.locationId)
 			.then(function (data) {
 				var types = data.types || [];
@@ -287,13 +289,50 @@
 		}
 	};
 
-	/** Switches an alternate layout to the full view in place (View All / More). */
-	Widget.prototype.expandToFull = function () {
-		this.layout = 'full';
-		this.root.classList.remove('vsps-layout-bar', 'vsps-layout-calendar', 'vsps-layout-float');
-		this.root.classList.add('vsps-layout-full');
-		this.renderShell();
-		this.renderLayout();
+	/**
+	 * Opens the FULL picker in a lightbox (View All / Book Online / More).
+	 * Choosing a slot closes the picker and opens the booking form modal.
+	 */
+	Widget.prototype.openFullModal = function () {
+		var self = this;
+		var overlay = el('div', 'vsps-overlay');
+		var modal = el('div', 'vsps-modal vsps-modal-wide');
+		overlay.appendChild(modal);
+		try {
+			var primary = window.getComputedStyle(this.root).getPropertyValue('--vsps-primary');
+			if (primary) { overlay.style.setProperty('--vsps-primary', primary.trim()); }
+		} catch (e) { /* non-blocking */ }
+
+		function onKeydown(e) { if (e.key === 'Escape') { close(); } }
+		function close() {
+			document.removeEventListener('keydown', onKeydown);
+			overlay.remove();
+		}
+		document.addEventListener('keydown', onKeydown);
+		overlay.addEventListener('click', function (e) { if (e.target === overlay) { close(); } });
+
+		var closeBtn = el('button', 'vsps-modal-close', '×');
+		closeBtn.type = 'button';
+		closeBtn.setAttribute('aria-label', I18N.close);
+		closeBtn.addEventListener('click', close);
+		modal.appendChild(closeBtn);
+
+		var titleEl = this.root.querySelector('.vsps-title');
+		var inner = el('div', 'vsps-widget vsps-embedded');
+		var cfg = {};
+		Object.keys(this.config).forEach(function (k) { cfg[k] = self.config[k]; });
+		cfg.layout = 'full';
+		cfg._embedded = true;
+		inner.setAttribute('data-vsps-config', JSON.stringify(cfg));
+		inner.innerHTML = '<h3 class="vsps-title"></h3><div class="vsps-body"><p class="vsps-loading"></p></div>';
+		inner.querySelector('.vsps-title').textContent = titleEl ? titleEl.textContent : 'Book an Appointment';
+		inner.querySelector('.vsps-loading').textContent = I18N.loading;
+		modal.appendChild(inner);
+		document.body.appendChild(overlay);
+
+		var embedded = new Widget(inner);
+		// When a slot is picked inside the lightbox, close it before the form opens.
+		embedded.onBeforeForm = close;
 	};
 
 	Widget.prototype.day = function (iso) {
@@ -375,13 +414,13 @@
 		});
 		var viewAll = el('button', 'vsps-bar-viewall', I18N.viewAll);
 		viewAll.type = 'button';
-		viewAll.addEventListener('click', function () { self.expandToFull(); });
+		viewAll.addEventListener('click', function () { self.openFullModal(); });
 		chips.appendChild(viewAll);
 		bar.appendChild(chips);
 
 		var cta = el('button', 'vsps-bar-cta', I18N.bookOnline);
 		cta.type = 'button';
-		cta.addEventListener('click', function () { self.expandToFull(); });
+		cta.addEventListener('click', function () { self.openFullModal(); });
 		bar.appendChild(cta);
 
 		this.contentEl.appendChild(bar);
@@ -509,7 +548,7 @@
 
 		var more = el('button', 'vsps-float-more', I18N.moreAppointments);
 		more.type = 'button';
-		more.addEventListener('click', function () { self.expandToFull(); });
+		more.addEventListener('click', function () { self.openFullModal(); });
 		card.appendChild(more);
 
 		this.contentEl.appendChild(card);
@@ -519,6 +558,7 @@
 
 	Widget.prototype.openForm = function (date, slot) {
 		var self = this;
+		if (this.onBeforeForm) { this.onBeforeForm(); }
 		var type = this.currentType();
 		var overlay = el('div', 'vsps-overlay');
 		var modal = el('div', 'vsps-modal');

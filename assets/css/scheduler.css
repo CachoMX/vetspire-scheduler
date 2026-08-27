@@ -535,3 +535,33 @@
 	font-size: 0.95em;
 	padding: 4px 0;
 }
+
+/* Full-picker lightbox (opened from bar/float "View All" / "Book Online") */
+.vsps-overlay .vsps-modal-wide {
+	max-width: 680px;
+	position: relative;
+	padding-top: 34px;
+}
+
+.vsps-overlay .vsps-modal-close,
+.vsps-overlay .vsps-modal-close:hover,
+.vsps-overlay .vsps-modal-close:focus {
+	position: absolute;
+	top: 8px;
+	right: 10px;
+	background: none;
+	border: none;
+	font-size: 24px;
+	line-height: 1;
+	color: #666;
+	cursor: pointer;
+	padding: 4px 8px;
+}
+
+.vsps-overlay .vsps-widget.vsps-embedded {
+	border: none;
+	border-radius: 0;
+	padding: 0;
+	max-width: none;
+	background: transparent;
+}
