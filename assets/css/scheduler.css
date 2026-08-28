@@ -178,6 +178,7 @@
 }
 
 .vsps-overlay .vsps-modal {
+	position: relative;
 	background: #fff;
 	border-radius: 12px;
 	padding: 24px;
@@ -818,4 +819,59 @@
 	.vsps-overlay .vsps-modal-wide {
 		max-height: 92vh;
 	}
+}
+
+/* ---------- booking modal steps (new vs existing client) ---------- */
+
+.vsps-overlay .vsps-step-q {
+	font-weight: 600;
+	margin: 4px 0 12px;
+	color: #222;
+}
+
+.vsps-overlay .vsps-btn-block {
+	display: block;
+	width: 100%;
+	margin-bottom: 10px;
+	padding: 12px 18px;
+	border-radius: 10px;
+}
+
+.vsps-overlay .vsps-back {
+	background: none;
+	border: none;
+	color: #666;
+	text-decoration: underline;
+	cursor: pointer;
+	font: inherit;
+	font-size: 0.9em;
+	padding: 6px 0 0;
+}
+
+.vsps-overlay .vsps-pet-list {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 8px;
+	margin-bottom: 8px;
+}
+
+.vsps-overlay .vsps-pet-chip {
+	padding: 10px 16px;
+	border: 1px solid var(--vsps-primary, #2f6f4f);
+	border-radius: 999px;
+	background: #fff;
+	color: var(--vsps-primary, #2f6f4f);
+	font-weight: 600;
+	cursor: pointer;
+	font-family: inherit;
+}
+
+.vsps-overlay .vsps-pet-chip:hover,
+.vsps-overlay .vsps-pet-chip:focus {
+	background: var(--vsps-primary, #2f6f4f);
+	color: #fff;
+}
+
+.vsps-overlay .vsps-pet-new {
+	border-style: dashed;
 }

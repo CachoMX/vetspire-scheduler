@@ -49,6 +49,10 @@ After picking a time, ask **"Have you visited us before?"**
   (adds friction).
 - Acceptance: existing client books with email + pet pick + confirm; events carry
   client_type; lookup rate-limited.
+- **Implementation note (QA, Aug 28):** adding a NEW pet to an existing account with
+  only an email was deliberately excluded (record-write abuse surface) — returning
+  clients with a new pet go through the full form (dedupe reuses their account).
+  A lighter path needs the same Drew/Nicole sign-off as the lookup design.
 - Est: 1.5–2 days
 
 ### 0.4 Per-field checkboxes for the optional questions **[PROPOSAL]**

@@ -58,6 +58,12 @@ class VSPS_Rest {
 			),
 		) );
 
+		register_rest_route( self::NS, '/lookup', array(
+			'methods'             => 'POST',
+			'callback'            => array( __CLASS__, 'lookup_client' ),
+			'permission_callback' => '__return_true',
+		) );
+
 		register_rest_route( self::NS, '/book', array(
 			'methods'             => 'POST',
 			'callback'            => array( __CLASS__, 'book' ),
@@ -278,6 +284,51 @@ class VSPS_Rest {
 		return $h12 . ':' . str_pad( (string) $m, 2, '0', STR_PAD_LEFT ) . ' ' . $suffix;
 	}
 
+	/**
+	 * Returning-client lookup: email in, active pet NAMES out. Never returns
+	 * ids, owner name or phone - the booking path re-resolves everything
+	 * server-side from the email. Hard rate-limited (enumeration protection).
+	 */
+	public static function lookup_client( WP_REST_Request $request ) {
+		$api = self::api_or_error();
+		if ( is_wp_error( $api ) ) {
+			return $api;
+		}
+		if ( '' !== (string) $request->get_param( 'vsps_hp' ) ) {
+			return new WP_Error( 'vsps_spam', 'Lookup rejected.', array( 'status' => 400 ) );
+		}
+		$location_id = absint( $request->get_param( 'location_id' ) );
+		if ( ! $location_id || ! self::location_allowed( $location_id ) ) {
+			return new WP_Error( 'vsps_location', 'This location is not enabled for online booking.', array( 'status' => 403 ) );
+		}
+		$email = sanitize_email( (string) $request->get_param( 'email' ) );
+		if ( ! is_email( $email ) ) {
+			return new WP_Error( 'vsps_invalid', 'A valid email is required.', array( 'status' => 400 ) );
+		}
+		if ( ! self::rate_limit_ok( 'lk_' . md5( self::client_ip() ), 10, HOUR_IN_SECONDS ) ) {
+			return new WP_Error( 'vsps_rate', 'Too many lookups. Please try again later or continue as a new client.', array( 'status' => 429 ) );
+		}
+
+		$client = $api->find_client_by_email( $email );
+		if ( is_wp_error( $client ) ) {
+			return new WP_Error( 'vsps_upstream', 'Lookup failed. Please continue as a new client.', array( 'status' => 502 ) );
+		}
+		$pets = array();
+		if ( $client && ! empty( $client['patients'] ) ) {
+			foreach ( $client['patients'] as $patient ) {
+				$active   = ! isset( $patient['isActive'] ) || $patient['isActive'];
+				$deceased = ! empty( $patient['isDeceased'] );
+				if ( $active && ! $deceased ) {
+					$pets[] = (string) $patient['name'];
+				}
+			}
+		}
+		return rest_ensure_response( array(
+			'found' => null !== $client,
+			'pets'  => $pets,
+		) );
+	}
+
 	public static function book( WP_REST_Request $request ) {
 		$api = self::api_or_error();
 		if ( is_wp_error( $api ) ) {
@@ -315,7 +366,7 @@ class VSPS_Rest {
 			// Slot-taken / type-not-bookable are safe, actionable messages for the visitor.
 			$code = $result->get_error_code();
 			error_log( '[vetspire-scheduler] booking failed (' . $code . '): ' . self::redact( $result->get_error_message() ) );
-			if ( in_array( $code, array( 'vsps_slot', 'vsps_type', 'vsps_datetime' ), true ) ) {
+			if ( in_array( $code, array( 'vsps_slot', 'vsps_type', 'vsps_datetime', 'vsps_client_missing', 'vsps_pet_missing' ), true ) ) {
 				return new WP_Error( $code, $result->get_error_message(), array( 'status' => 409 ) );
 			}
 			return new WP_Error( 'vsps_booking', 'We could not complete the booking. Please try another time or call the clinic.', array( 'status' => 502 ) );
@@ -356,7 +407,13 @@ class VSPS_Rest {
 		$client  = (array) $request->get_param( 'client' );
 		$patient = (array) $request->get_param( 'patient' );
 
+		$client_type = 'existing' === (string) $request->get_param( 'client_type' ) ? 'existing' : 'new';
+
 		$args = array(
+			'client_type'         => $client_type,
+			// Pending product sign-off: returning clients may only book for pets
+			// already on file — never create records with just an email (QA batch 3).
+			'pet_is_new'          => 'existing' === $client_type ? false : (bool) $request->get_param( 'pet_is_new' ),
 			'location_id'         => absint( $request->get_param( 'location_id' ) ),
 			'appointment_type_id' => absint( $request->get_param( 'appointment_type_id' ) ),
 			'date'                => sanitize_text_field( (string) $request->get_param( 'date' ) ),
@@ -393,11 +450,21 @@ class VSPS_Rest {
 		if ( $booking_date < $today->modify( '-1 day' ) || $booking_date > $today->modify( '+90 days' ) ) {
 			return new WP_Error( 'vsps_invalid', 'Booking date out of range.', array( 'status' => 400 ) );
 		}
-		if ( '' === $args['client']['given_name'] || '' === $args['client']['family_name'] ) {
-			return new WP_Error( 'vsps_invalid', 'First and last name are required.', array( 'status' => 400 ) );
-		}
 		if ( ! is_email( $args['client']['email'] ) ) {
 			return new WP_Error( 'vsps_invalid', 'A valid email is required.', array( 'status' => 400 ) );
+		}
+		if ( 'existing' === $client_type ) {
+			// Returning clients only need email + pet; name/phone live in Vetspire.
+			if ( '' === $args['patient']['name'] ) {
+				return new WP_Error( 'vsps_invalid', 'Pet name is required.', array( 'status' => 400 ) );
+			}
+			if ( $args['pet_is_new'] && '' === $args['patient']['species'] ) {
+				return new WP_Error( 'vsps_invalid', 'Pet species is required.', array( 'status' => 400 ) );
+			}
+			return $args;
+		}
+		if ( '' === $args['client']['given_name'] || '' === $args['client']['family_name'] ) {
+			return new WP_Error( 'vsps_invalid', 'First and last name are required.', array( 'status' => 400 ) );
 		}
 		if ( strlen( preg_replace( '/\D/', '', $args['client']['phone'] ) ) < 7 ) {
 			return new WP_Error( 'vsps_invalid', 'A valid phone number is required.', array( 'status' => 400 ) );

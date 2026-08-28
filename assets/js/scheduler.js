@@ -60,7 +60,17 @@
 		ageYears: 'Age in years (optional)',
 		neuteredQ: 'Spayed / Neutered? (optional)',
 		yes: 'Yes',
-		no: 'No'
+		no: 'No',
+		haveVisited: 'Have you visited us before?',
+		returningClient: "Yes \u2014 I'm a returning client",
+		newClient: "No \u2014 I'm a new client",
+		emailAtClinic: 'Email you use at the clinic',
+		continueBtn: 'Continue',
+		notFoundEmail: "We couldn't find that email \u2014 let's book you as a new client.",
+		lookupFailed: 'Lookup is unavailable right now \u2014 you can continue as a new client.',
+		whosVisit: 'Who is this visit for?',
+		aNewPet: '+ A new pet',
+		bookingFor: 'Booking for'
 	};
 	var I18N = {};
 	(function () {
@@ -737,7 +747,7 @@
 		this.contentEl.appendChild(card);
 	};
 
-	/* ---------- booking form ---------- */
+	/* ---------- booking modal (new vs existing client) ---------- */
 
 	Widget.prototype.openForm = function (date, slot) {
 		var self = this;
@@ -751,26 +761,202 @@
 			if (primary) { overlay.style.setProperty('--vsps-primary', primary.trim()); }
 		} catch (e) { /* non-blocking */ }
 
-		var heading = el('h4', 'vsps-modal-title', type.name);
-		var sub = el('p', 'vsps-modal-sub', formatDateLabel(date) + ' ' + I18N.at + ' ' + formatTime(slot.time) +
-			(slot.provider && slot.provider.name ? ' · ' + slot.provider.name : ''));
-		modal.appendChild(heading);
-		modal.appendChild(sub);
+		function onKeydown(e) { if (e.key === 'Escape') { close(); } }
+		function close() {
+			document.removeEventListener('keydown', onKeydown);
+			overlay.remove();
+		}
+		document.addEventListener('keydown', onKeydown);
+		overlay.addEventListener('click', function (e) { if (e.target === overlay) { close(); } });
 
+		var closeBtn = el('button', 'vsps-modal-close', '\u00d7');
+		closeBtn.type = 'button';
+		closeBtn.setAttribute('aria-label', I18N.close);
+		closeBtn.addEventListener('click', function () { close(); });
+		modal.appendChild(closeBtn);
+		modal.appendChild(el('h4', 'vsps-modal-title', type.name));
+		modal.appendChild(el('p', 'vsps-modal-sub', formatDateLabel(date) + ' ' + I18N.at + ' ' + formatTime(slot.time) +
+			(slot.provider && slot.provider.name ? ' \u00b7 ' + slot.provider.name : '')));
+		var step = el('div', 'vsps-step');
+		modal.appendChild(step);
+
+		this._bk = { date: date, slot: slot, type: type, modal: modal, step: step, close: close, clientType: 'new' };
+		document.body.appendChild(overlay);
+		track('form_started', {
+			location_id: this.config.locationId,
+			appointment_type_id: this.state.typeId,
+			date: date,
+			time: slot.time,
+			layout: this.layout
+		});
+		this.renderChoiceStep();
+	};
+
+	Widget.prototype.renderChoiceStep = function () {
+		var self = this;
+		var step = this._bk.step;
+		step.innerHTML = '';
+		step.appendChild(el('p', 'vsps-step-q', I18N.haveVisited));
+		var ret = el('button', 'vsps-btn-primary vsps-btn-block', I18N.returningClient);
+		ret.type = 'button';
+		ret.addEventListener('click', function () {
+			self._bk.clientType = 'existing';
+			self.renderEmailStep();
+		});
+		var fresh = el('button', 'vsps-btn-secondary vsps-btn-block', I18N.newClient);
+		fresh.type = 'button';
+		fresh.addEventListener('click', function () {
+			self._bk.clientType = 'new';
+			self.renderNewForm('');
+		});
+		step.appendChild(ret);
+		step.appendChild(fresh);
+	};
+
+	Widget.prototype.backLink = function (handler) {
+		var a = el('button', 'vsps-back', I18N.back);
+		a.type = 'button';
+		a.addEventListener('click', handler);
+		return a;
+	};
+
+	Widget.prototype.renderEmailStep = function () {
+		var self = this;
+		var step = this._bk.step;
+		step.innerHTML = '';
 		var form = el('form', 'vsps-form');
-		form.innerHTML =
-			'<div class="vsps-row"><input required name="given_name" placeholder="__FIRST__" autocomplete="given-name">' +
-			'<input required name="family_name" placeholder="__LAST__" autocomplete="family-name"></div>' +
-			'<div class="vsps-row"><input required type="email" name="email" placeholder="__EMAIL__" autocomplete="email">' +
-			'<input required type="tel" name="phone" placeholder="__PHONE__" autocomplete="tel"></div>' +
-			'<div class="vsps-row"><input required name="pet_name" placeholder="__PET__">' +
+		form.innerHTML = '<input required type="email" name="lookup_email" placeholder="__EMAIL__" autocomplete="email">' +
+			'<p class="vsps-error" style="display:none;"></p>' +
+			'<div class="vsps-actions"><button type="submit" class="vsps-btn-primary">__CONTINUE__</button></div>';
+		form.innerHTML = form.innerHTML
+			.replace('__EMAIL__', escAttr(I18N.emailAtClinic))
+			.replace('__CONTINUE__', escHtml(I18N.continueBtn));
+		step.appendChild(form);
+		step.appendChild(this.backLink(function () { self.renderChoiceStep(); }));
+		if (this._bk.email) { form.querySelector('[name="lookup_email"]').value = this._bk.email; }
+
+		form.addEventListener('submit', function (e) {
+			e.preventDefault();
+			var email = form.querySelector('[name="lookup_email"]').value.trim();
+			var errorEl = form.querySelector('.vsps-error');
+			var btn = form.querySelector('.vsps-btn-primary');
+			errorEl.style.display = 'none';
+			btn.disabled = true;
+			btn.textContent = I18N.loading;
+			fetchJson(CFG.restUrl + '/lookup', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ location_id: self.config.locationId, email: email, vsps_hp: '' })
+			}).then(function (data) {
+				if (!data.found) {
+					self._bk.clientType = 'new';
+					self.renderNewForm(email, I18N.notFoundEmail);
+					return;
+				}
+				self._bk.email = email;
+				if (data.pets && data.pets.length) {
+					self.renderPetStep(data.pets);
+				} else {
+					// Returning client with no pets on file: use the full form
+					// (its dedupe reuses the account; no email-only record writes).
+					self._bk.clientType = 'new';
+					self.renderNewForm(email, '');
+				}
+			}).catch(function (err) {
+				errorEl.textContent = err.message || I18N.lookupFailed;
+				errorEl.style.display = 'block';
+				btn.disabled = false;
+				btn.textContent = I18N.continueBtn;
+			});
+		});
+		form.querySelector('[name="lookup_email"]').focus();
+	};
+
+	Widget.prototype.renderPetStep = function (pets) {
+		var self = this;
+		var step = this._bk.step;
+		step.innerHTML = '';
+		step.appendChild(el('p', 'vsps-step-q', I18N.whosVisit));
+		var list = el('div', 'vsps-pet-list');
+		pets.forEach(function (name) {
+			var chip = el('button', 'vsps-pet-chip', '\ud83d\udc3e ' + name);
+			chip.type = 'button';
+			chip.addEventListener('click', function () { self.renderConfirmStep(name); });
+			list.appendChild(chip);
+		});
+		var np = el('button', 'vsps-pet-chip vsps-pet-new', I18N.aNewPet);
+		np.type = 'button';
+		np.addEventListener('click', function () {
+			// New pet on an existing account goes through the full form (with
+			// contact details + honeypot) — pending sign-off for a lighter path.
+			self._bk.clientType = 'new';
+			self.renderNewForm(self._bk.email, '');
+		});
+		list.appendChild(np);
+		step.appendChild(list);
+		step.appendChild(this.backLink(function () { self.renderEmailStep(); }));
+	};
+
+	Widget.prototype.renderConfirmStep = function (petName) {
+		var self = this;
+		var step = this._bk.step;
+		step.innerHTML = '';
+		step.appendChild(el('p', 'vsps-step-q', I18N.bookingFor + ': \ud83d\udc3e ' + petName));
+		var form = el('form', 'vsps-form');
+		form.innerHTML = '<textarea name="notes" placeholder="__REASON__" rows="2"></textarea>' +
+			'<p class="vsps-error" style="display:none;"></p>' +
+			'<div class="vsps-actions"><button type="submit" class="vsps-btn-primary">__CONFIRM__</button></div>';
+		form.innerHTML = form.innerHTML
+			.replace('__REASON__', escAttr(I18N.reason))
+			.replace('__CONFIRM__', escHtml(I18N.confirm));
+		step.appendChild(form);
+		step.appendChild(this.backLink(function () {
+			self.renderEmailStep();
+		}));
+		form.addEventListener('submit', function (e) {
+			e.preventDefault();
+			self.submitBooking(form, {
+				client_type: 'existing',
+				pet_is_new: false,
+				client: { given_name: '', family_name: '', email: self._bk.email, phone: '' },
+				patient: { name: petName, species: '', breed: '', sex: '', age: '', neutered: '' },
+				notes: form.querySelector('[name="notes"]').value || ''
+			});
+		});
+	};
+
+	Widget.prototype.petFieldsHtml = function () {
+		var html = '<div class="vsps-row"><input required name="pet_name" placeholder="__PET__">' +
 			'<select name="species"><option value="Canine">__DOG__</option><option value="Feline">__CAT__</option><option value="Other">__OTHER__</option></select></div>' +
-			(self.config.extendedPet ?
+			(this.config.extendedPet ?
 				'<div class="vsps-row"><input name="breed" placeholder="__BREED__">' +
 				'<select name="sex"><option value="">__SEXLABEL__</option><option value="MALE">__MALE__</option><option value="FEMALE">__FEMALE__</option></select></div>' +
 				'<div class="vsps-row"><input type="number" name="age" min="0" max="40" placeholder="__AGE__">' +
 				'<select name="neutered"><option value="">__NEUTERED__</option><option value="yes">__YES__</option><option value="no">__NO__</option></select></div>'
-			: '') +
+			: '');
+		return html
+			.replace('__PET__', escAttr(I18N.petName))
+			.replace('__DOG__', escHtml(I18N.dog)).replace('__CAT__', escHtml(I18N.cat)).replace('__OTHER__', escHtml(I18N.other))
+			.replace('__BREED__', escAttr(I18N.breed)).replace('__SEXLABEL__', escHtml(I18N.sexLabel))
+			.replace('__MALE__', escHtml(I18N.male)).replace('__FEMALE__', escHtml(I18N.female))
+			.replace('__AGE__', escAttr(I18N.ageYears)).replace('__NEUTERED__', escHtml(I18N.neuteredQ))
+			.replace('__YES__', escHtml(I18N.yes)).replace('__NO__', escHtml(I18N.no));
+	};
+
+	Widget.prototype.renderNewForm = function (prefillEmail, notice) {
+		var self = this;
+		var step = this._bk.step;
+		step.innerHTML = '';
+		if (notice) {
+			step.appendChild(el('p', 'vsps-message', notice));
+		}
+		var form = el('form', 'vsps-form');
+		form.innerHTML =
+			'<div class="vsps-row"><input required name="given_name" placeholder="__FIRST__" autocomplete="given-name">' +
+			'<input required name="family_name" placeholder="__LAST__" autocomplete="family-name"></div>' +
+			'<div class="vsps-row"><input required type="email" name="email" placeholder="__EMAILP__" autocomplete="email">' +
+			'<input required type="tel" name="phone" placeholder="__PHONE__" autocomplete="tel"></div>' +
+			this.petFieldsHtml() +
 			'<textarea name="notes" placeholder="__REASON__" rows="2"></textarea>' +
 			'<input type="text" name="vsps_hp" tabindex="-1" autocomplete="nope-937" aria-hidden="true" style="position:absolute;left:-9999px;">' +
 			'<p class="vsps-error" style="display:none;"></p>' +
@@ -779,111 +965,102 @@
 			'<button type="submit" class="vsps-btn-primary">__CONFIRM__</button></div>';
 		form.innerHTML = form.innerHTML
 			.replace('__FIRST__', escAttr(I18N.firstName)).replace('__LAST__', escAttr(I18N.lastName))
-			.replace('__EMAIL__', escAttr(I18N.email)).replace('__PHONE__', escAttr(I18N.phone))
-			.replace('__PET__', escAttr(I18N.petName)).replace('__REASON__', escAttr(I18N.reason))
-			.replace('__DOG__', escHtml(I18N.dog)).replace('__CAT__', escHtml(I18N.cat)).replace('__OTHER__', escHtml(I18N.other))
-			.replace('__BREED__', escAttr(I18N.breed)).replace('__SEXLABEL__', escHtml(I18N.sexLabel))
-			.replace('__MALE__', escHtml(I18N.male)).replace('__FEMALE__', escHtml(I18N.female))
-			.replace('__AGE__', escAttr(I18N.ageYears)).replace('__NEUTERED__', escHtml(I18N.neuteredQ))
-			.replace('__YES__', escHtml(I18N.yes)).replace('__NO__', escHtml(I18N.no))
+			.replace('__EMAILP__', escAttr(I18N.email)).replace('__PHONE__', escAttr(I18N.phone))
+			.replace('__REASON__', escAttr(I18N.reason))
 			.replace('__CANCEL__', escHtml(I18N.cancel)).replace('__CONFIRM__', escHtml(I18N.confirm));
-		modal.appendChild(form);
-
-		function onKeydown(e) { if (e.key === 'Escape') { close(); } }
-		function close() {
-			document.removeEventListener('keydown', onKeydown);
-			overlay.remove();
-		}
-		document.addEventListener('keydown', onKeydown);
-		form.querySelector('.vsps-btn-secondary').addEventListener('click', close);
-		overlay.addEventListener('click', function (e) { if (e.target === overlay) { close(); } });
-
+		step.appendChild(form);
+		step.appendChild(this.backLink(function () { self.renderChoiceStep(); }));
+		if (prefillEmail) { form.querySelector('[name="email"]').value = prefillEmail; }
+		form.querySelector('.vsps-btn-secondary').addEventListener('click', this._bk.close);
 		form.addEventListener('submit', function (e) {
 			e.preventDefault();
-			var errorEl = form.querySelector('.vsps-error');
-			var submitBtn = form.querySelector('.vsps-btn-primary');
-			errorEl.style.display = 'none';
-			submitBtn.disabled = true;
-			submitBtn.textContent = I18N.booking;
-
 			var fd = new FormData(form);
-			var payload = {
-				location_id: self.config.locationId,
-				appointment_type_id: parseInt(self.state.typeId, 10),
-				date: date,
-				time: slot.time,
-				provider_id: slot.providerId || '',
-				schedule_id: slot.scheduleId || '',
-				duration: type.duration,
-				notes: fd.get('notes') || '',
+			self.submitBooking(form, {
+				client_type: 'new',
+				pet_is_new: true,
 				vsps_hp: fd.get('vsps_hp') || '',
 				client: {
-					given_name: fd.get('given_name'),
-					family_name: fd.get('family_name'),
-					email: fd.get('email'),
-					phone: fd.get('phone')
+					given_name: fd.get('given_name'), family_name: fd.get('family_name'),
+					email: fd.get('email'), phone: fd.get('phone')
 				},
 				patient: {
-					name: fd.get('pet_name'),
-					species: fd.get('species'),
-					breed: fd.get('breed') || '',
-					sex: fd.get('sex') || '',
-					age: fd.get('age') || '',
-					neutered: fd.get('neutered') || ''
-				}
-			};
-
-			track('booking_submitted', {
-				location_id: self.config.locationId,
-				appointment_type_id: self.state.typeId,
-				date: date,
-				time: slot.time
+					name: fd.get('pet_name'), species: fd.get('species'),
+					breed: fd.get('breed') || '', sex: fd.get('sex') || '',
+					age: fd.get('age') || '', neutered: fd.get('neutered') || ''
+				},
+				notes: fd.get('notes') || ''
 			});
-
-			fetchJson(CFG.restUrl + '/book', {
-				method: 'POST',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify(payload)
-			}).then(function (data) {
-				track('booking_completed', {
-					location_id: self.config.locationId,
-					appointment_type_id: self.state.typeId,
-					appointment_id: data.appointment_id,
-					date: date,
-					time: slot.time,
-					after_hours: data.after_hours,
-					booked_at: data.booked_at
-				});
-				modal.innerHTML = '';
-				modal.appendChild(el('h4', 'vsps-modal-title', I18N.booked));
-				modal.appendChild(el('p', 'vsps-modal-sub', type.name + ' — ' + formatDateLabel(date) + ' ' + I18N.at + ' ' + formatTime(slot.time)));
-				modal.appendChild(el('p', 'vsps-message', I18N.confirmationTo));
-				var closeBtn = el('button', 'vsps-btn-primary', I18N.close);
-				closeBtn.type = 'button';
-				closeBtn.addEventListener('click', close);
-				modal.appendChild(closeBtn);
-				self.loadAvailability();
-			}).catch(function (err) {
-				track('booking_failed', {
-					location_id: self.config.locationId,
-					status: err.status || 0
-				});
-				errorEl.textContent = err.message || I18N.bookingFailed;
-				errorEl.style.display = 'block';
-				submitBtn.disabled = false;
-				submitBtn.textContent = I18N.confirm;
-			});
-		});
-
-		document.body.appendChild(overlay);
-		track('form_started', {
-			location_id: self.config.locationId,
-			appointment_type_id: self.state.typeId,
-			date: date,
-			time: slot.time,
-			layout: self.layout
 		});
 		form.querySelector('[name="given_name"]').focus();
+	};
+
+	Widget.prototype.submitBooking = function (form, payload) {
+		var self = this;
+		var bk = this._bk;
+		var errorEl = form.querySelector('.vsps-error');
+		var submitBtn = form.querySelector('.vsps-btn-primary');
+		errorEl.style.display = 'none';
+		submitBtn.disabled = true;
+		submitBtn.textContent = I18N.booking;
+		// One submission at a time: freeze back-navigation and tag the request
+		// so a stale response can never overwrite a newer screen.
+		var reqToken = (bk.reqToken = (bk.reqToken || 0) + 1);
+		bk.step.querySelectorAll('.vsps-back').forEach(function (b) { b.disabled = true; b.style.opacity = '0.4'; });
+
+		payload.location_id = this.config.locationId;
+		payload.appointment_type_id = parseInt(this.state.typeId, 10);
+		payload.date = bk.date;
+		payload.time = bk.slot.time;
+		payload.provider_id = bk.slot.providerId || '';
+		payload.schedule_id = bk.slot.scheduleId || '';
+		if (!('vsps_hp' in payload)) { payload.vsps_hp = ''; }
+
+		track('booking_submitted', {
+			location_id: this.config.locationId,
+			appointment_type_id: this.state.typeId,
+			date: bk.date,
+			time: bk.slot.time,
+			client_type: payload.client_type
+		});
+
+		fetchJson(CFG.restUrl + '/book', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify(payload)
+		}).then(function (data) {
+			if (reqToken !== bk.reqToken) { return; }
+			track('booking_completed', {
+				location_id: self.config.locationId,
+				appointment_type_id: self.state.typeId,
+				appointment_id: data.appointment_id,
+				date: bk.date,
+				time: bk.slot.time,
+				client_type: payload.client_type,
+				after_hours: data.after_hours,
+				booked_at: data.booked_at
+			});
+			bk.modal.innerHTML = '';
+			bk.modal.appendChild(el('h4', 'vsps-modal-title', I18N.booked));
+			bk.modal.appendChild(el('p', 'vsps-modal-sub', bk.type.name + ' \u2014 ' + formatDateLabel(bk.date) + ' ' + I18N.at + ' ' + formatTime(bk.slot.time)));
+			bk.modal.appendChild(el('p', 'vsps-message', I18N.confirmationTo));
+			var closeBtn = el('button', 'vsps-btn-primary', I18N.close);
+			closeBtn.type = 'button';
+			closeBtn.addEventListener('click', bk.close);
+			bk.modal.appendChild(closeBtn);
+			self.loadAvailability();
+		}).catch(function (err) {
+			if (reqToken !== bk.reqToken) { return; }
+			track('booking_failed', {
+				location_id: self.config.locationId,
+				status: err.status || 0,
+				client_type: payload.client_type
+			});
+			errorEl.textContent = err.message || I18N.bookingFailed;
+			errorEl.style.display = 'block';
+			submitBtn.disabled = false;
+			submitBtn.textContent = I18N.confirm;
+			bk.step.querySelectorAll('.vsps-back').forEach(function (b) { b.disabled = false; b.style.opacity = ''; });
+		});
 	};
 
 	/* ---------- boot ---------- */

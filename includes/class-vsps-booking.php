@@ -78,6 +78,11 @@ class VSPS_Booking {
 		if ( is_wp_error( $client ) ) {
 			return $client;
 		}
+		// Returning-client flow: the client MUST already exist - never create one
+		// from this path (the visitor only supplied an email).
+		if ( ! empty( $args['client_type'] ) && 'existing' === $args['client_type'] && ! $client ) {
+			return new WP_Error( 'vsps_client_missing', 'We could not find that email. Please book as a new client.' );
+		}
 		if ( $client ) {
 			$existing_client = true;
 		} else {
@@ -99,6 +104,9 @@ class VSPS_Booking {
 
 		// 2. Reuse the client's patient when the name matches, otherwise create it.
 		$patient_id = self::match_patient( $client, $args['patient']['name'] );
+		if ( null === $patient_id && ! empty( $args['client_type'] ) && 'existing' === $args['client_type'] && empty( $args['pet_is_new'] ) ) {
+			return new WP_Error( 'vsps_pet_missing', 'We could not find that pet on your account. Please pick again or add it as a new pet.' );
+		}
 		if ( null === $patient_id ) {
 			$patient_input = array(
 				'name'    => $args['patient']['name'],
