@@ -281,7 +281,8 @@ class VSPS_Admin_Schedule {
 			echo '<td>' . esc_html( isset( $appt['type']['name'] ) ? $appt['type']['name'] : '—' ) . '</td>';
 			echo '<td>' . esc_html( isset( $appt['provider']['name'] ) ? $appt['provider']['name'] : '—' ) . '</td>';
 			echo '<td>' . esc_html( $appt['status'] ) . ( $appt['isConfirmed'] ? ' ✅' : '' ) . '</td>';
-			echo '<td>' . ( $online ? '<span style="background:#2f6f4f;color:#fff;border-radius:4px;padding:2px 8px;font-size:11px;">ONLINE</span>' : '<span style="color:#999;">Vetspire</span>' ) . '</td>';
+			$badge = strtoupper( vsps_get_settings()['source_label'] ?: 'Online' );
+			echo '<td>' . ( $online ? '<span style="background:#2f6f4f;color:#fff;border-radius:4px;padding:2px 8px;font-size:11px;">' . esc_html( $badge ) . '</span>' : '<span style="color:#999;">Vetspire</span>' ) . '</td>';
 			echo '<td>';
 			if ( $online ) {
 				self::action_buttons( $appt, $date );

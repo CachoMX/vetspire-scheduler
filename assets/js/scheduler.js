@@ -3,8 +3,8 @@
  * Vanilla JS, no dependencies. Talks only to the WP REST proxy
  * (never to the Vetspire API directly).
  *
- * Layouts: full (default), bar (Thrive-style strip), calendar (Chewy-style
- * month picker), float (VCA-style "first available" card). All layouts share
+ * Layouts: full (default), bar (horizontal strip), calendar (month
+ * picker), float (compact "first available" card). All layouts share
  * the same booking modal and analytics events.
  */
 (function () {
@@ -275,7 +275,7 @@
 		}
 	};
 
-	/** Thrive-style slide-in drawer with map, contact info and hours. */
+	/** Slide-in drawer with map, contact info and hours. */
 	Widget.prototype.openDrawer = function () {
 		var self = this;
 		var info = this.locInfo;
@@ -571,7 +571,7 @@
 		this.contentEl.appendChild(grid);
 	};
 
-	/* ---------- layout: bar (Thrive-style) ---------- */
+	/* ---------- layout: bar (horizontal strip) ---------- */
 
 	Widget.prototype.renderBar = function () {
 		var self = this;
@@ -604,7 +604,7 @@
 		this.contentEl.appendChild(bar);
 	};
 
-	/* ---------- layout: calendar (Chewy-style) ---------- */
+	/* ---------- layout: calendar (month picker) ---------- */
 
 	Widget.prototype.renderCalendar = function () {
 		var self = this;
@@ -686,7 +686,7 @@
 		this.contentEl.appendChild(wrap);
 	};
 
-	/* ---------- layout: float (VCA-style) ---------- */
+	/* ---------- layout: float (compact card) ---------- */
 
 	Widget.prototype.renderFloat = function () {
 		var self = this;
@@ -845,7 +845,9 @@
 					appointment_type_id: self.state.typeId,
 					appointment_id: data.appointment_id,
 					date: date,
-					time: slot.time
+					time: slot.time,
+					after_hours: data.after_hours,
+					booked_at: data.booked_at
 				});
 				modal.innerHTML = '';
 				modal.appendChild(el('h4', 'vsps-modal-title', I18N.booked));
@@ -869,6 +871,13 @@
 		});
 
 		document.body.appendChild(overlay);
+		track('form_started', {
+			location_id: self.config.locationId,
+			appointment_type_id: self.state.typeId,
+			date: date,
+			time: slot.time,
+			layout: self.layout
+		});
 		form.querySelector('[name="given_name"]').focus();
 	};
 

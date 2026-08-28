@@ -136,7 +136,8 @@ class VSPS_Booking {
 			'duration'          => $duration,
 			'bookedOnline'      => true,
 			'sendConfirmation'  => true,
-			'reason'            => 'Online booking' . ( '' !== $args['notes'] ? ': ' . $args['notes'] : '' ),
+			'reason'            => ( isset( $args['source_label'] ) && '' !== $args['source_label'] ? $args['source_label'] : 'Online' )
+				. ' booking' . ( '' !== $args['notes'] ? ': ' . $args['notes'] : '' ),
 		);
 		if ( '' !== $provider_id ) {
 			$input['providerId'] = $provider_id;

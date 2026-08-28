@@ -272,7 +272,7 @@
 	}
 }
 
-/* ---------- layout: bar (Thrive-style strip) ---------- */
+/* ---------- layout: bar (horizontal strip) ---------- */
 
 .vsps-widget.vsps-layout-bar {
 	max-width: none;
@@ -357,7 +357,7 @@
 	font-family: inherit;
 }
 
-/* ---------- layout: calendar (Chewy-style) ---------- */
+/* ---------- layout: calendar (month picker) ---------- */
 
 .vsps-widget.vsps-layout-calendar {
 	max-width: 420px;
@@ -467,7 +467,7 @@
 	color: #fff;
 }
 
-/* ---------- layout: float (VCA-style card) ---------- */
+/* ---------- layout: float (compact card) ---------- */
 
 .vsps-widget.vsps-layout-float {
 	max-width: 460px;
@@ -566,7 +566,7 @@
 	background: transparent;
 }
 
-/* Location strip + status chip (Thrive-style "Currently Viewing") */
+/* Location strip + status chip ("Currently Viewing") */
 .vsps-widget .vsps-chip {
 	display: inline-block;
 	padding: 4px 12px;
@@ -648,7 +648,7 @@
 }
 
 .vsps-overlay .vsps-drawer {
-	/* Branded tint of the primary color (Thrive-style); solid fallback first. */
+	/* Branded tint of the primary color; solid fallback first. */
 	background: #f4f8f6;
 	background: color-mix(in srgb, var(--vsps-primary, #2f6f4f) 7%, #ffffff);
 	width: 400px;

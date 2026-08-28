@@ -306,6 +306,10 @@ class VSPS_Rest {
 			return new WP_Error( 'vsps_rate', 'Too many booking attempts. Please call the clinic.', array( 'status' => 429 ) );
 		}
 
+		$settings = vsps_get_settings();
+		$args['source_label'] = isset( $settings['source_label'] ) && '' !== trim( (string) $settings['source_label'] )
+			? substr( sanitize_text_field( $settings['source_label'] ), 0, 40 ) : 'Online';
+
 		$result = VSPS_Booking::book( $api, $args );
 		if ( is_wp_error( $result ) ) {
 			// Slot-taken / type-not-bookable are safe, actionable messages for the visitor.
@@ -320,10 +324,30 @@ class VSPS_Rest {
 		// The just-booked slot is gone: refresh this day's cached availability.
 		VSPS_Cache::forget( array( 'avail', (int) $args['location_id'], (int) $args['appointment_type_id'], $args['date'] ) );
 
+		// Booked during vs after office hours (computed server-side, clinic timezone).
+		$after_hours = null;
+		$booked_at   = null;
+		$info        = VSPS_Cache::remember( array( 'locinfo', (int) $args['location_id'] ), function () use ( $api, $args ) {
+			return $api->get_location_info( $args['location_id'] );
+		}, 300 );
+		if ( ! is_wp_error( $info ) && null !== $info && ! empty( $info['timezone'] ) ) {
+			try {
+				$booked_at = ( new DateTimeImmutable( 'now', new DateTimeZone( $info['timezone'] ) ) )->format( 'c' );
+			} catch ( Exception $e ) {
+				$booked_at = null;
+			}
+			$status = self::open_status( isset( $info['locationHours'] ) ? $info['locationHours'] : null, $info['timezone'] );
+			if ( null !== $status ) {
+				$after_hours = ! $status['open'];
+			}
+		}
+
 		return rest_ensure_response( array(
 			'success'        => true,
 			'appointment_id' => $result['appointment_id'],
 			'start'          => $result['start'],
+			'after_hours'    => $after_hours,
+			'booked_at'      => $booked_at,
 		) );
 	}
 

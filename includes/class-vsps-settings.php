@@ -53,6 +53,8 @@ class VSPS_Settings {
 			'cache_ttl'         => isset( $current['cache_ttl'] ) ? (int) $current['cache_ttl'] : 300,
 			'analytics_enabled' => empty( $input['analytics_enabled'] ) ? 0 : 1,
 			'extended_pet_fields' => empty( $input['extended_pet_fields'] ) ? 0 : 1,
+			'source_label'      => '' !== trim( isset( $input['source_label'] ) ? $input['source_label'] : '' )
+				? substr( sanitize_text_field( $input['source_label'] ), 0, 40 ) : 'Online',
 			'primary_color'     => sanitize_hex_color( isset( $input['primary_color'] ) ? $input['primary_color'] : '#2f6f4f' ),
 			'layout'            => in_array( isset( $input['layout'] ) ? $input['layout'] : 'full', array( 'full', 'bar', 'calendar', 'float' ), true ) ? $input['layout'] : 'full',
 			'default_type'      => absint( isset( $input['default_type'] ) ? $input['default_type'] : 0 ) ? (string) absint( $input['default_type'] ) : '',
@@ -274,7 +276,13 @@ class VSPS_Settings {
 										value="1" <?php checked( 1, (int) $settings['extended_pet_fields'] ); ?> />
 									Ask for extended pet details (breed, sex, age, spayed/neutered — all optional)
 								</label>
-								<p class="description" style="margin-bottom:0;">Off = shortest form (contact + pet name and species) — shorter forms convert better. On adds the optional fields in the same single screen.</p>
+								<p class="description">Off = shortest form (contact + pet name and species) — shorter forms convert better. On adds the optional fields in the same single screen.</p>
+								<p style="margin-bottom:0;">
+									<label for="vsps_source_label"><strong>Booking source label</strong></label>
+									<input type="text" id="vsps_source_label" name="<?php echo esc_attr( $opt ); ?>[source_label]"
+										value="<?php echo esc_attr( $settings['source_label'] ); ?>" class="regular-text" style="margin-left:8px;max-width:200px;" maxlength="40" />
+								</p>
+								<p class="description" style="margin-bottom:0;">Tags appointments sent by this widget (shows in the appointment reason in Vetspire and as the badge in the Appointments view). E.g. "Vetcelerator".</p>
 							</div>
 						</div>
 
