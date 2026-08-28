@@ -490,6 +490,13 @@
 
 		var titleEl = this.root.querySelector('.vsps-title');
 		var inner = el('div', 'vsps-widget vsps-embedded');
+		// The .vsps-widget class defines a default --vsps-primary, which would
+		// override the overlay's inherited value — set it inline like the
+		// shortcode does so the brand color survives into the modal.
+		try {
+			var brandColor = window.getComputedStyle(this.root).getPropertyValue('--vsps-primary');
+			if (brandColor) { inner.style.setProperty('--vsps-primary', brandColor.trim()); }
+		} catch (e) { /* non-blocking */ }
 		var cfg = {};
 		Object.keys(this.config).forEach(function (k) { cfg[k] = self.config[k]; });
 		cfg.layout = 'full';
