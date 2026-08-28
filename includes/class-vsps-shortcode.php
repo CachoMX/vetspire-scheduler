@@ -41,6 +41,7 @@ class VSPS_Shortcode {
 			'link_url'             => '',
 			'title'                => __( 'Book an Appointment', 'vetspire-scheduler' ),
 			'layout'               => $settings['layout'], // full | bar | calendar | float
+			'variant'              => '',       // a = minimal form, b = with optional questions
 		), $atts, 'vetspire_scheduler' );
 
 		$location_id = absint( $atts['location_id'] );
@@ -122,6 +123,21 @@ class VSPS_Shortcode {
 
 		$layout = in_array( $atts['layout'], array( 'full', 'bar', 'calendar', 'float' ), true ) ? $atts['layout'] : 'full';
 
+		$variant    = in_array( strtolower( $atts['variant'] ), array( 'a', 'b' ), true ) ? strtolower( $atts['variant'] ) : '';
+		$pet_fields = array(
+			'breed'    => (int) $settings['ask_breed'],
+			'sex'      => (int) $settings['ask_sex'],
+			'age'      => (int) $settings['ask_age'],
+			'neutered' => (int) $settings['ask_neutered'],
+		);
+		if ( 'a' === $variant ) {
+			$pet_fields = array( 'breed' => 0, 'sex' => 0, 'age' => 0, 'neutered' => 0 );
+		} elseif ( 'b' === $variant && 0 === array_sum( $pet_fields ) ) {
+			// Variant B with nothing configured would be identical to A — turn
+			// everything on so the test actually compares something.
+			$pet_fields = array( 'breed' => 1, 'sex' => 1, 'age' => 1, 'neutered' => 1 );
+		}
+
 		$config = array(
 			'locationId'    => $location_id,
 			'typeIds'       => $type_ids,
@@ -130,7 +146,8 @@ class VSPS_Shortcode {
 			'linkUrl'       => esc_url_raw( $atts['link_url'] ),
 			'layout'        => $layout,
 			'defaultTypeId' => absint( $settings['default_type'] ),
-			'extendedPet'   => (int) $settings['extended_pet_fields'],
+			'petFields'     => $pet_fields,
+			'variant'       => $variant,
 		);
 
 		$style = '--vsps-primary:' . esc_attr( $settings['primary_color'] ) . ';';

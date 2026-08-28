@@ -437,6 +437,22 @@ class VSPS_Rest {
 			),
 		);
 
+		// Data governance: fields the admin disabled never reach Vetspire,
+		// even from forged requests that bypass the form.
+		$governance = vsps_get_settings();
+		if ( empty( $governance['ask_breed'] ) ) {
+			$args['patient']['breed'] = '';
+		}
+		if ( empty( $governance['ask_sex'] ) ) {
+			$args['patient']['sex'] = '';
+		}
+		if ( empty( $governance['ask_age'] ) ) {
+			$args['patient']['age'] = 0;
+		}
+		if ( empty( $governance['ask_neutered'] ) ) {
+			$args['patient']['neutered'] = '';
+		}
+
 		if ( ! $args['location_id'] || ! $args['appointment_type_id'] ) {
 			return new WP_Error( 'vsps_invalid', 'Missing location or appointment type.', array( 'status' => 400 ) );
 		}

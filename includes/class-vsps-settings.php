@@ -50,6 +50,7 @@ class VSPS_Settings {
 		// the key on a live site would silently wipe layout/analytics/toggles.
 		if ( ! empty( $input['connect_only'] ) ) {
 			$merged                 = array_merge( vsps_get_settings(), $current );
+			$merged['extended_pet_fields'] = 0; // legacy key, superseded by ask_*
 			$merged['api_endpoint'] = esc_url_raw( isset( $input['api_endpoint'] ) ? $input['api_endpoint'] : 'https://api.vetspire.com/graphql' );
 			$token                  = isset( $input['api_token'] ) ? trim( $input['api_token'] ) : '';
 			if ( '' !== $token && false === strpos( $token, '•' ) ) {
@@ -66,7 +67,11 @@ class VSPS_Settings {
 			'api_endpoint'      => esc_url_raw( isset( $input['api_endpoint'] ) ? $input['api_endpoint'] : 'https://api.vetspire.com/graphql' ),
 			'cache_ttl'         => isset( $current['cache_ttl'] ) ? (int) $current['cache_ttl'] : 300,
 			'analytics_enabled' => empty( $input['analytics_enabled'] ) ? 0 : 1,
-			'extended_pet_fields' => empty( $input['extended_pet_fields'] ) ? 0 : 1,
+			'extended_pet_fields' => 0,
+			'ask_breed'         => empty( $input['ask_breed'] ) ? 0 : 1,
+			'ask_sex'           => empty( $input['ask_sex'] ) ? 0 : 1,
+			'ask_age'           => empty( $input['ask_age'] ) ? 0 : 1,
+			'ask_neutered'      => empty( $input['ask_neutered'] ) ? 0 : 1,
 			'admin_actions_enabled' => empty( $input['admin_actions_enabled'] ) ? 0 : 1,
 			'admin_show_client'     => empty( $input['admin_show_client'] ) ? 0 : 1,
 			'source_label'      => '' !== trim( isset( $input['source_label'] ) ? $input['source_label'] : '' )
@@ -292,12 +297,22 @@ class VSPS_Settings {
 						<div class="vsps-box">
 							<h2>Booking Form</h2>
 							<div class="inside">
-								<label>
-									<input type="checkbox" name="<?php echo esc_attr( $opt ); ?>[extended_pet_fields]"
-										value="1" <?php checked( 1, (int) $settings['extended_pet_fields'] ); ?> />
-									Ask for extended pet details (breed, sex, age, spayed/neutered — all optional)
-								</label>
-								<p class="description">Off = shortest form (contact + pet name and species) — shorter forms convert better. On adds the optional fields in the same single screen.</p>
+								<p style="margin-top:0;"><strong>Optional pet questions</strong> (each adds one field to the same single screen; fewer fields convert better):</p>
+								<?php
+								$ask_fields = array(
+									'ask_breed'    => 'Breed',
+									'ask_sex'      => 'Sex',
+									'ask_age'      => 'Age (years)',
+									'ask_neutered' => 'Spayed / Neutered',
+								);
+								foreach ( $ask_fields as $ask_key => $ask_label ) : ?>
+									<label style="display:inline-block;margin:0 16px 6px 0;">
+										<input type="checkbox" name="<?php echo esc_attr( $opt ); ?>[<?php echo esc_attr( $ask_key ); ?>]"
+											value="1" <?php checked( 1, (int) $settings[ $ask_key ] ); ?> />
+										<?php echo esc_html( $ask_label ); ?>
+									</label>
+								<?php endforeach; ?>
+								<p class="description">All questions map 1:1 to Vetspire fields. A/B test: add <code>variant="a"</code> (minimal) or <code>variant="b"</code> (with the checked questions) to two copies of the shortcode.</p>
 								<p style="margin-bottom:0;">
 									<label for="vsps_source_label"><strong>Booking source label</strong></label>
 									<input type="text" id="vsps_source_label" name="<?php echo esc_attr( $opt ); ?>[source_label]"
@@ -431,6 +446,11 @@ class VSPS_Settings {
 						var cfg = JSON.parse(preview.getAttribute('data-vsps-config'));
 						cfg.locationId = locationId;
 						cfg.layout = currentLayout();
+						cfg.petFields = {};
+						['breed', 'sex', 'age', 'neutered'].forEach(function (f) {
+							var cb = document.querySelector('input[name*="ask_' + f + '"]');
+							cfg.petFields[f] = cb && cb.checked ? 1 : 0;
+						});
 						var typeSel = document.getElementById('vsps_default_type');
 						cfg.defaultTypeId = ( typeSel && ! typeSel.disabled ) ? parseInt(typeSel.value, 10) || 0 : 0;
 						preview.setAttribute('data-vsps-config', JSON.stringify(cfg));
@@ -464,6 +484,9 @@ class VSPS_Settings {
 				}
 				var typeSelMain = document.getElementById('vsps_default_type');
 				if (typeSelMain) { typeSelMain.addEventListener('change', reinit); }
+				document.querySelectorAll('input[name*="ask_"]').forEach(function (cb) {
+					cb.addEventListener('change', reinit);
+				});
 				document.querySelectorAll('.vsps-layout-radio').forEach(function (radio) {
 					radio.addEventListener('change', function () {
 						document.querySelectorAll('.vsps-card').forEach(function (c) { c.classList.remove('is-selected'); });

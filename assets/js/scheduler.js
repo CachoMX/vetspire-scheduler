@@ -191,10 +191,17 @@
 		this.init();
 	}
 
+	/** All widget events go through here so the A/B variant tags every one. */
+	Widget.prototype.track = function (name, data) {
+		data = data || {};
+		if (this.config.variant) { data.variant = this.config.variant; }
+		track(name, data);
+	};
+
 	Widget.prototype.init = function () {
 		var self = this;
 		if (!this.config._embedded) {
-			track('widget_view', { location_id: this.config.locationId, layout: this.layout });
+			this.track('widget_view', { location_id: this.config.locationId, layout: this.layout });
 		}
 		fetchJson(CFG.restUrl + '/types?location_id=' + this.config.locationId)
 			.then(function (data) {
@@ -295,7 +302,7 @@
 		var self = this;
 		var info = this.locInfo;
 		if (!info) { return; }
-		track('location_details_open', { location_id: this.config.locationId });
+		this.track('location_details_open', { location_id: this.config.locationId });
 
 		var overlay = el('div', 'vsps-overlay vsps-drawer-overlay');
 		var drawer = el('aside', 'vsps-drawer');
@@ -538,7 +545,7 @@
 		btn.type = 'button';
 		if (slot.provider && slot.provider.name) { btn.title = slot.provider.name; }
 		btn.addEventListener('click', function () {
-			track('slot_selected', {
+			self.track('slot_selected', {
 				location_id: self.config.locationId,
 				appointment_type_id: self.state.typeId,
 				date: dayIso,
@@ -722,7 +729,7 @@
 			btn.appendChild(el('span', 'vsps-float-time', formatTime(f.slot.time).toLowerCase()));
 			btn.appendChild(el('span', 'vsps-float-date', formatShortDate(f.date)));
 			btn.addEventListener('click', function () {
-				track('slot_selected', {
+				self.track('slot_selected', {
 					location_id: self.config.locationId,
 					appointment_type_id: self.state.typeId,
 					date: f.date,
@@ -782,7 +789,7 @@
 
 		this._bk = { date: date, slot: slot, type: type, modal: modal, step: step, close: close, clientType: 'new' };
 		document.body.appendChild(overlay);
-		track('form_started', {
+		this.track('form_started', {
 			location_id: this.config.locationId,
 			appointment_type_id: this.state.typeId,
 			date: date,
@@ -926,14 +933,19 @@
 	};
 
 	Widget.prototype.petFieldsHtml = function () {
+		var pf = this.config.petFields || {};
+		var optional = [];
+		if (pf.breed) { optional.push('<input name="breed" placeholder="__BREED__">'); }
+		if (pf.sex) { optional.push('<select name="sex"><option value="">__SEXLABEL__</option><option value="MALE">__MALE__</option><option value="FEMALE">__FEMALE__</option></select>'); }
+		if (pf.age) { optional.push('<input type="number" name="age" min="0" max="40" placeholder="__AGE__">'); }
+		if (pf.neutered) { optional.push('<select name="neutered"><option value="">__NEUTERED__</option><option value="yes">__YES__</option><option value="no">__NO__</option></select>'); }
+		var rows = '';
+		for (var i = 0; i < optional.length; i += 2) {
+			rows += '<div class="vsps-row">' + optional[i] + (optional[i + 1] || '') + '</div>';
+		}
 		var html = '<div class="vsps-row"><input required name="pet_name" placeholder="__PET__">' +
 			'<select name="species"><option value="Canine">__DOG__</option><option value="Feline">__CAT__</option><option value="Other">__OTHER__</option></select></div>' +
-			(this.config.extendedPet ?
-				'<div class="vsps-row"><input name="breed" placeholder="__BREED__">' +
-				'<select name="sex"><option value="">__SEXLABEL__</option><option value="MALE">__MALE__</option><option value="FEMALE">__FEMALE__</option></select></div>' +
-				'<div class="vsps-row"><input type="number" name="age" min="0" max="40" placeholder="__AGE__">' +
-				'<select name="neutered"><option value="">__NEUTERED__</option><option value="yes">__YES__</option><option value="no">__NO__</option></select></div>'
-			: '');
+			rows;
 		return html
 			.replace('__PET__', escAttr(I18N.petName))
 			.replace('__DOG__', escHtml(I18N.dog)).replace('__CAT__', escHtml(I18N.cat)).replace('__OTHER__', escHtml(I18N.other))
@@ -1015,7 +1027,7 @@
 		payload.schedule_id = bk.slot.scheduleId || '';
 		if (!('vsps_hp' in payload)) { payload.vsps_hp = ''; }
 
-		track('booking_submitted', {
+		this.track('booking_submitted', {
 			location_id: this.config.locationId,
 			appointment_type_id: this.state.typeId,
 			date: bk.date,
@@ -1029,7 +1041,7 @@
 			body: JSON.stringify(payload)
 		}).then(function (data) {
 			if (reqToken !== bk.reqToken) { return; }
-			track('booking_completed', {
+			self.track('booking_completed', {
 				location_id: self.config.locationId,
 				appointment_type_id: self.state.typeId,
 				appointment_id: data.appointment_id,
@@ -1050,7 +1062,7 @@
 			self.loadAvailability();
 		}).catch(function (err) {
 			if (reqToken !== bk.reqToken) { return; }
-			track('booking_failed', {
+			self.track('booking_failed', {
 				location_id: self.config.locationId,
 				status: err.status || 0,
 				client_type: payload.client_type
