@@ -45,6 +45,20 @@ class VSPS_Settings {
 			return $current;
 		}
 
+		// Connect-card saves post ONLY the token (+ endpoint). Merge them into the
+		// stored settings instead of rebuilding everything — otherwise re-entering
+		// the key on a live site would silently wipe layout/analytics/toggles.
+		if ( ! empty( $input['connect_only'] ) ) {
+			$merged                 = array_merge( vsps_get_settings(), $current );
+			$merged['api_endpoint'] = esc_url_raw( isset( $input['api_endpoint'] ) ? $input['api_endpoint'] : 'https://api.vetspire.com/graphql' );
+			$token                  = isset( $input['api_token'] ) ? trim( $input['api_token'] ) : '';
+			if ( '' !== $token && false === strpos( $token, '•' ) ) {
+				$merged['api_token'] = sanitize_text_field( $token );
+			}
+			VSPS_Cache::flush();
+			return $merged;
+		}
+
 		$default_location = absint( isset( $input['default_location'] ) ? $input['default_location'] : 0 );
 		$default_location = $default_location ? (string) $default_location : '';
 
@@ -53,10 +67,12 @@ class VSPS_Settings {
 			'cache_ttl'         => isset( $current['cache_ttl'] ) ? (int) $current['cache_ttl'] : 300,
 			'analytics_enabled' => empty( $input['analytics_enabled'] ) ? 0 : 1,
 			'extended_pet_fields' => empty( $input['extended_pet_fields'] ) ? 0 : 1,
+			'admin_actions_enabled' => empty( $input['admin_actions_enabled'] ) ? 0 : 1,
+			'admin_show_client'     => empty( $input['admin_show_client'] ) ? 0 : 1,
 			'source_label'      => '' !== trim( isset( $input['source_label'] ) ? $input['source_label'] : '' )
 				? substr( sanitize_text_field( $input['source_label'] ), 0, 40 ) : 'Online',
 			'primary_color'     => sanitize_hex_color( isset( $input['primary_color'] ) ? $input['primary_color'] : '#2f6f4f' ),
-			'layout'            => in_array( isset( $input['layout'] ) ? $input['layout'] : 'full', array( 'full', 'bar', 'calendar', 'float' ), true ) ? $input['layout'] : 'full',
+			'layout'            => self::valid_layout( isset( $input['layout'] ) ? $input['layout'] : 'full' ),
 			'default_type'      => absint( isset( $input['default_type'] ) ? $input['default_type'] : 0 ) ? (string) absint( $input['default_type'] ) : '',
 			'default_location'  => $default_location,
 			// One site = one location: the REST layer only allows the selected one.
@@ -72,6 +88,10 @@ class VSPS_Settings {
 		}
 		VSPS_Cache::flush();
 		return $clean;
+	}
+
+	private static function valid_layout( $layout ) {
+		return in_array( $layout, array( 'full', 'bar', 'calendar', 'float' ), true ) ? $layout : 'full';
 	}
 
 	/** Locations from the API for the picker (cached 10 min). Null on failure. */
@@ -128,6 +148,7 @@ class VSPS_Settings {
 				<form method="post" action="options.php">
 					<?php settings_fields( 'vsps_settings_group' ); ?>
 					<input type="hidden" name="<?php echo esc_attr( VSPS_OPTION_KEY ); ?>[api_endpoint]" value="https://api.vetspire.com/graphql" />
+					<input type="hidden" name="<?php echo esc_attr( VSPS_OPTION_KEY ); ?>[connect_only]" value="1" />
 					<p>
 						<input type="password" name="<?php echo esc_attr( VSPS_OPTION_KEY ); ?>[api_token]"
 							class="regular-text" style="width:100%;" placeholder="Vetspire API Key" autocomplete="off" required />
@@ -283,6 +304,24 @@ class VSPS_Settings {
 										value="<?php echo esc_attr( $settings['source_label'] ); ?>" class="regular-text" style="margin-left:8px;max-width:200px;" maxlength="40" />
 								</p>
 								<p class="description" style="margin-bottom:0;">Tags appointments sent by this widget (shows in the appointment reason in Vetspire and as the badge in the Appointments view). E.g. "Vetcelerator".</p>
+							</div>
+						</div>
+
+						<div class="vsps-box">
+							<h2>Admin View</h2>
+							<div class="inside">
+								<label style="display:block;margin-bottom:8px;">
+									<input type="checkbox" name="<?php echo esc_attr( $opt ); ?>[admin_actions_enabled]"
+										value="1" <?php checked( 1, (int) $settings['admin_actions_enabled'] ); ?> />
+									Enable appointment actions (Confirm / Reschedule / Cancel) in the Appointments view
+								</label>
+								<p class="description">Keep ON while testing. <strong>Turn OFF at go-live</strong> so nobody can accidentally change a real appointment from WordPress — everything is still managed in Vetspire.</p>
+								<label style="display:block;margin:10px 0 8px;">
+									<input type="checkbox" name="<?php echo esc_attr( $opt ); ?>[admin_show_client]"
+										value="1" <?php checked( 1, (int) $settings['admin_show_client'] ); ?> />
+									Show the client name &amp; phone column
+								</label>
+								<p class="description" style="margin-bottom:0;">Off by default — pet names are enough for the schedule overview, and owner details stay in Vetspire.</p>
 							</div>
 						</div>
 

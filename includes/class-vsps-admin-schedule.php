@@ -123,6 +123,13 @@ class VSPS_Admin_Schedule {
 		}
 		check_admin_referer( 'vsps_appt_action' );
 
+		// Server-side kill switch (SOW 0.7): when actions are disabled in
+		// Settings, no write ever reaches Vetspire — not just hidden buttons.
+		if ( empty( vsps_get_settings()['admin_actions_enabled'] ) ) {
+			wp_safe_redirect( admin_url( 'admin.php?page=vsps-appointments&vsps_msg=disabled' ) );
+			exit;
+		}
+
 		$api = vsps_api();
 		$id  = isset( $_POST['appt_id'] ) ? sanitize_text_field( wp_unslash( $_POST['appt_id'] ) ) : '';
 		$do  = isset( $_POST['do'] ) ? sanitize_text_field( wp_unslash( $_POST['do'] ) ) : '';
@@ -233,6 +240,8 @@ class VSPS_Admin_Schedule {
 			echo '<div class="notice notice-success is-dismissible"><p>Done — the appointment was updated in Vetspire.</p></div>';
 		} elseif ( 'err' === $msg ) {
 			echo '<div class="notice notice-error is-dismissible"><p>The action could not be completed (the time may no longer be available).</p></div>';
+		} elseif ( 'disabled' === $msg ) {
+			echo '<div class="notice notice-warning is-dismissible"><p>Appointment actions are disabled in Settings. Manage appointments in Vetspire.</p></div>';
 		} elseif ( 'notonline' === $msg ) {
 			echo '<div class="notice notice-warning is-dismissible"><p>Only appointments booked online through the website widget can be managed here. Use Vetspire for everything else.</p></div>';
 		}
@@ -261,8 +270,13 @@ class VSPS_Admin_Schedule {
 			return;
 		}
 
+		$settings_admin  = vsps_get_settings();
+		$actions_enabled = ! empty( $settings_admin['admin_actions_enabled'] );
+		$show_client     = ! empty( $settings_admin['admin_show_client'] );
+
 		echo '<table class="widefat striped"><thead><tr>'
-			. '<th>Time</th><th>Client</th><th>Pet</th><th>Type</th><th>Provider</th><th>Status</th><th>Source</th><th>Actions</th>'
+			. '<th>Time</th>' . ( $show_client ? '<th>Client</th>' : '' ) . '<th>Pet</th><th>Type</th><th>Provider</th><th>Status</th><th>Source</th>'
+			. ( $actions_enabled ? '<th>Actions</th>' : '' )
 			. '</tr></thead><tbody>';
 
 		foreach ( $appts as $appt ) {
@@ -276,20 +290,25 @@ class VSPS_Admin_Schedule {
 
 			echo '<tr>';
 			echo '<td><strong>' . esc_html( self::local_time( $appt['start'], $ctx['timezone'] ) ) . '</strong><br /><span style="color:#777;">' . esc_html( $appt['duration'] ) . ' min</span></td>';
-			echo '<td>' . esc_html( $client_name ) . ( $client_phone ? '<br /><span style="color:#777;">' . esc_html( $client_phone ) . '</span>' : '' ) . '</td>';
+			if ( $show_client ) {
+				echo '<td>' . esc_html( $client_name ) . ( $client_phone ? '<br /><span style="color:#777;">' . esc_html( $client_phone ) . '</span>' : '' ) . '</td>';
+			}
 			echo '<td>' . esc_html( isset( $appt['patient']['name'] ) ? $appt['patient']['name'] : '—' ) . '</td>';
 			echo '<td>' . esc_html( isset( $appt['type']['name'] ) ? $appt['type']['name'] : '—' ) . '</td>';
 			echo '<td>' . esc_html( isset( $appt['provider']['name'] ) ? $appt['provider']['name'] : '—' ) . '</td>';
 			echo '<td>' . esc_html( $appt['status'] ) . ( $appt['isConfirmed'] ? ' ✅' : '' ) . '</td>';
 			$badge = strtoupper( vsps_get_settings()['source_label'] ?: 'Online' );
 			echo '<td>' . ( $online ? '<span style="background:#2f6f4f;color:#fff;border-radius:4px;padding:2px 8px;font-size:11px;">' . esc_html( $badge ) . '</span>' : '<span style="color:#999;">Vetspire</span>' ) . '</td>';
-			echo '<td>';
-			if ( $online ) {
-				self::action_buttons( $appt, $date );
-			} else {
-				echo '<span style="color:#999;">—</span>';
+			if ( $actions_enabled ) {
+				echo '<td>';
+				if ( $online ) {
+					self::action_buttons( $appt, $date );
+				} else {
+					echo '<span style="color:#999;">—</span>';
+				}
+				echo '</td>';
 			}
-			echo '</td></tr>';
+			echo '</tr>';
 		}
 		echo '</tbody></table>';
 		echo '<p class="description" style="margin-top:10px;">Only <strong>ONLINE</strong> bookings (made through the website widget) can be confirmed, rescheduled or cancelled here. Everything else is managed in Vetspire.</p>';

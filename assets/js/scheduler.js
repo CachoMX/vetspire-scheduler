@@ -170,6 +170,11 @@
 			return;
 		}
 		this.layout = this.config.layout || 'full';
+		// The horizontal bar doesn't work on small screens: fall back to the
+		// compact floating card below tablet width (decided at load time).
+		if ('bar' === this.layout && window.innerWidth < 640) {
+			this.layout = 'float';
+		}
 		this.body = root.querySelector('.vsps-body');
 		this.state = { types: [], typeId: null, days: [], selectedDate: null, calMonth: null };
 		this.root.classList.add('vsps-layout-' + this.layout);
