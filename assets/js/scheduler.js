@@ -70,7 +70,10 @@
 		lookupFailed: 'Lookup is unavailable right now \u2014 you can continue as a new client.',
 		whosVisit: 'Who is this visit for?',
 		aNewPet: '+ A new pet',
-		bookingFor: 'Booking for'
+		bookingFor: 'Booking for',
+		addingPetTo: 'Adding a new pet to the account for',
+		last4Label: 'Last 4 digits of the phone on file',
+		cantVerify: "Can't verify? Book with the full form instead"
 	};
 	var I18N = {};
 	(function () {
@@ -864,10 +867,7 @@
 				if (data.pets && data.pets.length) {
 					self.renderPetStep(data.pets);
 				} else {
-					// Returning client with no pets on file: use the full form
-					// (its dedupe reuses the account; no email-only record writes).
-					self._bk.clientType = 'new';
-					self.renderNewForm(email, '');
+					self.renderNewPetForm();
 				}
 			}).catch(function (err) {
 				errorEl.textContent = err.message || I18N.lookupFailed;
@@ -893,12 +893,7 @@
 		});
 		var np = el('button', 'vsps-pet-chip vsps-pet-new', I18N.aNewPet);
 		np.type = 'button';
-		np.addEventListener('click', function () {
-			// New pet on an existing account goes through the full form (with
-			// contact details + honeypot) — pending sign-off for a lighter path.
-			self._bk.clientType = 'new';
-			self.renderNewForm(self._bk.email, '');
-		});
+		np.addEventListener('click', function () { self.renderNewPetForm(); });
 		list.appendChild(np);
 		step.appendChild(list);
 		step.appendChild(this.backLink(function () { self.renderEmailStep(); }));
@@ -953,6 +948,54 @@
 			.replace('__MALE__', escHtml(I18N.male)).replace('__FEMALE__', escHtml(I18N.female))
 			.replace('__AGE__', escAttr(I18N.ageYears)).replace('__NEUTERED__', escHtml(I18N.neuteredQ))
 			.replace('__YES__', escHtml(I18N.yes)).replace('__NO__', escHtml(I18N.no));
+	};
+
+	/**
+	 * Existing client adding a pet: pet fields + last-4-of-phone ownership
+	 * verification (checked server-side against the number Vetspire has on
+	 * file). No owner data is ever shown or prefilled.
+	 */
+	Widget.prototype.renderNewPetForm = function () {
+		var self = this;
+		var step = this._bk.step;
+		step.innerHTML = '';
+		step.appendChild(el('p', 'vsps-step-q', I18N.addingPetTo + ' ' + this._bk.email));
+		var form = el('form', 'vsps-form');
+		form.innerHTML = this.petFieldsHtml() +
+			'<div class="vsps-row"><input required name="phone_last4" inputmode="numeric" pattern="[0-9]{4}" maxlength="4" placeholder="__LAST4__"></div>' +
+			'<textarea name="notes" placeholder="__REASON__" rows="2"></textarea>' +
+			'<p class="vsps-error" style="display:none;"></p>' +
+			'<div class="vsps-actions"><button type="submit" class="vsps-btn-primary">__CONFIRM__</button></div>';
+		form.innerHTML = form.innerHTML
+			.replace('__LAST4__', escAttr(I18N.last4Label))
+			.replace('__REASON__', escAttr(I18N.reason))
+			.replace('__CONFIRM__', escHtml(I18N.confirm));
+		step.appendChild(form);
+		var fallback = el('button', 'vsps-back', I18N.cantVerify);
+		fallback.type = 'button';
+		fallback.addEventListener('click', function () {
+			self._bk.clientType = 'new';
+			self.renderNewForm(self._bk.email, '');
+		});
+		step.appendChild(fallback);
+		step.appendChild(this.backLink(function () { self.renderEmailStep(); }));
+		form.addEventListener('submit', function (e) {
+			e.preventDefault();
+			var fd = new FormData(form);
+			self.submitBooking(form, {
+				client_type: 'existing',
+				pet_is_new: true,
+				phone_last4: fd.get('phone_last4') || '',
+				client: { given_name: '', family_name: '', email: self._bk.email, phone: '' },
+				patient: {
+					name: fd.get('pet_name'), species: fd.get('species'),
+					breed: fd.get('breed') || '', sex: fd.get('sex') || '',
+					age: fd.get('age') || '', neutered: fd.get('neutered') || ''
+				},
+				notes: fd.get('notes') || ''
+			});
+		});
+		form.querySelector('[name="pet_name"]').focus();
 	};
 
 	Widget.prototype.renderNewForm = function (prefillEmail, notice) {

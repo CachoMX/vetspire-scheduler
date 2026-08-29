@@ -364,9 +364,12 @@ class VSPS_Rest {
 		$result = VSPS_Booking::book( $api, $args );
 		if ( is_wp_error( $result ) ) {
 			// Slot-taken / type-not-bookable are safe, actionable messages for the visitor.
+			// A failed ownership check (vsps_verify) deliberately keeps the ip_/em_
+			// quota it already consumed — that is what caps brute force at 5/hour/IP
+			// and 5/day/email with no free retries.
 			$code = $result->get_error_code();
 			error_log( '[vetspire-scheduler] booking failed (' . $code . '): ' . self::redact( $result->get_error_message() ) );
-			if ( in_array( $code, array( 'vsps_slot', 'vsps_type', 'vsps_datetime', 'vsps_client_missing', 'vsps_pet_missing' ), true ) ) {
+			if ( in_array( $code, array( 'vsps_slot', 'vsps_type', 'vsps_datetime', 'vsps_client_missing', 'vsps_pet_missing', 'vsps_verify' ), true ) ) {
 				return new WP_Error( $code, $result->get_error_message(), array( 'status' => 409 ) );
 			}
 			return new WP_Error( 'vsps_booking', 'We could not complete the booking. Please try another time or call the clinic.', array( 'status' => 502 ) );
@@ -411,9 +414,10 @@ class VSPS_Rest {
 
 		$args = array(
 			'client_type'         => $client_type,
-			// Pending product sign-off: returning clients may only book for pets
-			// already on file — never create records with just an email (QA batch 3).
-			'pet_is_new'          => 'existing' === $client_type ? false : (bool) $request->get_param( 'pet_is_new' ),
+			'pet_is_new'          => (bool) $request->get_param( 'pet_is_new' ),
+			// Returning clients may add a pet ONLY after proving ownership with
+			// the last 4 digits of the phone on file (verified server-side).
+			'phone_last4'         => preg_match( '/^\d{4}$/', (string) $request->get_param( 'phone_last4' ) ) ? (string) $request->get_param( 'phone_last4' ) : '',
 			'location_id'         => absint( $request->get_param( 'location_id' ) ),
 			'appointment_type_id' => absint( $request->get_param( 'appointment_type_id' ) ),
 			'date'                => sanitize_text_field( (string) $request->get_param( 'date' ) ),
@@ -474,11 +478,17 @@ class VSPS_Rest {
 			if ( '' === $args['patient']['name'] ) {
 				return new WP_Error( 'vsps_invalid', 'Pet name is required.', array( 'status' => 400 ) );
 			}
-			if ( $args['pet_is_new'] && '' === $args['patient']['species'] ) {
-				return new WP_Error( 'vsps_invalid', 'Pet species is required.', array( 'status' => 400 ) );
+			if ( $args['pet_is_new'] ) {
+				if ( '' === $args['patient']['species'] ) {
+					return new WP_Error( 'vsps_invalid', 'Pet species is required.', array( 'status' => 400 ) );
+				}
+				if ( '' === $args['phone_last4'] ) {
+					return new WP_Error( 'vsps_invalid', 'The last 4 digits of the phone on file are required to add a pet.', array( 'status' => 400 ) );
+				}
 			}
 			return $args;
 		}
+		$args['pet_is_new'] = true;
 		if ( '' === $args['client']['given_name'] || '' === $args['client']['family_name'] ) {
 			return new WP_Error( 'vsps_invalid', 'First and last name are required.', array( 'status' => 400 ) );
 		}

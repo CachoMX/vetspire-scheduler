@@ -124,6 +124,7 @@ class VSPS_Api {
 			'query ($email: String) {
 				clients(filters: { email: $email }, limit: 5) {
 					id email givenName familyName
+					phoneNumbers { value }
 					patients { id name isActive isDeceased }
 				}
 			}',

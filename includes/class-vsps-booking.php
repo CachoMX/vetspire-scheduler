@@ -104,8 +104,26 @@ class VSPS_Booking {
 
 		// 2. Reuse the client's patient when the name matches, otherwise create it.
 		$patient_id = self::match_patient( $client, $args['patient']['name'] );
-		if ( null === $patient_id && ! empty( $args['client_type'] ) && 'existing' === $args['client_type'] && empty( $args['pet_is_new'] ) ) {
-			return new WP_Error( 'vsps_pet_missing', 'We could not find that pet on your account. Please pick again or add it as a new pet.' );
+		if ( null === $patient_id && $existing_client ) {
+			// The security decision keys off what the SERVER found ($existing_client),
+			// never off the client-supplied client_type — otherwise the "new client"
+			// path would silently dedupe onto the real account with no verification.
+			if ( ! empty( $args['client_type'] ) && 'existing' === $args['client_type'] && empty( $args['pet_is_new'] ) ) {
+				return new WP_Error( 'vsps_pet_missing', 'We could not find that pet on your account. Please pick again or add it as a new pet.' );
+			}
+			// Creating a pet on an account that already exists requires proving
+			// ownership of the phone Vetspire has on file: the explicit last-4
+			// field (returning flow) or the last 4 of the full phone typed on the
+			// new-client form. FAIL CLOSED: if the digits don't match — including
+			// when the account has NO phone on file to verify against — we refuse
+			// and tell them to call the clinic, so a stranger who only knows the
+			// email can never inject a pet into someone's record.
+			$claim = isset( $args['phone_last4'] ) && '' !== $args['phone_last4']
+				? $args['phone_last4']
+				: substr( preg_replace( '/\D/', '', $args['client']['phone'] ), -4 );
+			if ( ! self::phone_last4_matches( $client, $claim ) ) {
+				return new WP_Error( 'vsps_verify', 'We could not verify that this account is yours. Please use the phone number the clinic has on file, or call the clinic to add a new pet.' );
+			}
 		}
 		if ( null === $patient_id ) {
 			$patient_input = array(
@@ -169,6 +187,20 @@ class VSPS_Booking {
 			'patient_id'      => $patient_id,
 			'existing_client' => $existing_client,
 		);
+	}
+
+	/** True when the client's phone(s) on file end with the given 4 digits. */
+	private static function phone_last4_matches( $client, $last4 ) {
+		if ( ! preg_match( '/^\d{4}$/', (string) $last4 ) || empty( $client['phoneNumbers'] ) || ! is_array( $client['phoneNumbers'] ) ) {
+			return false;
+		}
+		foreach ( $client['phoneNumbers'] as $phone ) {
+			$digits = preg_replace( '/\D/', '', isset( $phone['value'] ) ? $phone['value'] : '' );
+			if ( strlen( $digits ) >= 4 && substr( $digits, -4 ) === $last4 ) {
+				return true;
+			}
+		}
+		return false;
 	}
 
 	/** Case-insensitive match of an active patient by name on an existing client. */
