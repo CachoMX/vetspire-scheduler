@@ -5,7 +5,7 @@ hand-off) and also dispatches it as a DOM `CustomEvent` (`vetspire:<name>`). The
 never talks to GA4 directly — GTM triggers/tags forward the events into GA4.
 
 **Pilot wiring (Iowa Colony):** GTM container **GTM-T2GFBPP8** → GA4 property
-**G-4RWBKVZSHW**. Import `docs/gtm-container-vetspire-scheduler.json` into that container
+**G-4RWBKVZSHW**. Import the attached `gtm-container-vetspire-scheduler.json` into that container
 (see "Setup steps" below).
 
 > All parameter keys are prefixed `vsps_` in the dataLayer (e.g. `vsps_date`).
@@ -77,8 +77,8 @@ So the parameters are usable in reports/explorations (Admin → Custom definitio
 
 ## Setup steps (Jess)
 
-1. **Import the container:** GTM → container **GTM-T2GFBPP8** → Admin → Import Container → choose `docs/gtm-container-vetspire-scheduler.json` → *Existing* workspace → **Merge** (rename conflicting). It adds 7 triggers, 7 GA4 event tags and 11 data-layer variables, all prefixed `VSPS`.
-2. **Measurement ID:** the event tags send to `G-4RWBKVZSHW` via `measurementIdOverride`. If Iowa Colony's Google tag is not already loaded by this container, also add a **Google tag** for `G-4RWBKVZSHW` (only one — the page currently loads it, so check before adding to avoid double page_views).
+1. **Import the container:** GTM → container **GTM-T2GFBPP8** → Admin → Import Container → choose the attached `gtm-container-vetspire-scheduler.json` → *Existing* workspace → **Merge** (rename conflicting). It adds 7 triggers, 7 GA4 event tags and 11 data-layer variables, all prefixed `VSPS`.
+2. **Measurement ID:** the event tags send to `G-4RWBKVZSHW` via `measurementIdOverride`. The page already loads that Google tag — **don't add a second one** or you'll double page_views.
 3. **Preview:** GTM → Preview → open `https://iowacolony.easyvet.com/home-2/` → in Tag Assistant watch `vsps_widget_view` fire on load; click a time → `vsps_slot_selected` + `vsps_form_started`; complete a test booking (a couple days out, delete in our Appointments view after) → `vsps_booking_submitted` + `vsps_booking_completed`.
 4. **DebugView:** GA4 → Admin → DebugView shows the same events landing in real time with their parameters.
 5. **Publish** the workspace.
