@@ -116,6 +116,23 @@ if ( '/wp-json/vetspire/v1/availability' === $uri ) {
 	}
 	respond_json( array( 'days' => $result ) );
 }
+if ( '/wp-json/vetspire/v1/lookup' === $uri && 'POST' === $_SERVER['REQUEST_METHOD'] ) {
+	// Mirrors VSPS_Rest::lookup(): found flag + active, non-deceased pet names only.
+	$payload = json_decode( file_get_contents( 'php://input' ), true );
+	$email   = isset( $payload['email'] ) ? trim( (string) $payload['email'] ) : '';
+	if ( ! filter_var( $email, FILTER_VALIDATE_EMAIL ) ) { respond_json( array( 'message' => 'A valid email is required.' ), 400 ); }
+	$client = $api->find_client_by_email( $email );
+	if ( is_wp_error( $client ) ) { respond_json( array( 'message' => 'Lookup failed. Please continue as a new client.' ), 502 ); }
+	$pets = array();
+	if ( $client && ! empty( $client['patients'] ) ) {
+		foreach ( $client['patients'] as $patient ) {
+			$active   = ! isset( $patient['isActive'] ) || $patient['isActive'];
+			$deceased = ! empty( $patient['isDeceased'] );
+			if ( $active && ! $deceased ) { $pets[] = (string) $patient['name']; }
+		}
+	}
+	respond_json( array( 'found' => null !== $client, 'pets' => $pets ) );
+}
 if ( '/wp-json/vetspire/v1/book' === $uri && 'POST' === $_SERVER['REQUEST_METHOD'] ) {
 	$payload = json_decode( file_get_contents( 'php://input' ), true );
 	if ( ! $payload ) { respond_json( array( 'message' => 'Bad payload' ), 400 ); }

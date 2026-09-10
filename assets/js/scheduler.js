@@ -864,6 +864,7 @@
 					return;
 				}
 				self._bk.email = email;
+				self._bk.pets = data.pets || [];
 				if (data.pets && data.pets.length) {
 					self.renderPetStep(data.pets);
 				} else {
@@ -882,6 +883,7 @@
 	Widget.prototype.renderPetStep = function (pets) {
 		var self = this;
 		var step = this._bk.step;
+		this._bk.pets = pets;
 		step.innerHTML = '';
 		step.appendChild(el('p', 'vsps-step-q', I18N.whosVisit));
 		var list = el('div', 'vsps-pet-list');
@@ -899,6 +901,15 @@
 		step.appendChild(this.backLink(function () { self.renderEmailStep(); }));
 	};
 
+	/** Back target after the lookup: the pet chips when the account has pets, else the email step. */
+	Widget.prototype.renderPetChoice = function () {
+		if (this._bk.pets && this._bk.pets.length) {
+			this.renderPetStep(this._bk.pets);
+		} else {
+			this.renderEmailStep();
+		}
+	};
+
 	Widget.prototype.renderConfirmStep = function (petName) {
 		var self = this;
 		var step = this._bk.step;
@@ -912,9 +923,7 @@
 			.replace('__REASON__', escAttr(I18N.reason))
 			.replace('__CONFIRM__', escHtml(I18N.confirm));
 		step.appendChild(form);
-		step.appendChild(this.backLink(function () {
-			self.renderEmailStep();
-		}));
+		step.appendChild(this.backLink(function () { self.renderPetChoice(); }));
 		form.addEventListener('submit', function (e) {
 			e.preventDefault();
 			self.submitBooking(form, {
@@ -978,7 +987,7 @@
 			self.renderNewForm(self._bk.email, '');
 		});
 		step.appendChild(fallback);
-		step.appendChild(this.backLink(function () { self.renderEmailStep(); }));
+		step.appendChild(this.backLink(function () { self.renderPetChoice(); }));
 		form.addEventListener('submit', function (e) {
 			e.preventDefault();
 			var fd = new FormData(form);
