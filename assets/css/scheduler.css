@@ -17,6 +17,7 @@
 	color: var(--vsps-text);
 	background: #fff;
 	box-sizing: border-box;
+	min-width: 0;
 }
 
 .vsps-widget *,
@@ -470,9 +471,16 @@
 
 .vsps-widget .vsps-cal-grid {
 	display: grid;
-	grid-template-columns: repeat(7, 1fr);
+	/* minmax(0, 1fr), not bare 1fr: a plain 1fr track can't shrink below its
+	   content's intrinsic width, so on a host page that places the widget
+	   inside a flex/grid container (Elementor shortcodes commonly do) the 7
+	   columns keep their natural width and overflow the card instead of
+	   sharing it evenly. */
+	grid-template-columns: repeat(7, minmax(0, 1fr));
 	gap: 2px;
 	margin-bottom: 10px;
+	width: 100%;
+	box-sizing: border-box;
 }
 
 .vsps-widget .vsps-cal-dow {
