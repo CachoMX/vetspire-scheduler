@@ -1240,6 +1240,11 @@
 		payload.time = bk.slot.time;
 		payload.provider_id = bk.slot.providerId || '';
 		payload.schedule_id = bk.slot.scheduleId || '';
+		// Source of the booking for the admin log (the lightbox reports the layout
+		// of the on-page widget that opened it).
+		payload.layout = (this.host || this).layout;
+		payload.variant = this.config.variant || '';
+		payload.page_url = String(window.location.href).slice(0, 255);
 		if (!('vsps_hp' in payload)) { payload.vsps_hp = ''; }
 
 		this.track('booking_submitted', {

@@ -361,6 +361,7 @@ class VSPS_Rest {
 		$args['source_label'] = isset( $settings['source_label'] ) && '' !== trim( (string) $settings['source_label'] )
 			? substr( sanitize_text_field( $settings['source_label'] ), 0, 40 ) : 'Online';
 
+		$source = self::booking_source( $request );
 		$result = VSPS_Booking::book( $api, $args );
 		if ( is_wp_error( $result ) ) {
 			// Slot-taken / type-not-bookable are safe, actionable messages for the visitor.
@@ -369,6 +370,7 @@ class VSPS_Rest {
 			// and 5/day/email with no free retries.
 			$code = $result->get_error_code();
 			error_log( '[vetspire-scheduler] booking failed (' . $code . '): ' . self::redact( $result->get_error_message() ) );
+			VSPS_Log::record_failure( $args, $code, $result->get_error_message(), $source );
 			if ( in_array( $code, array( 'vsps_slot', 'vsps_type', 'vsps_datetime', 'vsps_client_missing', 'vsps_pet_missing', 'vsps_verify' ), true ) ) {
 				return new WP_Error( $code, $result->get_error_message(), array( 'status' => 409 ) );
 			}
@@ -396,6 +398,9 @@ class VSPS_Rest {
 			}
 		}
 
+		VSPS_Log::record_booking( $args, $result, array_merge( $source, array( 'after_hours' => $after_hours ) ) );
+		delete_transient( 'vsps_pending_online' );
+
 		return rest_ensure_response( array(
 			'success'        => true,
 			'appointment_id' => $result['appointment_id'],
@@ -403,6 +408,18 @@ class VSPS_Rest {
 			'after_hours'    => $after_hours,
 			'booked_at'      => $booked_at,
 		) );
+	}
+
+	/** Where the booking came from (for the log only; never sent to Vetspire). */
+	private static function booking_source( WP_REST_Request $request ) {
+		$layout  = sanitize_key( (string) $request->get_param( 'layout' ) );
+		$variant = strtolower( sanitize_key( (string) $request->get_param( 'variant' ) ) );
+		$url     = esc_url_raw( (string) $request->get_param( 'page_url' ) );
+		return array(
+			'layout'   => in_array( $layout, array( 'full', 'bar', 'calendar', 'float' ), true ) ? $layout : '',
+			'variant'  => in_array( $variant, array( 'a', 'b' ), true ) ? $variant : '',
+			'page_url' => substr( $url, 0, 255 ),
+		);
 	}
 
 	/** Validates and sanitizes the booking payload. */

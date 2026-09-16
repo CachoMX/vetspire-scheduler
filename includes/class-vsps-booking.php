@@ -51,6 +51,7 @@ class VSPS_Booking {
 		// taken from the matched slot, never from the request.
 		$provider_id = '';
 		$schedule_id = '';
+		$slot        = null;
 		if ( empty( $args['skip_slot_check'] ) ) {
 			$slots = $api->get_available_times( $args['location_id'], $args['appointment_type_id'], $args['date'] );
 			if ( is_wp_error( $slots ) ) {
@@ -196,6 +197,8 @@ class VSPS_Booking {
 			'client_id'       => $client['id'],
 			'patient_id'      => $patient_id,
 			'existing_client' => $existing_client,
+			'type_name'       => isset( $type['name'] ) ? $type['name'] : '',
+			'provider_name'   => isset( $slot['provider']['name'] ) ? $slot['provider']['name'] : '',
 		);
 	}
 

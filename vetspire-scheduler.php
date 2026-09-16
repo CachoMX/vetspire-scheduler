@@ -3,7 +3,7 @@
  * Plugin Name: Vetspire Scheduler
  * Plugin URI:  https://vetcelerator.com
  * Description: Embeddable appointment scheduler powered by the Vetspire API. Shows live available times and books appointments on-site so analytics attribution is preserved.
- * Version:     1.14.1
+ * Version:     1.15.0
  * Author:      Vetcelerator
  * License:     GPL-2.0+
  * Text Domain: vetspire-scheduler
@@ -13,7 +13,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-define( 'VSPS_VERSION', '1.14.1' );
+define( 'VSPS_VERSION', '1.15.0' );
 define( 'VSPS_PLUGIN_DIR', plugin_dir_path( __FILE__ ) );
 define( 'VSPS_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
 define( 'VSPS_OPTION_KEY', 'vsps_settings' );
@@ -24,6 +24,7 @@ require_once VSPS_PLUGIN_DIR . 'includes/class-vsps-booking.php';
 require_once VSPS_PLUGIN_DIR . 'includes/class-vsps-rest.php';
 require_once VSPS_PLUGIN_DIR . 'includes/class-vsps-settings.php';
 require_once VSPS_PLUGIN_DIR . 'includes/class-vsps-shortcode.php';
+require_once VSPS_PLUGIN_DIR . 'includes/class-vsps-log.php';
 require_once VSPS_PLUGIN_DIR . 'includes/class-vsps-admin-schedule.php';
 
 /**
@@ -103,6 +104,7 @@ add_filter( 'plugin_action_links_' . plugin_basename( __FILE__ ), function ( $li
 
 add_action( 'plugins_loaded', function () {
 	load_plugin_textdomain( 'vetspire-scheduler', false, dirname( plugin_basename( __FILE__ ) ) . '/languages' );
+	VSPS_Log::maybe_install();
 	VSPS_Settings::init();
 	VSPS_Rest::init();
 	VSPS_Shortcode::init();
