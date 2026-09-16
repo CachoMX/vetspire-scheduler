@@ -36,7 +36,8 @@ class VSPS_Shortcode {
 		$atts     = shortcode_atts( array(
 			'location_id'          => $settings['default_location'],
 			'appointment_type_ids' => '',
-			'days'                 => 7,
+			'days'                 => 7,        // days per page of the date strip
+			'max_days'             => 30,       // how far ahead the strip can page (cap 60)
 			'mode'                 => 'book',   // book | link
 			'link_url'             => '',
 			'title'                => __( 'Book an Appointment', 'vetspire-scheduler' ),
@@ -96,6 +97,7 @@ class VSPS_Shortcode {
 				'chooseAnother'  => __( 'Choose another time', 'vetspire-scheduler' ),
 				'earlierDates'   => __( 'Earlier dates', 'vetspire-scheduler' ),
 				'laterDates'     => __( 'Later dates', 'vetspire-scheduler' ),
+				'moreDates'      => __( 'More dates', 'vetspire-scheduler' ),
 				'hoursTitle'     => __( 'Hours', 'vetspire-scheduler' ),
 				'reviews'        => __( 'Google Reviews', 'vetspire-scheduler' ),
 				'directions'     => __( 'Get Directions', 'vetspire-scheduler' ),
@@ -141,10 +143,12 @@ class VSPS_Shortcode {
 			$pet_fields = array( 'breed' => 1, 'sex' => 1, 'age' => 1, 'neutered' => 1 );
 		}
 
+		$days_per_page = min( 14, max( 1, absint( $atts['days'] ) ) );
 		$config = array(
 			'locationId'    => $location_id,
 			'typeIds'       => $type_ids,
-			'days'          => min( 14, max( 1, absint( $atts['days'] ) ) ),
+			'days'          => $days_per_page,
+			'horizonDays'   => min( 60, max( $days_per_page, absint( $atts['max_days'] ) ) ),
 			'mode'          => $mode,
 			'linkUrl'       => esc_url_raw( $atts['link_url'] ),
 			'layout'        => $layout,

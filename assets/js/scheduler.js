@@ -49,6 +49,7 @@
 		chooseAnother: 'Choose another time',
 		earlierDates: 'Earlier dates',
 		laterDates: 'Later dates',
+		moreDates: 'More dates',
 		hoursTitle: 'Hours',
 		reviews: 'Google Reviews',
 		directions: 'Get Directions',
@@ -148,6 +149,12 @@
 
 	function sameDay(a, b) {
 		return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+	}
+
+	function addDaysIso(iso, n) {
+		var d = dateFromIso(iso);
+		d.setDate(d.getDate() + n);
+		return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
 	}
 
 	function formatDateLabel(iso) {
@@ -450,6 +457,44 @@
 		return this.state.types.filter(function (t) { return t.id === id; })[0];
 	};
 
+	/** How many more days may still be fetched before the horizon (max_days). */
+	Widget.prototype.horizonLeft = function () {
+		return Math.max(0, (this.config.horizonDays || 30) - this.state.days.length);
+	};
+
+	Widget.prototype.pageSize = function () {
+		var size = Math.max(1, this.config.days || 7);
+		// The month picker fills the horizon in the background: bigger pages, fewer round-trips.
+		return 'calendar' === this.layout ? Math.max(14, size) : size;
+	};
+
+	/** One page of availability (each day is one Vetspire query server-side). */
+	Widget.prototype.fetchDays = function (startIso, count) {
+		var url = CFG.restUrl + '/availability?location_id=' + this.config.locationId +
+			'&appointment_type_id=' + this.state.typeId + '&days=' + count +
+			(startIso ? '&start_date=' + startIso : '');
+		return fetchJson(url).then(function (data) { return data.days || []; });
+	};
+
+	/** Appends a page, dropping any day already loaded (defensive: the server
+	 * resets an out-of-range start_date to today). Returns the days actually added. */
+	Widget.prototype.appendDays = function (days) {
+		var last = this.lastLoadedDate();
+		var fresh = last ? days.filter(function (d) { return d.date > last; }) : days;
+		this.state.days = this.state.days.concat(fresh);
+		return fresh;
+	};
+
+	Widget.prototype.lastLoadedDate = function () {
+		var days = this.state.days;
+		return days.length ? days[days.length - 1].date : null;
+	};
+
+	/**
+	 * Loads availability in pages (config.days at a time) up to the horizon.
+	 * Keeps paging while nothing bookable has shown up yet, or until the day
+	 * the visitor was looking at (re-open from the booking form) is covered.
+	 */
 	Widget.prototype.loadAvailability = function () {
 		var self = this;
 		// Race guard: only the latest request may update state (type can be
@@ -457,36 +502,79 @@
 		var requestId = (this.lastRequestId = (this.lastRequestId || 0) + 1);
 		this.contentEl.innerHTML = '';
 		this.contentEl.appendChild(el('p', 'vsps-loading', I18N.loading));
+		this.state.days = [];
+		this.state.loadingMore = false;
+		this.state.exhausted = false;
 
-		var days = 'calendar' === this.layout ? 14 : this.config.days;
-		var url = CFG.restUrl + '/availability?location_id=' + this.config.locationId +
-			'&appointment_type_id=' + this.state.typeId + '&days=' + days;
+		var page = this.pageSize();
+		var wanted = this.config._initialDate || null;
+		delete this.config._initialDate;
 
-		fetchJson(url).then(function (data) {
-			if (requestId !== self.lastRequestId) { return; }
-			self.state.days = data.days || [];
-			var firstWithSlots = null;
-			self.state.days.forEach(function (d) {
-				if (!firstWithSlots && d.slots.length) { firstWithSlots = d.date; }
+		function step() {
+			var count = Math.min(page, self.horizonLeft());
+			var last = self.lastLoadedDate();
+			return self.fetchDays(last ? addDaysIso(last, 1) : null, count).then(function (days) {
+				if (requestId !== self.lastRequestId) { return; }
+				days = self.appendDays(days);
+				if (!days.length) { self.state.exhausted = true; }
+				var first = self.firstAvailableDate();
+				var wantedOk = wanted && self.state.days.some(function (d) { return d.date === wanted && d.slots.length; });
+				var wantedAhead = wanted && !wantedOk && wanted > (self.lastLoadedDate() || '');
+				var canLoad = days.length && self.horizonLeft() > 0;
+				if (canLoad && (!first || wantedAhead)) { return step(); }
+				if (!first) {
+					self.contentEl.innerHTML = '';
+					self.contentEl.appendChild(el('p', 'vsps-message', I18N.noTimes.replace('%d', String(self.state.days.length))));
+					return;
+				}
+				self.state.selectedDate = wantedOk ? wanted : first;
+				self.state.calMonth = null;
+				self.renderLayout();
+				// The month picker wants the whole horizon; fill it in the background.
+				if ('calendar' === self.layout) { self.fillHorizon(); }
 			});
-			if (!firstWithSlots) {
-				self.contentEl.innerHTML = '';
-				self.contentEl.appendChild(el('p', 'vsps-message', I18N.noTimes.replace('%d', String(days))));
-				return;
-			}
-			// Re-opened from the booking form ("choose another time"): land on the
-			// day the visitor was already looking at, as long as it still has slots.
-			var wanted = self.config._initialDate;
-			delete self.config._initialDate;
-			var wantedOk = wanted && self.state.days.some(function (d) { return d.date === wanted && d.slots.length; });
-			self.state.selectedDate = wantedOk ? wanted : firstWithSlots;
-			self.state.calMonth = null;
-			self.renderLayout();
-		}).catch(function () {
+		}
+		step().catch(function () {
 			if (requestId !== self.lastRequestId) { return; }
 			self.contentEl.innerHTML = '';
 			self.contentEl.appendChild(el('p', 'vsps-message', I18N.timesFailed));
 		});
+	};
+
+	/** Appends the next page of days (called by the date strip when it runs out). */
+	Widget.prototype.loadMoreDays = function () {
+		var self = this;
+		if (this.state.loadingMore || this.state.exhausted || this.horizonLeft() <= 0 || !this.state.days.length) {
+			return Promise.resolve(false);
+		}
+		var requestId = this.lastRequestId;
+		var count = Math.min(this.pageSize(), this.horizonLeft());
+		this.state.loadingMore = true;
+		// The placeholder render must not jump the strip back to the active day
+		// (that would also overwrite datesScroll through the scroll listener).
+		this.keepDatesScroll = true;
+		this.renderLayout();
+		return this.fetchDays(addDaysIso(this.lastLoadedDate(), 1), count).then(function (days) {
+			if (requestId !== self.lastRequestId) { return false; }
+			self.state.loadingMore = false;
+			days = self.appendDays(days);
+			if (!days.length) { self.state.exhausted = true; }
+			self.keepDatesScroll = true;
+			self.renderLayout();
+			return days.length > 0;
+		}).catch(function () {
+			if (requestId !== self.lastRequestId) { return false; }
+			self.state.loadingMore = false;
+			self.keepDatesScroll = true;
+			self.renderLayout();
+			return false;
+		});
+	};
+
+	/** Calendar: keep paging quietly until the horizon is covered. */
+	Widget.prototype.fillHorizon = function () {
+		var self = this;
+		this.loadMoreDays().then(function (more) { if (more) { self.fillHorizon(); } });
 	};
 
 	Widget.prototype.renderLayout = function () {
@@ -606,9 +694,19 @@
 		next.type = 'button';
 		prev.setAttribute('aria-label', I18N.earlierDates);
 		next.setAttribute('aria-label', I18N.laterDates);
+		function nearEnd() { return datesEl.scrollLeft + datesEl.clientWidth >= datesEl.scrollWidth - 60; }
 		prev.addEventListener('click', function () { datesEl.scrollBy({ left: -Math.max(120, datesEl.clientWidth * 0.8), behavior: 'smooth' }); });
-		next.addEventListener('click', function () { datesEl.scrollBy({ left: Math.max(120, datesEl.clientWidth * 0.8), behavior: 'smooth' }); });
-		this.state.days.forEach(function (d) {
+		next.addEventListener('click', function () {
+			datesEl.scrollBy({ left: Math.max(120, datesEl.clientWidth * 0.8), behavior: 'smooth' });
+			// Reaching the end of what is loaded fetches the next page.
+			window.setTimeout(function () { if (nearEnd()) { self.loadMoreDays(); } }, 400);
+		});
+		datesEl.addEventListener('scroll', function () {
+			self.datesScroll = datesEl.scrollLeft;
+			if (nearEnd()) { self.loadMoreDays(); }
+		});
+		var total = this.state.days.length;
+		this.state.days.forEach(function (d, idx) {
 			var btn = el('button', 'vsps-date-btn', '');
 			btn.type = 'button';
 			btn.appendChild(el('span', 'vsps-date-label', formatDateLabel(d.date)));
@@ -617,17 +715,36 @@
 			if (d.date === self.state.selectedDate) { btn.classList.add('is-active'); }
 			btn.addEventListener('click', function () {
 				self.state.selectedDate = d.date;
+				self.keepDatesScroll = true;
+				self.datesScroll = datesEl.scrollLeft;
 				self.renderLayout();
+				// Picking one of the last loaded days pulls in the following ones.
+				if (idx >= total - 2) { self.loadMoreDays(); }
 			});
 			datesEl.appendChild(btn);
 		});
+		if (this.horizonLeft() > 0 && !this.state.exhausted) {
+			var more = el('button', 'vsps-date-btn vsps-date-more', '');
+			more.type = 'button';
+			more.appendChild(el('span', 'vsps-date-label', this.state.loadingMore ? '\u2026' : '\u203a'));
+			more.appendChild(el('span', 'vsps-date-count', I18N.moreDates));
+			more.disabled = !!this.state.loadingMore;
+			more.addEventListener('click', function () { self.loadMoreDays(); });
+			datesEl.appendChild(more);
+		}
 		wrap.appendChild(prev);
 		wrap.appendChild(datesEl);
 		wrap.appendChild(next);
 		this.contentEl.appendChild(wrap);
-		// Keep the selected day in view; hide the arrows when everything already fits.
+		// Keep the strip where the visitor left it after paging; otherwise bring
+		// the selected day into view. Hide the arrows when everything fits.
 		var active = datesEl.querySelector('.is-active');
-		if (active) { datesEl.scrollLeft = Math.max(0, active.offsetLeft - 8); }
+		if (this.keepDatesScroll) {
+			datesEl.scrollLeft = this.datesScroll || 0;
+			this.keepDatesScroll = false;
+		} else if (active) {
+			datesEl.scrollLeft = Math.max(0, active.offsetLeft - 8);
+		}
 		if (datesEl.scrollWidth <= datesEl.clientWidth + 2) { wrap.classList.add('vsps-dates-fit'); }
 	};
 

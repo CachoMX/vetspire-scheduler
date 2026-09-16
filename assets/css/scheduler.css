@@ -128,6 +128,16 @@
 	display: none;
 }
 
+.vsps-widget .vsps-date-more {
+	border-style: dashed;
+	color: var(--vsps-primary);
+}
+
+.vsps-widget .vsps-date-more .vsps-date-label {
+	font-size: 1.3em;
+	line-height: 1;
+}
+
 .vsps-widget .vsps-notice {
 	margin: 0 0 12px;
 	padding: 9px 12px;

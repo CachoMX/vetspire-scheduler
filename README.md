@@ -43,7 +43,8 @@ Visitor ──> Widget (JS) ──> WP REST proxy (PHP, cached) ──> Vetspire
 | Attribute | Default | Purpose |
 |---|---|---|
 | `location_id` | settings default | Vetspire location to show |
-| `days` | `7` | days of availability shown (max 14) |
+| `days` | `7` | days loaded per page of the date strip (max 14) |
+| `max_days` | `30` | how far ahead the date strip can page, loading `days` at a time (max 60) |
 | `appointment_type_ids` | all bookable | comma-separated whitelist, e.g. `"5541"` for wellness-only |
 | `mode` | `book` | `book` = on-site booking modal; `link` = clicking a slot goes to `link_url` |
 | `link_url` | — | external booking URL for `mode="link"` (Option-2-lite / phased rollout) |
