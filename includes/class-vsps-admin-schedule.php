@@ -267,16 +267,24 @@ class VSPS_Admin_Schedule {
 		if ( ! in_array( $status, array( 'all', 'pending', 'confirmed', 'cancelled', 'deleted', 'completed', 'failed' ), true ) ) {
 			$status = 'all';
 		}
+		$after_hours = isset( $src['after_hours'] ) ? sanitize_key( wp_unslash( $src['after_hours'] ) ) : 'all';
+		if ( ! in_array( $after_hours, array( 'all', 'yes', 'no' ), true ) ) {
+			$after_hours = 'all';
+		}
 		$date = function ( $k ) use ( $src ) {
 			$v = isset( $src[ $k ] ) ? sanitize_text_field( wp_unslash( $src[ $k ] ) ) : '';
 			return preg_match( '/^\d{4}-\d{2}-\d{2}$/', $v ) ? $v : '';
 		};
+		// "Include failed attempts" defaults to CHECKED on a fresh page load; once the
+		// filter form has been submitted (vsps_filtered present) an unchecked box means 0.
+		$failed = isset( $src['vsps_filtered'] ) ? ( ! empty( $src['failed'] ) ? 1 : 0 ) : 1;
 		return array(
-			'status' => $status,
-			'from'   => $date( 'from' ),
-			'to'     => $date( 'to' ),
-			's'      => isset( $src['s'] ) ? substr( sanitize_text_field( wp_unslash( $src['s'] ) ), 0, 100 ) : '',
-			'failed' => ! empty( $src['failed'] ) ? 1 : 0,
+			'status'      => $status,
+			'after_hours' => $after_hours,
+			'from'        => $date( 'from' ),
+			'to'          => $date( 'to' ),
+			's'           => isset( $src['s'] ) ? substr( sanitize_text_field( wp_unslash( $src['s'] ) ), 0, 100 ) : '',
+			'failed'      => $failed,
 		);
 	}
 
@@ -367,7 +375,7 @@ class VSPS_Admin_Schedule {
 		}
 
 		echo '<table class="widefat striped vsps-bookings"><thead><tr>'
-			. '<th>Created</th>' . ( $show_client ? '<th>Client</th>' : '' ) . '<th>Pet</th><th>Type</th><th>Appointment</th><th>Status</th><th>Source</th>'
+			. '<th>Created</th>' . ( $show_client ? '<th>Client</th>' : '' ) . '<th>Pet</th><th>Type</th><th>Appointment</th><th>Status</th><th>After hours</th><th>Source</th>'
 			. ( $actions_enabled ? '<th>Actions</th>' : '' )
 			. '</tr></thead><tbody>';
 		foreach ( $data['rows'] as $row ) {
@@ -418,6 +426,12 @@ class VSPS_Admin_Schedule {
 		echo '<label>From <input type="date" name="from" value="' . esc_attr( $filters['from'] ) . '" /></label>';
 		echo '<label>To <input type="date" name="to" value="' . esc_attr( $filters['to'] ) . '" /></label>';
 		echo '<input type="search" name="s" placeholder="Name, email, pet or appointment id" value="' . esc_attr( $filters['s'] ) . '" style="min-width:240px;" />';
+		echo '<select name="after_hours">';
+		foreach ( array( 'all' => 'Any time of day', 'yes' => 'After hours only', 'no' => 'Office hours only' ) as $k => $label ) {
+			echo '<option value="' . esc_attr( $k ) . '"' . selected( $filters['after_hours'], $k, false ) . '>' . esc_html( $label ) . '</option>';
+		}
+		echo '</select>';
+		echo '<input type="hidden" name="vsps_filtered" value="1" />';
 		echo '<label><input type="checkbox" name="failed" value="1"' . checked( 1, $filters['failed'], false ) . ' /> Include failed attempts</label>';
 		echo '<button class="button">Filter</button>';
 		echo '<a class="button" href="' . esc_url( admin_url( 'admin.php?page=vsps-appointments' ) ) . '">Reset</a>';
@@ -457,10 +471,12 @@ class VSPS_Admin_Schedule {
 		if ( 'failed' === $row->outcome && $row->error_message ) {
 			echo '<br /><span style="color:#777;font-size:11px;">' . esc_html( $row->error_message ) . '</span>';
 		}
-		if ( null !== $row->after_hours && 'booked' === $row->outcome ) {
-			echo '<br /><span style="color:#999;font-size:11px;">' . ( $row->after_hours ? 'booked after hours' : 'booked during office hours' ) . '</span>';
-		}
 		echo '</td>';
+		if ( null === $row->after_hours ) {
+			echo '<td><span style="color:#999;">—</span></td>';
+		} else {
+			echo '<td>' . ( $row->after_hours ? 'Yes' : 'No' ) . '</td>';
+		}
 		echo '<td>' . wp_kses( $source, array( 'a' => array( 'href' => array(), 'target' => array(), 'rel' => array(), 'style' => array() ), 'br' => array() ) ) . '</td>';
 		if ( $actions_enabled ) {
 			echo '<td>';

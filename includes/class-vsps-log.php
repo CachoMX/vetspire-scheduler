@@ -352,6 +352,11 @@ class VSPS_Log {
 				$where[] = "outcome = 'booked' AND is_deleted = 0 AND status IN ('COMPLETED','CHECKED_OUT')";
 			}
 		}
+		if ( 'yes' === ( isset( $f['after_hours'] ) ? $f['after_hours'] : '' ) ) {
+			$where[] = 'after_hours = 1';
+		} elseif ( 'no' === ( isset( $f['after_hours'] ) ? $f['after_hours'] : '' ) ) {
+			$where[] = 'after_hours = 0';
+		}
 		$tz = wp_timezone();
 		if ( ! empty( $f['from'] ) && preg_match( '/^\d{4}-\d{2}-\d{2}$/', $f['from'] ) ) {
 			$where[] = 'created_at >= %s';

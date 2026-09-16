@@ -94,7 +94,7 @@ class VSPS_Shortcode {
 				'showingTimesFor' => __( 'Showing available times for', 'vetspire-scheduler' ),
 				'back'           => __( '‹ Back', 'vetspire-scheduler' ),
 				'nextAvailable'  => __( 'Next Available Appointment', 'vetspire-scheduler' ),
-				'chooseAnother'  => __( 'Choose another time', 'vetspire-scheduler' ),
+				'chooseAnother'  => __( 'Choose Another Time', 'vetspire-scheduler' ),
 				'earlierDates'   => __( 'Earlier dates', 'vetspire-scheduler' ),
 				'laterDates'     => __( 'Later dates', 'vetspire-scheduler' ),
 				'moreDates'      => __( 'More dates', 'vetspire-scheduler' ),

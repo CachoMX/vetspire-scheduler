@@ -59,7 +59,7 @@
 	font-size: 0.85em;
 	font-weight: 600;
 	margin-bottom: 4px;
-	color: var(--vsps-text);
+	color: var(--vsps-primary);
 }
 
 .vsps-widget .vsps-type-select {
@@ -390,7 +390,7 @@
 	flex: 1;
 }
 
-.vsps-widget .vsps-bar-chip {
+.vsps-widget.vsps-layout-bar .vsps-bar-chip {
 	white-space: nowrap;
 	padding: 8px 14px;
 	border: 1px solid var(--vsps-primary);
@@ -403,8 +403,8 @@
 	font-family: inherit;
 }
 
-.vsps-widget .vsps-bar-chip:hover,
-.vsps-widget .vsps-bar-chip:focus {
+.vsps-widget.vsps-layout-bar .vsps-bar-chip:hover,
+.vsps-widget.vsps-layout-bar .vsps-bar-chip:focus {
 	background: #fff;
 	color: var(--vsps-primary);
 }
@@ -421,9 +421,9 @@
 	padding: 6px;
 }
 
-.vsps-widget .vsps-bar-cta,
-.vsps-widget .vsps-bar-cta:hover,
-.vsps-widget .vsps-bar-cta:focus {
+.vsps-widget.vsps-layout-bar .vsps-bar-cta,
+.vsps-widget.vsps-layout-bar .vsps-bar-cta:hover,
+.vsps-widget.vsps-layout-bar .vsps-bar-cta:focus {
 	padding: 12px 22px;
 	border-radius: 8px;
 	background: var(--vsps-primary);
@@ -570,20 +570,20 @@
 	margin-bottom: 12px;
 }
 
-.vsps-widget .vsps-float-slot {
+.vsps-widget.vsps-layout-float .vsps-float-slot {
 	flex: 1 1 100px;
 	padding: 12px 8px;
-	border: 1px solid #333;
+	border: 1px solid var(--vsps-primary);
 	border-radius: 4px;
 	background: #fff;
 	cursor: pointer;
 	text-align: center;
 	font-family: inherit;
-	color: var(--vsps-text);
+	color: var(--vsps-primary);
 }
 
-.vsps-widget .vsps-float-slot:hover,
-.vsps-widget .vsps-float-slot:focus {
+.vsps-widget.vsps-layout-float .vsps-float-slot:hover,
+.vsps-widget.vsps-layout-float .vsps-float-slot:focus {
 	border-color: var(--vsps-primary);
 	background: var(--vsps-primary);
 	color: #fff;

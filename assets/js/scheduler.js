@@ -46,7 +46,7 @@
 		showingTimesFor: 'Showing available times for',
 		back: '‹ Back',
 		nextAvailable: 'Next Available Appointment',
-		chooseAnother: 'Choose another time',
+		chooseAnother: 'Choose Another Time',
 		earlierDates: 'Earlier dates',
 		laterDates: 'Later dates',
 		moreDates: 'More dates',
@@ -1312,19 +1312,23 @@
 				status: err.status || 0,
 				client_type: payload.client_type
 			});
-			errorEl.textContent = err.message || I18N.bookingFailed;
+			// The slot is gone: the visitor's next move is always "Choose Another
+			// Time" — show that instead of the raw "no longer available" wording,
+			// both on this form and on the notice atop the picker it reopens into.
+			var slotGone = 'vsps_slot' === err.code;
+			var message  = slotGone ? I18N.chooseAnother : ( err.message || I18N.bookingFailed );
+			errorEl.textContent = message;
 			errorEl.style.display = 'block';
 			bk.step.querySelectorAll('.vsps-back').forEach(function (b) { b.disabled = false; b.style.opacity = ''; });
-			if ('vsps_slot' === err.code) {
-				// The slot is gone: retrying the same time can never succeed, so the
-				// primary action becomes "choose another time" (re-opens the picker
-				// on the same day with the notice on top).
+			if (slotGone) {
+				// Retrying the same time can never succeed, so the primary action
+				// becomes "Choose Another Time" (re-opens the picker on the same day).
 				submitBtn.type = 'button';
 				submitBtn.disabled = false;
 				submitBtn.textContent = I18N.chooseAnother;
 				submitBtn.addEventListener('click', function (e) {
 					e.preventDefault();
-					self.backToPicker(err.message);
+					self.backToPicker(message);
 				});
 				return;
 			}
