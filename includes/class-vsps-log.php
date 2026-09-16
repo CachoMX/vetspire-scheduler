@@ -15,14 +15,10 @@ if ( ! defined( 'ABSPATH' ) ) {
 
 class VSPS_Log {
 
-	const DB_VERSION      = '1';
+	const DB_VERSION      = '2';
 	const SYNC_STALE_SECS = 300;
 	const SYNC_BATCH      = 40;
 	const TERMINAL        = array( 'CANCELLED', 'COMPLETED', 'NO_SHOW', 'CHECKED_OUT' );
-
-	public static function init() {
-		add_action( 'plugins_loaded', array( __CLASS__, 'maybe_install' ), 20 );
-	}
 
 	public static function table() {
 		global $wpdb;
@@ -74,6 +70,7 @@ class VSPS_Log {
 			PRIMARY KEY  (id),
 			KEY created_at (created_at),
 			KEY appointment_id (appointment_id),
+			UNIQUE KEY appt_unique (appointment_id),
 			KEY status (status),
 			KEY outcome (outcome)
 		) {$charset};";

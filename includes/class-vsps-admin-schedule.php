@@ -378,6 +378,7 @@ class VSPS_Admin_Schedule {
 		$pages = (int) ceil( $data['total'] / self::PER_PAGE );
 		if ( $pages > 1 ) {
 			$args = array_filter( $filters );
+			unset( $args['pii'] );
 			$args['page'] = 'vsps-appointments';
 			echo '<div class="tablenav bottom"><div class="tablenav-pages"><span class="displaying-num">' . (int) $data['total'] . ' bookings</span> ';
 			echo paginate_links( array(

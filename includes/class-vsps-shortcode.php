@@ -98,6 +98,7 @@ class VSPS_Shortcode {
 				'earlierDates'   => __( 'Earlier dates', 'vetspire-scheduler' ),
 				'laterDates'     => __( 'Later dates', 'vetspire-scheduler' ),
 				'moreDates'      => __( 'More dates', 'vetspire-scheduler' ),
+				'searchingDates' => __( 'Looking for open times %s…', 'vetspire-scheduler' ),
 				'hoursTitle'     => __( 'Hours', 'vetspire-scheduler' ),
 				'reviews'        => __( 'Google Reviews', 'vetspire-scheduler' ),
 				'directions'     => __( 'Get Directions', 'vetspire-scheduler' ),

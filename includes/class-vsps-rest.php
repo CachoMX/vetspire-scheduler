@@ -415,6 +415,12 @@ class VSPS_Rest {
 		$layout  = sanitize_key( (string) $request->get_param( 'layout' ) );
 		$variant = strtolower( sanitize_key( (string) $request->get_param( 'variant' ) ) );
 		$url     = esc_url_raw( (string) $request->get_param( 'page_url' ) );
+		// Keep only scheme + host + path: query strings can carry campaign or
+		// personal data that has no business living in this table.
+		$parts = wp_parse_url( $url );
+		$url   = ( ! empty( $parts['scheme'] ) && ! empty( $parts['host'] ) )
+			? $parts['scheme'] . '://' . $parts['host'] . ( isset( $parts['path'] ) ? $parts['path'] : '/' )
+			: '';
 		return array(
 			'layout'   => in_array( $layout, array( 'full', 'bar', 'calendar', 'float' ), true ) ? $layout : '',
 			'variant'  => in_array( $variant, array( 'a', 'b' ), true ) ? $variant : '',

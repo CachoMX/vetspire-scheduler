@@ -50,6 +50,7 @@
 		earlierDates: 'Earlier dates',
 		laterDates: 'Later dates',
 		moreDates: 'More dates',
+		searchingDates: 'Looking for open times %s…',
 		hoursTitle: 'Hours',
 		reviews: 'Google Reviews',
 		directions: 'Get Directions',
@@ -513,6 +514,13 @@
 		function step() {
 			var count = Math.min(page, self.horizonLeft());
 			var last = self.lastLoadedDate();
+			if (last) {
+				// Still looking beyond the first page: say which week is being checked.
+				var from = addDaysIso(last, 1);
+				var label = formatNextDate(from) + ' \u2013 ' + formatNextDate(addDaysIso(from, count - 1));
+				var loading = self.contentEl.querySelector('.vsps-loading');
+				if (loading) { loading.textContent = I18N.searchingDates.replace('%s', label); }
+			}
 			return self.fetchDays(last ? addDaysIso(last, 1) : null, count).then(function (days) {
 				if (requestId !== self.lastRequestId) { return; }
 				days = self.appendDays(days);
@@ -579,6 +587,10 @@
 
 	Widget.prototype.renderLayout = function () {
 		this.contentEl.innerHTML = '';
+		if (this.inlineNotice) {
+			this.contentEl.appendChild(el('p', 'vsps-notice', this.inlineNotice));
+			this.inlineNotice = '';
+		}
 		if ('bar' === this.layout) {
 			this.renderBar();
 		} else if ('calendar' === this.layout) {
@@ -649,11 +661,24 @@
 		embedded.host = this.host || this;
 	};
 
-	/** Close the booking form and re-open the time picker on the same day. */
+	/**
+	 * Close the booking form and get back to the time picker: the lightbox for
+	 * bar/float (and for forms opened from a lightbox); in place for the full and
+	 * calendar layouts, whose picker is already on the page.
+	 */
 	Widget.prototype.backToPicker = function (notice) {
 		var bk = this._bk;
 		if (bk) { bk.close(); }
-		(this.host || this).openFullModal(bk ? bk.date : null, notice || '');
+		var inline = !this.host && ('full' === this.layout || 'calendar' === this.layout);
+		if (!inline) {
+			(this.host || this).openFullModal(bk ? bk.date : null, notice || '');
+			return;
+		}
+		if (notice) {
+			this.inlineNotice = notice;
+			this.config._initialDate = bk ? bk.date : null;
+			this.loadAvailability();
+		}
 	};
 
 	Widget.prototype.day = function (iso) {
@@ -1244,7 +1269,7 @@
 		// of the on-page widget that opened it).
 		payload.layout = (this.host || this).layout;
 		payload.variant = this.config.variant || '';
-		payload.page_url = String(window.location.href).slice(0, 255);
+		payload.page_url = (window.location.origin + window.location.pathname).slice(0, 255);
 		if (!('vsps_hp' in payload)) { payload.vsps_hp = ''; }
 
 		this.track('booking_submitted', {
