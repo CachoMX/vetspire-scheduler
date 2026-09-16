@@ -58,6 +58,16 @@ class VSPS_Booking {
 			}
 			$slot = self::match_slot( $slots, $args['time'], $args['provider_id'] );
 			if ( null === $slot ) {
+				// Vetspire occasionally answers availableTimes with a partial list
+				// (seen live: a free slot rejected, then booked fine seconds later).
+				// One short retry before telling the visitor the time is gone.
+				usleep( 400000 );
+				$again = $api->get_available_times( $args['location_id'], $args['appointment_type_id'], $args['date'] );
+				if ( ! is_wp_error( $again ) ) {
+					$slot = self::match_slot( $again, $args['time'], $args['provider_id'] );
+				}
+			}
+			if ( null === $slot ) {
 				return new WP_Error( 'vsps_slot', 'That time is no longer available. Please pick another slot.' );
 			}
 			$provider_id = isset( $slot['providerId'] ) ? (string) $slot['providerId'] : '';

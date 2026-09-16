@@ -18,7 +18,7 @@
 		loadFailed: 'Could not load booking options. Please call the clinic.',
 		timesFailed: 'Could not load times. Please try again later.',
 		noTimes: 'No online times available in the next %d days. Please call the clinic.',
-		apptType: 'Appointment type',
+		apptType: 'Select an Appointment Type',
 		open: 'open',
 		today: 'Today',
 		tomorrow: 'Tomorrow',
@@ -39,17 +39,17 @@
 		close: 'Close',
 		bookingFailed: 'Booking failed. Please try another time or call the clinic.',
 		at: 'at',
-		todaysAvailability: "Today's Availability",
-		availability: 'Availability',
 		viewAll: 'View All',
 		bookOnline: 'Book Online',
 		firstAvailable: 'Book First Available Appointment',
 		moreAppointments: 'More available appointments »',
 		showingTimesFor: 'Showing available times for',
 		back: '‹ Back',
-		currentlyViewing: 'Currently Viewing',
+		nextAvailable: 'Next Available Appointment',
+		chooseAnother: 'Choose another time',
+		earlierDates: 'Earlier dates',
+		laterDates: 'Later dates',
 		hoursTitle: 'Hours',
-		website: 'Visit Website',
 		reviews: 'Google Reviews',
 		directions: 'Get Directions',
 		callUs: 'Call Us',
@@ -86,6 +86,8 @@
 	var MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July',
 		'August', 'September', 'October', 'November', 'December'];
 	var DOW = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
+	// Client-facing short months ("Sept 15") — the abbreviations the clinics asked for.
+	var SHORT_MONTHS = ['Jan', 'Feb', 'March', 'April', 'May', 'June', 'July', 'Aug', 'Sept', 'Oct', 'Nov', 'Dec'];
 
 	/* ---------- analytics ---------- */
 
@@ -132,6 +134,7 @@
 				if (!res.ok) {
 					var err = new Error((json && json.message) || 'Request failed');
 					err.status = res.status;
+					err.code = (json && json.code) || '';
 					throw err;
 				}
 				return json;
@@ -154,6 +157,12 @@
 		if (sameDay(d, today)) { return I18N.today; }
 		if (sameDay(d, tomorrow)) { return I18N.tomorrow; }
 		return d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+	}
+
+	/** "Sept 15" — used by the "Next Available Appointment" line. */
+	function formatNextDate(iso) {
+		var d = dateFromIso(iso);
+		return SHORT_MONTHS[d.getMonth()] + ' ' + d.getDate();
 	}
 
 	function formatShortDate(iso) {
@@ -183,11 +192,7 @@
 			return;
 		}
 		this.layout = this.config.layout || 'full';
-		// The horizontal bar doesn't work on small screens: fall back to the
-		// compact floating card below tablet width (decided at load time).
-		if ('bar' === this.layout && window.innerWidth < 640) {
-			this.layout = 'float';
-		}
+		// The bar keeps its own layout on phones (compact strip via CSS).
 		this.body = root.querySelector('.vsps-body');
 		this.state = { types: [], typeId: null, days: [], selectedDate: null, calMonth: null };
 		this.root.classList.add('vsps-layout-' + this.layout);
@@ -250,10 +255,22 @@
 			.catch(function () { /* optional enrichment; stay silent */ });
 	};
 
-	Widget.prototype.locationChip = function () {
-		var st = this.locInfo && this.locInfo.status;
-		if (!st) { return null; }
-		return el('span', 'vsps-chip ' + (st.open ? 'vsps-chip-open' : 'vsps-chip-closed'), st.label);
+	/** First fetched day that still has open slots (null while loading / none). */
+	Widget.prototype.firstAvailableDate = function () {
+		var first = null;
+		(this.state.days || []).forEach(function (d) {
+			if (!first && d.slots && d.slots.length) { first = d.date; }
+		});
+		return first;
+	};
+
+	/** "Next Available Appointment · Sept 15" — shared by the bar and the drawer. */
+	Widget.prototype.nextAvailableLine = function (className, iso) {
+		var date = iso || this.firstAvailableDate();
+		var line = el('div', className);
+		line.appendChild(el('span', 'vsps-next-title', I18N.nextAvailable));
+		if (date) { line.appendChild(el('span', 'vsps-next-date', formatNextDate(date))); }
+		return line;
 	};
 
 	Widget.prototype.applyLocationInfo = function () {
@@ -273,8 +290,6 @@
 		nameBtn.appendChild(el('span', 'vsps-locline-arrow', '\u203a'));
 		nameBtn.addEventListener('click', function () { self.openDrawer(); });
 		line.appendChild(nameBtn);
-		var chip = this.locationChip();
-		if (chip) { line.appendChild(chip); }
 		this.locLine = line;
 		this.body.insertBefore(line, this.body.firstChild ? this.body.firstChild.nextSibling : null);
 	};
@@ -282,21 +297,16 @@
 	Widget.prototype.fillBarLabel = function (label) {
 		var self = this;
 		label.innerHTML = '';
+		// "Next Available Appointment · Sept 15" (the date of the quick-pick chips),
+		// then the clinic name as the way into the details drawer.
+		label.appendChild(this.nextAvailableLine('vsps-bar-next', this.barDate));
 		if (this.locInfo) {
-			label.appendChild(el('span', 'vsps-bar-viewing', I18N.currentlyViewing));
 			var nameBtn = el('button', 'vsps-bar-name', '');
 			nameBtn.type = 'button';
 			nameBtn.appendChild(el('span', null, this.locInfo.name));
 			nameBtn.appendChild(el('span', 'vsps-locline-arrow', '\u203a'));
 			nameBtn.addEventListener('click', function () { self.openDrawer(); });
 			label.appendChild(nameBtn);
-			var chip = this.locationChip();
-			if (chip) { label.appendChild(chip); }
-		} else {
-			label.appendChild(el('span', 'vsps-bar-title', this.barIsToday ? I18N.todaysAvailability : I18N.availability));
-			if (!this.barIsToday && this.barDate) {
-				label.appendChild(el('span', 'vsps-bar-date', formatDateLabel(this.barDate)));
-			}
 		}
 	};
 
@@ -347,8 +357,7 @@
 			var addr = el('p', 'vsps-drawer-address', info.address);
 			drawer.appendChild(addr);
 		}
-		var chip = this.locationChip();
-		if (chip) { drawer.appendChild(chip); }
+		drawer.appendChild(this.nextAvailableLine('vsps-drawer-next'));
 
 		if (info.weekly && info.weekly.length) {
 			drawer.appendChild(el('h5', 'vsps-drawer-hours-title', I18N.hoursTitle));
@@ -388,7 +397,7 @@
 		if (info.address) {
 			addLink('https://www.google.com/maps/dir/?api=1&destination=' + encodeURIComponent(info.address.replace(/\n/g, ', ')), I18N.directions);
 		}
-		if (info.website) { addLink(info.website, I18N.website); }
+		// No "Visit Website" link: the widget already lives on the clinic's site.
 		if (info.googleLink) { addLink(info.googleLink, I18N.reviews); }
 		if (links.childNodes.length) { drawer.appendChild(links); }
 
@@ -408,6 +417,10 @@
 	Widget.prototype.renderShell = function () {
 		var self = this;
 		this.body.innerHTML = '';
+		if (this.config._notice) {
+			// e.g. "That time is no longer available" when re-opened from the booking form.
+			this.body.appendChild(el('p', 'vsps-notice', this.config._notice));
+		}
 
 		if (this.usesTypeSelect()) {
 			var select = el('select', 'vsps-type-select');
@@ -461,7 +474,12 @@
 				self.contentEl.appendChild(el('p', 'vsps-message', I18N.noTimes.replace('%d', String(days))));
 				return;
 			}
-			self.state.selectedDate = firstWithSlots;
+			// Re-opened from the booking form ("choose another time"): land on the
+			// day the visitor was already looking at, as long as it still has slots.
+			var wanted = self.config._initialDate;
+			delete self.config._initialDate;
+			var wantedOk = wanted && self.state.days.some(function (d) { return d.date === wanted && d.slots.length; });
+			self.state.selectedDate = wantedOk ? wanted : firstWithSlots;
 			self.state.calMonth = null;
 			self.renderLayout();
 		}).catch(function () {
@@ -489,7 +507,7 @@
 	 * Opens the FULL picker in a lightbox (View All / Book Online / More).
 	 * Choosing a slot closes the picker and opens the booking form modal.
 	 */
-	Widget.prototype.openFullModal = function () {
+	Widget.prototype.openFullModal = function (initialDate, notice) {
 		var self = this;
 		var overlay = el('div', 'vsps-overlay');
 		var modal = el('div', 'vsps-modal vsps-modal-wide');
@@ -526,6 +544,8 @@
 		Object.keys(this.config).forEach(function (k) { cfg[k] = self.config[k]; });
 		cfg.layout = 'full';
 		cfg._embedded = true;
+		cfg._initialDate = initialDate || null;
+		cfg._notice = notice || '';
 		inner.setAttribute('data-vsps-config', JSON.stringify(cfg));
 		inner.innerHTML = '<h3 class="vsps-title"></h3><div class="vsps-body"><p class="vsps-loading"></p></div>';
 		inner.querySelector('.vsps-title').textContent = titleEl ? titleEl.textContent : 'Book an Appointment';
@@ -536,6 +556,16 @@
 		var embedded = new Widget(inner);
 		// When a slot is picked inside the lightbox, close it before the form opens.
 		embedded.onBeforeForm = close;
+		// The lightbox widget is disposable; "Back" from the booking form re-opens
+		// the picker through the on-page widget that owns it.
+		embedded.host = this.host || this;
+	};
+
+	/** Close the booking form and re-open the time picker on the same day. */
+	Widget.prototype.backToPicker = function (notice) {
+		var bk = this._bk;
+		if (bk) { bk.close(); }
+		(this.host || this).openFullModal(bk ? bk.date : null, notice || '');
 	};
 
 	Widget.prototype.day = function (iso) {
@@ -568,7 +598,16 @@
 
 	Widget.prototype.renderDates = function () {
 		var self = this;
+		var wrap = el('div', 'vsps-dates-wrap');
 		var datesEl = el('div', 'vsps-dates');
+		var prev = el('button', 'vsps-dates-arrow vsps-dates-prev', '\u2039');
+		var next = el('button', 'vsps-dates-arrow vsps-dates-next', '\u203a');
+		prev.type = 'button';
+		next.type = 'button';
+		prev.setAttribute('aria-label', I18N.earlierDates);
+		next.setAttribute('aria-label', I18N.laterDates);
+		prev.addEventListener('click', function () { datesEl.scrollBy({ left: -Math.max(120, datesEl.clientWidth * 0.8), behavior: 'smooth' }); });
+		next.addEventListener('click', function () { datesEl.scrollBy({ left: Math.max(120, datesEl.clientWidth * 0.8), behavior: 'smooth' }); });
 		this.state.days.forEach(function (d) {
 			var btn = el('button', 'vsps-date-btn', '');
 			btn.type = 'button';
@@ -582,7 +621,14 @@
 			});
 			datesEl.appendChild(btn);
 		});
-		this.contentEl.appendChild(datesEl);
+		wrap.appendChild(prev);
+		wrap.appendChild(datesEl);
+		wrap.appendChild(next);
+		this.contentEl.appendChild(wrap);
+		// Keep the selected day in view; hide the arrows when everything already fits.
+		var active = datesEl.querySelector('.is-active');
+		if (active) { datesEl.scrollLeft = Math.max(0, active.offsetLeft - 8); }
+		if (datesEl.scrollWidth <= datesEl.clientWidth + 2) { wrap.classList.add('vsps-dates-fit'); }
 	};
 
 	Widget.prototype.renderSlots = function () {
@@ -601,12 +647,10 @@
 	Widget.prototype.renderBar = function () {
 		var self = this;
 		var day = this.day(this.state.selectedDate);
-		var isToday = sameDay(dateFromIso(day.date), new Date());
 		var bar = el('div', 'vsps-bar');
 
 		var label = el('div', 'vsps-bar-label');
 		this.barLabel = label;
-		this.barIsToday = isToday;
 		this.barDate = day.date;
 		this.fillBarLabel(label);
 		bar.appendChild(label);
@@ -821,6 +865,8 @@
 		});
 		step.appendChild(ret);
 		step.appendChild(fresh);
+		// First step: Back returns to the time picker instead of forcing the ×.
+		step.appendChild(this.backLink(function () { self.backToPicker(); }));
 	};
 
 	Widget.prototype.backLink = function (handler) {
@@ -1121,9 +1167,22 @@
 			});
 			errorEl.textContent = err.message || I18N.bookingFailed;
 			errorEl.style.display = 'block';
+			bk.step.querySelectorAll('.vsps-back').forEach(function (b) { b.disabled = false; b.style.opacity = ''; });
+			if ('vsps_slot' === err.code) {
+				// The slot is gone: retrying the same time can never succeed, so the
+				// primary action becomes "choose another time" (re-opens the picker
+				// on the same day with the notice on top).
+				submitBtn.type = 'button';
+				submitBtn.disabled = false;
+				submitBtn.textContent = I18N.chooseAnother;
+				submitBtn.addEventListener('click', function (e) {
+					e.preventDefault();
+					self.backToPicker(err.message);
+				});
+				return;
+			}
 			submitBtn.disabled = false;
 			submitBtn.textContent = I18N.confirm;
-			bk.step.querySelectorAll('.vsps-back').forEach(function (b) { b.disabled = false; b.style.opacity = ''; });
 		});
 	};
 
