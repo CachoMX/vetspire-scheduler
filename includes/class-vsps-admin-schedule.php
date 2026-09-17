@@ -279,12 +279,14 @@ class VSPS_Admin_Schedule {
 		// filter form has been submitted (vsps_filtered present) an unchecked box means 0.
 		$failed = isset( $src['vsps_filtered'] ) ? ( ! empty( $src['failed'] ) ? 1 : 0 ) : 1;
 		return array(
-			'status'      => $status,
-			'after_hours' => $after_hours,
-			'from'        => $date( 'from' ),
-			'to'          => $date( 'to' ),
-			's'           => isset( $src['s'] ) ? substr( sanitize_text_field( wp_unslash( $src['s'] ) ), 0, 100 ) : '',
-			'failed'      => $failed,
+			'status'              => $status,
+			'after_hours'         => $after_hours,
+			'appointment_type_id' => isset( $src['appointment_type_id'] ) ? absint( $src['appointment_type_id'] ) : 0,
+			'provider'            => isset( $src['provider'] ) ? substr( sanitize_text_field( wp_unslash( $src['provider'] ) ), 0, 120 ) : '',
+			'from'                => $date( 'from' ),
+			'to'                  => $date( 'to' ),
+			's'                   => isset( $src['s'] ) ? substr( sanitize_text_field( wp_unslash( $src['s'] ) ), 0, 100 ) : '',
+			'failed'              => $failed,
 		);
 	}
 
@@ -340,7 +342,6 @@ class VSPS_Admin_Schedule {
 
 	private static function render_bookings( $ctx ) {
 		$settings        = vsps_get_settings();
-		$actions_enabled = ! empty( $settings['admin_actions_enabled'] );
 		$show_client     = ! empty( $settings['admin_show_client'] );
 		$filters         = self::filters_from_request();
 		$filters['pii']  = $show_client ? 1 : 0;
@@ -375,11 +376,10 @@ class VSPS_Admin_Schedule {
 		}
 
 		echo '<table class="widefat striped vsps-bookings"><thead><tr>'
-			. '<th>Created</th>' . ( $show_client ? '<th>Client</th>' : '' ) . '<th>Pet</th><th>Type</th><th>Appointment</th><th>Status</th><th>After hours</th><th>Source</th>'
-			. ( $actions_enabled ? '<th>Actions</th>' : '' )
+			. '<th>Created</th>' . ( $show_client ? '<th>Client</th>' : '' ) . '<th>Pet</th><th>Type</th><th>Appointment</th><th>Provider</th><th>Status</th><th>After hours</th><th>Edited</th><th>Source</th>'
 			. '</tr></thead><tbody>';
 		foreach ( $data['rows'] as $row ) {
-			self::render_booking_row( $row, $ctx, $show_client, $actions_enabled );
+			self::render_booking_row( $row, $ctx, $show_client );
 		}
 		echo '</tbody></table>';
 
@@ -431,6 +431,16 @@ class VSPS_Admin_Schedule {
 			echo '<option value="' . esc_attr( $k ) . '"' . selected( $filters['after_hours'], $k, false ) . '>' . esc_html( $label ) . '</option>';
 		}
 		echo '</select>';
+		echo '<select name="appointment_type_id"><option value="0">All appointment types</option>';
+		foreach ( VSPS_Log::distinct_types() as $t ) {
+			echo '<option value="' . esc_attr( $t->appointment_type_id ) . '"' . selected( (int) $filters['appointment_type_id'], (int) $t->appointment_type_id, false ) . '>' . esc_html( $t->type_name ) . '</option>';
+		}
+		echo '</select>';
+		echo '<select name="provider"><option value="">All providers</option>';
+		foreach ( VSPS_Log::distinct_providers() as $p ) {
+			echo '<option value="' . esc_attr( $p ) . '"' . selected( $filters['provider'], $p, false ) . '>' . esc_html( $p ) . '</option>';
+		}
+		echo '</select>';
 		echo '<input type="hidden" name="vsps_filtered" value="1" />';
 		echo '<label><input type="checkbox" name="failed" value="1"' . checked( 1, $filters['failed'], false ) . ' /> Include failed attempts</label>';
 		echo '<button class="button">Filter</button>';
@@ -443,7 +453,7 @@ class VSPS_Admin_Schedule {
 		echo '</form>';
 	}
 
-	private static function render_booking_row( $row, $ctx, $show_client, $actions_enabled ) {
+	private static function render_booking_row( $row, $ctx, $show_client ) {
 		list( $label, $fg, $bg ) = VSPS_Log::status_label( $row );
 		$created = get_date_from_gmt( $row->created_at, 'M j, Y' ) . '<br /><span style="color:#777;">' . get_date_from_gmt( $row->created_at, 'g:i A' ) . '</span>';
 		$source  = 'backfill' === $row->layout ? 'Imported from Vetspire' : ( $row->layout ? ucfirst( $row->layout ) . ' layout' : 'Widget' );
@@ -454,8 +464,6 @@ class VSPS_Admin_Schedule {
 			$path   = wp_parse_url( $row->page_url, PHP_URL_PATH );
 			$source .= '<br /><a href="' . esc_url( $row->page_url ) . '" target="_blank" rel="noopener" style="color:#777;">' . esc_html( $path ? $path : $row->page_url ) . '</a>';
 		}
-		$actionable = $actions_enabled && 'booked' === $row->outcome && ! $row->is_deleted && ! in_array( $row->status, VSPS_Log::TERMINAL, true );
-
 		echo '<tr' . ( 'failed' === $row->outcome ? ' style="opacity:.75;"' : '' ) . '>';
 		echo '<td>' . $created . '</td>'; // already escaped by get_date_from_gmt formatting
 		if ( $show_client ) {
@@ -465,8 +473,8 @@ class VSPS_Admin_Schedule {
 		echo '<td>' . esc_html( $row->patient_name ?: '—' ) . ( $row->pet_is_new ? '<br /><span style="color:#999;font-size:11px;">new pet</span>' : '' ) . '</td>';
 		echo '<td>' . esc_html( $row->type_name ?: '—' ) . '</td>';
 		echo '<td>' . esc_html( VSPS_Log::appt_local( $row, $ctx['timezone'] ) )
-			. ( $row->provider_name ? '<br /><span style="color:#777;">' . esc_html( $row->provider_name ) . '</span>' : '' )
-			. ( $row->appointment_id ? '<br /><span style="color:#999;font-size:11px;">#' . esc_html( $row->appointment_id ) . '</span>' : '' ) . '</td>';
+			. ( $row->appointment_id ? '<br /><span style="color:#999;font-size:11px;">' . esc_html( $row->appointment_id ) . '</span>' : '' ) . '</td>';
+		echo '<td>' . esc_html( $row->provider_name ?: '—' ) . '</td>';
 		echo '<td><span style="display:inline-block;background:' . esc_attr( $bg ) . ';color:' . esc_attr( $fg ) . ';border-radius:4px;padding:2px 8px;font-size:11px;font-weight:600;">' . esc_html( $label ) . '</span>';
 		if ( 'failed' === $row->outcome && $row->error_message ) {
 			echo '<br /><span style="color:#777;font-size:11px;">' . esc_html( $row->error_message ) . '</span>';
@@ -477,20 +485,12 @@ class VSPS_Admin_Schedule {
 		} else {
 			echo '<td>' . ( $row->after_hours ? 'Yes' : 'No' ) . '</td>';
 		}
-		echo '<td>' . wp_kses( $source, array( 'a' => array( 'href' => array(), 'target' => array(), 'rel' => array(), 'style' => array() ), 'br' => array() ) ) . '</td>';
-		if ( $actions_enabled ) {
-			echo '<td>';
-			if ( $actionable ) {
-				self::action_buttons( array(
-					'id'          => $row->appointment_id,
-					'isConfirmed' => (bool) $row->is_confirmed,
-					'type'        => array( 'id' => (int) $row->appointment_type_id ),
-				), $row->slot_date ?: current_time( 'Y-m-d' ), 'bookings' );
-			} else {
-				echo '<span style="color:#999;">—</span>';
-			}
-			echo '</td>';
+		if ( $row->edited_at ) {
+			echo '<td>Yes<br /><span style="color:#777;font-size:11px;">' . esc_html( get_date_from_gmt( $row->edited_at, 'M j, g:i A' ) ) . '</span></td>';
+		} else {
+			echo '<td>' . ( 'booked' === $row->outcome ? 'No' : '<span style="color:#999;">—</span>' ) . '</td>';
 		}
+		echo '<td>' . wp_kses( $source, array( 'a' => array( 'href' => array(), 'target' => array(), 'rel' => array(), 'style' => array() ), 'br' => array() ) ) . '</td>';
 		echo '</tr>';
 	}
 

@@ -15,7 +15,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 
 class VSPS_Log {
 
-	const DB_VERSION      = '2';
+	const DB_VERSION      = '3';
 	const SYNC_STALE_SECS = 300;
 	const SYNC_BATCH      = 40;
 	const TERMINAL        = array( 'CANCELLED', 'COMPLETED', 'NO_SHOW', 'CHECKED_OUT' );
@@ -67,6 +67,7 @@ class VSPS_Log {
 			page_url varchar(255) NOT NULL DEFAULT '',
 			after_hours tinyint(1) DEFAULT NULL,
 			synced_at datetime DEFAULT NULL,
+			edited_at datetime DEFAULT NULL,
 			PRIMARY KEY  (id),
 			KEY created_at (created_at),
 			KEY appointment_id (appointment_id),
@@ -112,6 +113,12 @@ class VSPS_Log {
 			'client_id'      => isset( $result['client_id'] ) ? (string) $result['client_id'] : '',
 			'patient_id'     => isset( $result['patient_id'] ) ? (string) $result['patient_id'] : '',
 			'client_type'    => ! empty( $result['existing_client'] ) ? 'existing' : 'new',
+			// Vetspire's own name for the pet when an existing one was matched (the
+			// visitor's typed spelling/casing would otherwise look "edited" on the
+			// very first sync even though nobody touched Vetspire).
+			'patient_name'   => isset( $result['patient_name'] ) && '' !== $result['patient_name']
+				? substr( (string) $result['patient_name'], 0, 120 )
+				: substr( isset( $args['patient']['name'] ) ? (string) $args['patient']['name'] : '', 0, 120 ),
 			'type_name'      => isset( $result['type_name'] ) ? substr( (string) $result['type_name'], 0, 120 ) : '',
 			'provider_name'  => isset( $result['provider_name'] ) ? substr( (string) $result['provider_name'], 0, 120 ) : '',
 			'start_utc'      => $start_utc,
@@ -210,10 +217,33 @@ class VSPS_Log {
 						$update['client_name'] = substr( $name, 0, 160 );
 					}
 				}
+				$new_start = null;
 				if ( ! empty( $state['start'] ) ) {
 					try {
-						$update['start_utc'] = ( new DateTimeImmutable( $state['start'] ) )->setTimezone( new DateTimeZone( 'UTC' ) )->format( 'Y-m-d H:i:s' );
+						$new_start = ( new DateTimeImmutable( $state['start'] ) )->setTimezone( new DateTimeZone( 'UTC' ) )->format( 'Y-m-d H:i:s' );
 					} catch ( Exception $e ) { /* keep stored start */ }
+				}
+				// A content change made directly in Vetspire (type, pet, or time moved after we
+				// created it) must be reflected here — the exported/displayed data always has to
+				// match Vetspire, and staff need to know it no longer matches what the visitor booked.
+				$edited = false;
+				if ( ! empty( $state['type']['id'] ) && (string) $state['type']['id'] !== (string) $row->appointment_type_id ) {
+					$update['appointment_type_id'] = (int) $state['type']['id'];
+					$update['type_name']           = isset( $state['type']['name'] ) ? substr( (string) $state['type']['name'], 0, 120 ) : $row->type_name;
+					$edited                         = true;
+				}
+				if ( ! empty( $state['patient']['name'] ) && (string) $state['patient']['name'] !== (string) $row->patient_name ) {
+					$update['patient_name'] = substr( (string) $state['patient']['name'], 0, 120 );
+					$edited                  = true;
+				}
+				if ( null !== $new_start ) {
+					if ( ! empty( $row->start_utc ) && $new_start !== $row->start_utc ) {
+						$edited = true;
+					}
+					$update['start_utc'] = $new_start;
+				}
+				if ( $edited ) {
+					$update['edited_at'] = $now;
 				}
 			}
 			$wpdb->update( self::table(), $update, array( 'id' => (int) $row->id ) );
@@ -357,6 +387,14 @@ class VSPS_Log {
 		} elseif ( 'no' === ( isset( $f['after_hours'] ) ? $f['after_hours'] : '' ) ) {
 			$where[] = 'after_hours = 0';
 		}
+		if ( ! empty( $f['appointment_type_id'] ) ) {
+			$where[] = 'appointment_type_id = %d';
+			$vals[]  = (int) $f['appointment_type_id'];
+		}
+		if ( ! empty( $f['provider'] ) ) {
+			$where[] = 'provider_name = %s';
+			$vals[]  = (string) $f['provider'];
+		}
 		$tz = wp_timezone();
 		if ( ! empty( $f['from'] ) && preg_match( '/^\d{4}-\d{2}-\d{2}$/', $f['from'] ) ) {
 			$where[] = 'created_at >= %s';
@@ -384,6 +422,24 @@ class VSPS_Log {
 		$list_sql  = 'SELECT * FROM ' . self::table() . ' WHERE ' . $sql_where . ' ORDER BY created_at DESC, id DESC LIMIT %d OFFSET %d';
 		$rows      = $wpdb->get_results( $wpdb->prepare( $list_sql, array_merge( $vals, array( (int) $per_page, $offset ) ) ) );
 		return array( 'rows' => $rows ? $rows : array(), 'total' => $total );
+	}
+
+	/** Appointment types seen in the log, for the Bookings filter dropdown. */
+	public static function distinct_types() {
+		global $wpdb;
+		return $wpdb->get_results(
+			'SELECT DISTINCT appointment_type_id, type_name FROM ' . self::table()
+			. " WHERE appointment_type_id > 0 AND type_name != '' ORDER BY type_name ASC"
+		);
+	}
+
+	/** Providers seen in the log, for the Bookings filter dropdown. */
+	public static function distinct_providers() {
+		global $wpdb;
+		return $wpdb->get_col(
+			'SELECT DISTINCT provider_name FROM ' . self::table()
+			. " WHERE provider_name != '' ORDER BY provider_name ASC"
+		);
 	}
 
 	/** Unconfirmed, still-upcoming widget bookings (the menu bubble). */
@@ -444,7 +500,7 @@ class VSPS_Log {
 
 	public static function csv( array $rows, $show_client, DateTimeZone $clinic_tz ) {
 		$out = fopen( 'php://temp', 'w+' );
-		$head = array( 'Created (site time)', 'Outcome', 'Status', 'Confirmed', 'Deleted in Vetspire', 'Appointment ID', 'Appointment (clinic time)', 'Provider', 'Type', 'Pet', 'Client type', 'New pet' );
+		$head = array( 'Created (site time)', 'Outcome', 'Status', 'Confirmed', 'Deleted in Vetspire', 'Edited in Vetspire', 'Edited at (site time)', 'Appointment ID', 'Appointment (clinic time)', 'Provider', 'Type', 'Pet', 'Client type', 'New pet' );
 		if ( $show_client ) {
 			array_push( $head, 'Client', 'Email' );
 		}
@@ -457,6 +513,8 @@ class VSPS_Log {
 				$r->status,
 				$r->is_confirmed ? 'yes' : 'no',
 				$r->is_deleted ? 'yes' : 'no',
+				$r->edited_at ? 'yes' : 'no',
+				$r->edited_at ? get_date_from_gmt( $r->edited_at, 'Y-m-d H:i' ) : '',
 				$r->appointment_id,
 				self::appt_local( $r, $clinic_tz, 'Y-m-d H:i' ),
 				$r->provider_name,

@@ -43,6 +43,7 @@ class VSPS_Shortcode {
 			'title'                => __( 'Book an Appointment', 'vetspire-scheduler' ),
 			'layout'               => $settings['layout'], // full | bar | calendar | float
 			'variant'              => '',       // a = minimal form, b = with optional questions
+			'primary'              => '',       // "1" = the #vsps-book external trigger targets THIS instance
 		), $atts, 'vetspire_scheduler' );
 
 		$location_id = absint( $atts['location_id'] );
@@ -161,10 +162,17 @@ class VSPS_Shortcode {
 
 		$style = '--vsps-primary:' . esc_attr( $settings['primary_color'] ) . ';';
 
+		// On a page with several widgets, the #vsps-book external trigger (any
+		// existing "Book Online" link pointed at "#vsps-book") opens the FIRST one
+		// in the page's HTML by default; add primary="1" to pin a specific instance
+		// instead of relying on markup order.
+		$primary_attr = ! empty( $atts['primary'] ) ? ' data-vsps-primary="1"' : '';
+
 		return sprintf(
-			'<div class="vsps-widget" style="%s" data-vsps-config="%s"><h3 class="vsps-title">%s</h3><div class="vsps-body"><p class="vsps-loading">Loading available times…</p></div></div>',
+			'<div class="vsps-widget" style="%s" data-vsps-config="%s"%s><h3 class="vsps-title">%s</h3><div class="vsps-body"><p class="vsps-loading">Loading available times…</p></div></div>',
 			esc_attr( $style ),
 			esc_attr( wp_json_encode( $config ) ),
+			$primary_attr,
 			esc_html( $atts['title'] )
 		);
 	}

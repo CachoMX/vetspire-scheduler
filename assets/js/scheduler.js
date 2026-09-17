@@ -193,6 +193,9 @@
 
 	/* ---------- widget ---------- */
 
+	// Registry of live widget instances, for the #vsps-book external trigger below.
+	var WIDGETS = [];
+
 	function Widget(root) {
 		this.root = root;
 		try {
@@ -205,6 +208,7 @@
 		this.body = root.querySelector('.vsps-body');
 		this.state = { types: [], typeId: null, days: [], selectedDate: null, calMonth: null };
 		this.root.classList.add('vsps-layout-' + this.layout);
+		WIDGETS.push(this);
 		this.init();
 	}
 
@@ -1351,10 +1355,67 @@
 			if (root.getAttribute('data-vsps-noinit')) { return; }
 			new Widget(root);
 		});
+		maybeOpenFromHash();
 	}
 
 	// Exposed for the admin preview (re-init after layout/location change).
 	window.vspsInitWidget = function (root) { return new Widget(root); };
+
+	/**
+	 * External "Book Online" trigger: any link on the page whose URL ends in
+	 * #vsps-book opens the widget's full picker instead of navigating away —
+	 * install it on an existing button by pointing its link at "#vsps-book"
+	 * (or "<page URL>#vsps-book"); no plugin config or per-site code needed,
+	 * so the same convention works on every clinic site. Also honours a
+	 * direct visit to a URL ending in #vsps-book (e.g. from an ad or email)
+	 * by opening the picker on arrival.
+	 */
+	var BOOK_HASH_RE = /#vsps-book(?:[?&][^#]*)?$/i;
+
+	function isBookHashHref(href) {
+		return !!href && BOOK_HASH_RE.test(href);
+	}
+
+	/**
+	 * Which on-page (non-lightbox) widget an external #vsps-book link should open:
+	 * the one marked data-vsps-primary="1" (shortcode attribute primary="1") when a
+	 * page has one, otherwise the first widget in the page's HTML.
+	 */
+	function primaryWidget() {
+		var onPage = [];
+		for (var i = 0; i < WIDGETS.length; i++) {
+			if (!WIDGETS[i].config._embedded) { onPage.push(WIDGETS[i]); }
+		}
+		for (var j = 0; j < onPage.length; j++) {
+			if (onPage[j].root.getAttribute('data-vsps-primary')) { return onPage[j]; }
+		}
+		return onPage.length ? onPage[0] : null;
+	}
+
+	function openBookHashTarget() {
+		var w = primaryWidget();
+		if (w && typeof w.openFullModal === 'function') { w.openFullModal(); }
+	}
+
+	document.addEventListener('click', function (e) {
+		var a = e.target && e.target.closest ? e.target.closest('a[href]') : null;
+		if (a && isBookHashHref(a.getAttribute('href'))) {
+			e.preventDefault();
+			openBookHashTarget();
+		}
+	}, true);
+
+	function maybeOpenFromHash() {
+		if (!isBookHashHref(window.location.hash)) { return; }
+		// Widgets fetch their types asynchronously; give the first one a moment
+		// to exist before opening its lightbox.
+		window.setTimeout(function () {
+			openBookHashTarget();
+			if (window.history && history.replaceState) {
+				history.replaceState(null, '', window.location.pathname + window.location.search);
+			}
+		}, 300);
+	}
 
 	if (document.readyState === 'loading') {
 		document.addEventListener('DOMContentLoaded', boot);

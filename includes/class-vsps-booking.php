@@ -114,7 +114,11 @@ class VSPS_Booking {
 		}
 
 		// 2. Reuse the client's patient when the name matches, otherwise create it.
-		$patient_id = self::match_patient( $client, $args['patient']['name'] );
+		// Keep Vetspire's own casing/spelling for the log (visitor might type "fluffy"
+		// for a pet Vetspire has on file as "Fluffy") so a later sync never mistakes
+		// that difference for a real edit made in Vetspire.
+		$matched_patient = self::match_patient( $client, $args['patient']['name'] );
+		$patient_id      = $matched_patient ? $matched_patient['id'] : null;
 		if ( null === $patient_id && $existing_client ) {
 			// The security decision keys off what the SERVER found ($existing_client),
 			// never off the client-supplied client_type — otherwise the "new client"
@@ -196,6 +200,9 @@ class VSPS_Booking {
 			'start'           => $appointment['start'],
 			'client_id'       => $client['id'],
 			'patient_id'      => $patient_id,
+			// Vetspire's own name when an existing pet was matched; the visitor's
+			// typed name is only canonical for a brand-new patient we just created.
+			'patient_name'    => $matched_patient ? $matched_patient['name'] : $args['patient']['name'],
 			'existing_client' => $existing_client,
 			'type_name'       => isset( $type['name'] ) ? $type['name'] : '',
 			'provider_name'   => isset( $slot['provider']['name'] ) ? $slot['provider']['name'] : '',
@@ -217,6 +224,7 @@ class VSPS_Booking {
 	}
 
 	/** Case-insensitive match of an active patient by name on an existing client. */
+	/** Returns the matched {id, name} (Vetspire's own casing) or null. */
 	private static function match_patient( $client, $patient_name ) {
 		if ( empty( $client['patients'] ) || ! is_array( $client['patients'] ) ) {
 			return null;
@@ -225,7 +233,7 @@ class VSPS_Booking {
 			$active   = ! isset( $patient['isActive'] ) || $patient['isActive'];
 			$deceased = ! empty( $patient['isDeceased'] );
 			if ( $active && ! $deceased && 0 === strcasecmp( $patient['name'], $patient_name ) ) {
-				return $patient['id'];
+				return array( 'id' => $patient['id'], 'name' => $patient['name'] );
 			}
 		}
 		return null;

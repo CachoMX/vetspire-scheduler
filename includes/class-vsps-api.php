@@ -199,7 +199,7 @@ class VSPS_Api {
 		foreach ( $ids as $i => $id ) {
 			$decl[]            = '$id' . $i . ': ID!';
 			$vars[ 'id' . $i ] = $id;
-			$parts[]           = 'a' . $i . ': appointment(id: $id' . $i . ') { id status isConfirmed deleted start provider { name } patient { name client { givenName familyName } } }';
+			$parts[]           = 'a' . $i . ': appointment(id: $id' . $i . ') { id status isConfirmed deleted start provider { name } patient { name client { givenName familyName } } type { id name } }';
 		}
 		$data = $this->request( 'query (' . implode( ', ', $decl ) . ') { ' . implode( ' ', $parts ) . ' }', $vars );
 		if ( is_wp_error( $data ) ) {
