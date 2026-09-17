@@ -47,6 +47,7 @@
 		back: '‹ Back',
 		nextAvailable: 'Next Available Appointment',
 		chooseAnother: 'Choose Another Time',
+		slotGoneMessage: 'The appointment time you selected is no longer available. Please choose another.',
 		earlierDates: 'Earlier dates',
 		laterDates: 'Later dates',
 		moreDates: 'More dates',
@@ -947,15 +948,20 @@
 
 	Widget.prototype.openForm = function (date, slot) {
 		var self = this;
+		// Read the brand color BEFORE closing whatever opened this form: closing a
+		// lightbox picker (onBeforeForm) detaches this.root from the document, and
+		// a detached element's getComputedStyle() can no longer resolve custom
+		// properties — that silently fell back to the default green.
+		var primary = '';
+		try {
+			primary = window.getComputedStyle(this.root).getPropertyValue('--vsps-primary');
+		} catch (e) { /* non-blocking */ }
 		if (this.onBeforeForm) { this.onBeforeForm(); }
 		var type = this.currentType();
 		var overlay = el('div', 'vsps-overlay');
 		var modal = el('div', 'vsps-modal');
 		overlay.appendChild(modal);
-		try {
-			var primary = window.getComputedStyle(this.root).getPropertyValue('--vsps-primary');
-			if (primary) { overlay.style.setProperty('--vsps-primary', primary.trim()); }
-		} catch (e) { /* non-blocking */ }
+		if (primary) { overlay.style.setProperty('--vsps-primary', primary.trim()); }
 
 		function onKeydown(e) { if (e.key === 'Escape') { close(); } }
 		function close() {
@@ -1316,7 +1322,7 @@
 			// Time" — show that instead of the raw "no longer available" wording,
 			// both on this form and on the notice atop the picker it reopens into.
 			var slotGone = 'vsps_slot' === err.code;
-			var message  = slotGone ? I18N.chooseAnother : ( err.message || I18N.bookingFailed );
+			var message  = slotGone ? I18N.slotGoneMessage : ( err.message || I18N.bookingFailed );
 			errorEl.textContent = message;
 			errorEl.style.display = 'block';
 			bk.step.querySelectorAll('.vsps-back').forEach(function (b) { b.disabled = false; b.style.opacity = ''; });

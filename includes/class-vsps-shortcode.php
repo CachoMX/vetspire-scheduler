@@ -95,6 +95,7 @@ class VSPS_Shortcode {
 				'back'           => __( '‹ Back', 'vetspire-scheduler' ),
 				'nextAvailable'  => __( 'Next Available Appointment', 'vetspire-scheduler' ),
 				'chooseAnother'  => __( 'Choose Another Time', 'vetspire-scheduler' ),
+				'slotGoneMessage' => __( 'The appointment time you selected is no longer available. Please choose another.', 'vetspire-scheduler' ),
 				'earlierDates'   => __( 'Earlier dates', 'vetspire-scheduler' ),
 				'laterDates'     => __( 'Later dates', 'vetspire-scheduler' ),
 				'moreDates'      => __( 'More dates', 'vetspire-scheduler' ),
