@@ -557,15 +557,37 @@ class VSPS_Rest {
 		return preg_replace( '/[^\s@]+@[^\s@]+/', '[email]', (string) $message );
 	}
 
+	/**
+	 * A fixed window anchored to its FIRST attempt: `$limit` tries every
+	 * `$ttl` seconds, the window boundary never moving just because more
+	 * attempts land inside it. `set_transient()` always resets a transient's
+	 * own expiry to the value passed in, so storing a bare counter and
+	 * re-arming it with the same `$ttl` on every call (the old approach)
+	 * pushed a fresh full-length window out from whichever attempt happened
+	 * to be the most recent — a legitimate client making occasional attempts
+	 * could keep re-triggering a "24 hour" block indefinitely. Storing our
+	 * own absolute `expires` timestamp and always passing the REMAINING
+	 * seconds to `set_transient()` keeps the transient's expiry pinned to
+	 * that original boundary regardless of how many times it's touched.
+	 */
 	private static function rate_limit_ok( $bucket, $limit, $ttl ) {
-		$key   = 'vsps_rl_' . $bucket;
-		$count = (int) get_transient( $key );
-		if ( $count >= $limit ) {
+		$key  = 'vsps_rl_' . $bucket;
+		$data = get_transient( $key );
+		$now  = time();
+		if ( ! is_array( $data ) || empty( $data['expires'] ) || $data['expires'] <= $now ) {
+			$data = array(
+				'count'   => 0,
+				'expires' => $now + $ttl,
+			);
+		}
+		$data['count'] = isset( $data['count'] ) ? (int) $data['count'] : 0;
+		if ( $data['count'] >= $limit ) {
+			// Already over the cap: nothing about the stored window changes, so
+			// skip the write — an abuse burst shouldn't cost a DB write per hit.
 			return false;
 		}
-		// Transients aren't atomic; a burst can slightly exceed the cap. Acceptable
-		// here — the cap is a soft brake, and slot re-validation limits real damage.
-		set_transient( $key, $count + 1, $ttl );
+		++$data['count'];
+		set_transient( $key, $data, max( 1, $data['expires'] - $now ) );
 		return true;
 	}
 }
