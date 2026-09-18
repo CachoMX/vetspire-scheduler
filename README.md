@@ -74,9 +74,9 @@ typed into the form → full ad-to-appointment attribution.
 - **Bookings log (wp-admin → Vetspire Scheduler → Bookings):** every booking made through the widget
   (and every refused attempt) is stored in `wp_vsps_bookings` with its creation time, client/pet/type,
   slot, source page + layout, and a status refreshed from Vetspire when the page opens (Pending,
-  Confirmed, Completed, Cancelled, Deleted in Vetspire, Failed). Rows never disappear. Filters, search,
-  CSV export; confirm / reschedule / cancel stay available. The whole appointment book for a day is
-  under the "Clinic day view" tab. On first open the log imports the online bookings of the last 30 days.
+  Confirmed, Completed, Cancelled, Deleted in Vetspire, Failed). Rows never disappear. Filters (date,
+  type, provider, status, after hours) and CSV export are available; editing happens in Vetspire. On
+  first open the log imports the online bookings of the last 30 days.
 - **Server-side slot re-validation:** `/book` never trusts the client. The appointment type must
   be `canBookOnline` at that location, duration comes from the type definition, and the
   date/time must match live `availableTimes` (provider/schedule are taken from the matched

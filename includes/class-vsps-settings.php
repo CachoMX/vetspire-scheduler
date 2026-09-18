@@ -72,7 +72,6 @@ class VSPS_Settings {
 			'ask_sex'           => empty( $input['ask_sex'] ) ? 0 : 1,
 			'ask_age'           => empty( $input['ask_age'] ) ? 0 : 1,
 			'ask_neutered'      => empty( $input['ask_neutered'] ) ? 0 : 1,
-			'admin_actions_enabled' => empty( $input['admin_actions_enabled'] ) ? 0 : 1,
 			'admin_show_client'     => empty( $input['admin_show_client'] ) ? 0 : 1,
 			'source_label'      => '' !== trim( isset( $input['source_label'] ) ? $input['source_label'] : '' )
 				? substr( sanitize_text_field( $input['source_label'] ), 0, 40 ) : 'Online',
@@ -326,12 +325,6 @@ class VSPS_Settings {
 							<h2>Admin View</h2>
 							<div class="inside">
 								<label style="display:block;margin-bottom:8px;">
-									<input type="checkbox" name="<?php echo esc_attr( $opt ); ?>[admin_actions_enabled]"
-										value="1" <?php checked( 1, (int) $settings['admin_actions_enabled'] ); ?> />
-									Enable appointment actions (Confirm / Reschedule / Cancel) in the Appointments view
-								</label>
-								<p class="description">Keep ON while testing. <strong>Turn OFF at go-live</strong> so nobody can accidentally change a real appointment from WordPress — everything is still managed in Vetspire.</p>
-								<label style="display:block;margin:10px 0 8px;">
 									<input type="checkbox" name="<?php echo esc_attr( $opt ); ?>[admin_show_client]"
 										value="1" <?php checked( 1, (int) $settings['admin_show_client'] ); ?> />
 									Show the client name &amp; phone column

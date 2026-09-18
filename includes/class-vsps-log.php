@@ -252,25 +252,6 @@ class VSPS_Log {
 		return $n;
 	}
 
-	/** Local mirror of an admin action so the list is right before the next sync. */
-	public static function note_admin_action( $appointment_id, $do, $result ) {
-		global $wpdb;
-		$update = array();
-		if ( 'confirm' === $do ) {
-			$update['is_confirmed'] = 1;
-		} elseif ( 'cancel' === $do ) {
-			$update['status'] = 'CANCELLED';
-		} elseif ( 'reschedule' === $do && is_array( $result ) && ! empty( $result['start'] ) ) {
-			try {
-				$update['start_utc'] = ( new DateTimeImmutable( $result['start'] ) )->setTimezone( new DateTimeZone( 'UTC' ) )->format( 'Y-m-d H:i:s' );
-			} catch ( Exception $e ) { /* ignore */ }
-		}
-		if ( $update ) {
-			$update['synced_at'] = current_time( 'mysql', true );
-			$wpdb->update( self::table(), $update, array( 'appointment_id' => (string) $appointment_id ) );
-		}
-	}
-
 	/* ---------- backfill (once): online bookings that pre-date the log ---------- */
 
 	public static function maybe_backfill( VSPS_Api $api, $location_id, DateTimeZone $tz ) {
@@ -356,8 +337,10 @@ class VSPS_Log {
 
 	/**
 	 * Filtered, paginated list. $f keys: status (all|pending|confirmed|cancelled|
-	 * deleted|completed|failed), from, to (Y-m-d, on created_at in the WP timezone),
-	 * s (name / email / pet / appointment id), failed (1 = include failed attempts).
+	 * deleted|completed|failed), from, to (Y-m-d, matched against created_at in
+	 * the WordPress site's own timezone — display uses the clinic's timezone
+	 * instead, see utc_to_local(), so the two can disagree by a few hours near
+	 * midnight if the two timezones differ), failed (1 = include failed attempts).
 	 */
 	public static function query( array $f, $page = 1, $per_page = 25 ) {
 		global $wpdb;
@@ -403,17 +386,6 @@ class VSPS_Log {
 		if ( ! empty( $f['to'] ) && preg_match( '/^\d{4}-\d{2}-\d{2}$/', $f['to'] ) ) {
 			$where[] = 'created_at <= %s';
 			$vals[]  = ( new DateTimeImmutable( $f['to'] . ' 23:59:59', $tz ) )->setTimezone( new DateTimeZone( 'UTC' ) )->format( 'Y-m-d H:i:s' );
-		}
-		if ( ! empty( $f['s'] ) ) {
-			$like = '%' . $wpdb->esc_like( $f['s'] ) . '%';
-			if ( ! empty( $f['pii'] ) ) {
-				$where[] = '(client_name LIKE %s OR client_email LIKE %s OR patient_name LIKE %s OR appointment_id LIKE %s)';
-				array_push( $vals, $like, $like, $like, $like );
-			} else {
-				// Client column hidden in Settings → the search must not reveal clients either.
-				$where[] = '(patient_name LIKE %s OR appointment_id LIKE %s)';
-				array_push( $vals, $like, $like );
-			}
 		}
 		$sql_where = implode( ' AND ', $where );
 		$count_sql = 'SELECT COUNT(*) FROM ' . self::table() . ' WHERE ' . $sql_where;
@@ -500,7 +472,7 @@ class VSPS_Log {
 
 	public static function csv( array $rows, $show_client, DateTimeZone $clinic_tz ) {
 		$out = fopen( 'php://temp', 'w+' );
-		$head = array( 'Created (site time)', 'Outcome', 'Status', 'Confirmed', 'Deleted in Vetspire', 'Edited in Vetspire', 'Edited at (site time)', 'Appointment ID', 'Appointment (clinic time)', 'Provider', 'Type', 'Pet', 'Client type', 'New pet' );
+		$head = array( 'Created (clinic time)', 'Outcome', 'Status', 'Confirmed', 'Deleted in Vetspire', 'Edited in Vetspire', 'Edited at (clinic time)', 'Appointment ID', 'Appointment (clinic time)', 'Provider', 'Type', 'Pet', 'Client type', 'New pet' );
 		if ( $show_client ) {
 			array_push( $head, 'Client', 'Email' );
 		}
@@ -508,13 +480,13 @@ class VSPS_Log {
 		fputcsv( $out, $head );
 		foreach ( $rows as $r ) {
 			$line = array(
-				get_date_from_gmt( $r->created_at, 'Y-m-d H:i' ),
+				self::utc_to_local( $r->created_at, $clinic_tz, 'Y-m-d H:i' ),
 				$r->outcome,
 				$r->status,
 				$r->is_confirmed ? 'yes' : 'no',
 				$r->is_deleted ? 'yes' : 'no',
 				$r->edited_at ? 'yes' : 'no',
-				$r->edited_at ? get_date_from_gmt( $r->edited_at, 'Y-m-d H:i' ) : '',
+				$r->edited_at ? self::utc_to_local( $r->edited_at, $clinic_tz, 'Y-m-d H:i' ) : '',
 				$r->appointment_id,
 				self::appt_local( $r, $clinic_tz, 'Y-m-d H:i' ),
 				$r->provider_name,
@@ -554,5 +526,23 @@ class VSPS_Log {
 			} catch ( Exception $e ) { /* fall through */ }
 		}
 		return '—';
+	}
+
+	/**
+	 * A stored UTC datetime (created_at, edited_at, ...) in the clinic's own
+	 * timezone. Deliberately NOT get_date_from_gmt(), which converts to the
+	 * WordPress site's General Settings timezone instead — a separate,
+	 * easy-to-leave-misconfigured (often still the WP default of UTC) setting
+	 * that has nothing to do with which clinic this install serves.
+	 */
+	public static function utc_to_local( $mysql_utc, DateTimeZone $tz, $format ) {
+		if ( empty( $mysql_utc ) ) {
+			return '';
+		}
+		try {
+			return ( new DateTimeImmutable( $mysql_utc, new DateTimeZone( 'UTC' ) ) )->setTimezone( $tz )->format( $format );
+		} catch ( Exception $e ) {
+			return $mysql_utc;
+		}
 	}
 }
