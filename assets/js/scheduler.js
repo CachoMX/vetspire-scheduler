@@ -137,7 +137,23 @@
 	 * caller captures the real opener BEFORE tearing the old overlay down
 	 * and hands it in here instead.
 	 */
+	// Every currently-open popup's overlay, shared across all Widget
+	// instances. A page can have more than one widget (and so more than one
+	// popup momentarily open, e.g. mid close-then-reopen transition, or two
+	// separate shortcode instances): each popup's own focus-escape safety
+	// nets below must only correct an escape into the page BEHIND every open
+	// popup, never treat landing inside a DIFFERENT, still-open popup as an
+	// escape to fight over.
+	var OPEN_OVERLAYS = [];
+	function insideAnyOpenOverlay(node) {
+		for (var i = 0; i < OPEN_OVERLAYS.length; i++) {
+			if (OPEN_OVERLAYS[i].contains(node)) { return true; }
+		}
+		return false;
+	}
+
 	function makeAccessibleModal(overlay, dialogEl, openerOverride) {
+		OPEN_OVERLAYS.push(overlay);
 		dialogEl.setAttribute('role', 'dialog');
 		dialogEl.setAttribute('aria-modal', 'true');
 		// So the "no focusable content yet" fallback below can actually focus
@@ -150,32 +166,109 @@
 				'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]'
 			);
 			return Array.prototype.filter.call(items, function (node) {
-				return (node.offsetWidth || node.offsetHeight) && '-1' !== node.getAttribute('tabindex');
+				return (node.offsetWidth || node.offsetHeight) && '-1' !== node.getAttribute('tabindex')
+					&& node !== sentinelStart && node !== sentinelEnd;
 			});
 		}
 
-		function onTrapKeydown(e) {
-			if ('Tab' !== e.key) { return; }
+		/**
+		 * Two invisible, zero-size focus sentinels bracket the overlay's real
+		 * content. An earlier version tried to predict "is this Tab press
+		 * about to leave the boundary" on every keydown by comparing
+		 * document.activeElement against a freshly-queried first/last -- that
+		 * breaks while the widget's content is still loading asynchronously:
+		 * right after opening, "the last focusable element right now" can be
+		 * a temporary one (e.g. the type dropdown, before dates/slots exist
+		 * yet), so tabbing forward from it wrongly wrapped back to the very
+		 * first control, over and over, until loading finished. A visitor
+		 * (or anyone using a screen reader, who typically tabs immediately
+		 * rather than waiting to look first) could get stuck bouncing between
+		 * just those two controls indefinitely. Sentinels sidestep the
+		 * prediction entirely: they only redirect once the browser's own
+		 * native Tab has ALREADY landed on one, i.e. a boundary was
+		 * genuinely just crossed, at which point re-querying focusable()
+		 * reflects whatever has actually finished loading by then.
+		 */
+		function sentinel() {
+			var s = document.createElement('div');
+			s.className = 'vsps-focus-sentinel';
+			s.setAttribute('tabindex', '0');
+			s.style.cssText = 'position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0;';
+			return s;
+		}
+		var sentinelStart = sentinel();
+		var sentinelEnd = sentinel();
+		overlay.insertBefore(sentinelStart, overlay.firstChild);
+		overlay.appendChild(sentinelEnd);
+		sentinelStart.addEventListener('focus', function () {
 			var items = focusable();
-			if (!items.length) { return; }
-			var first = items[0], last = items[items.length - 1];
-			if (e.shiftKey && document.activeElement === first) {
-				e.preventDefault(); last.focus();
-			} else if (!e.shiftKey && document.activeElement === last) {
-				e.preventDefault(); first.focus();
+			(items[items.length - 1] || dialogEl).focus();
+		});
+		sentinelEnd.addEventListener('focus', function () {
+			var items = focusable();
+			(items[0] || dialogEl).focus();
+		});
+
+		// Once restoreFocus() below has run, both safety nets must stop
+		// correcting anything -- restoreFocus() itself moves focus outside
+		// the overlay ON PURPOSE (back to opener), and a focusout/focusin
+		// pair already queued from a moment earlier (e.g. the very click on
+		// the close button) can still fire its callback on a LATER tick,
+		// after this flag is set, and would otherwise yank focus straight
+		// back in and undo the restore.
+		var closed = false;
+
+		// Safety net on top of the sentinels: content that's still loading
+		// asynchronously right as a Tab lands can make the browser's OWN
+		// native tab-order calculation (not this file's code) skip past a
+		// sentinel that's momentarily zero-size mid-reflow, escaping straight
+		// to the page behind the popup. Anything reaching focus outside the
+		// overlay while it's still open gets pulled back immediately.
+		function onFocusin(e) {
+			if (!closed && !insideAnyOpenOverlay(e.target)) {
+				var items = focusable();
+				(items[0] || dialogEl).focus();
 			}
 		}
-		overlay.addEventListener('keydown', onTrapKeydown);
+		document.addEventListener('focusin', onFocusin, true);
+
+		// A second, complementary safety net: the widget re-renders parts of
+		// itself (a new page of dates loading in, availability refreshing,
+		// ...) by clearing and rebuilding DOM nodes -- if the element that
+		// currently has focus is one of the ones removed, the browser resets
+		// focus to <body> as an intrinsic side effect of the removal itself,
+		// WITHOUT necessarily firing a focusin event for onFocusin above to
+		// catch (there's no new element actively receiving focus, just the
+		// old one disappearing). `focusout` reliably fires for that instead;
+		// checking one tick later (after the browser settles on wherever
+		// focus really ended up, not mid-transition) and correcting if it
+		// landed outside the overlay closes this gap.
+		function onFocusOut() {
+			window.setTimeout(function () {
+				if (!closed && !insideAnyOpenOverlay(document.activeElement)) {
+					var items = focusable();
+					(items[0] || dialogEl).focus();
+				}
+			}, 0);
+		}
+		overlay.addEventListener('focusout', onFocusOut);
 
 		// A tick so the just-inserted content has real layout (offsetWidth
 		// checks above) before anything tries to focus it.
 		window.setTimeout(function () {
+			if (closed) { return; }
 			var items = focusable();
 			(items[0] || dialogEl).focus();
 		}, 0);
 
 		return function restoreFocus() {
-			overlay.removeEventListener('keydown', onTrapKeydown);
+			closed = true;
+			document.removeEventListener('focusin', onFocusin, true);
+			overlay.removeEventListener('focusout', onFocusOut);
+			sentinelStart.remove();
+			sentinelEnd.remove();
+			var idx = OPEN_OVERLAYS.indexOf(overlay);
+			if (-1 !== idx) { OPEN_OVERLAYS.splice(idx, 1); }
 			if (opener && 'function' === typeof opener.focus && document.body.contains(opener)) {
 				opener.focus();
 			}
@@ -405,7 +498,7 @@
 		} catch (e) { /* non-blocking */ }
 
 		var restoreFocus;
-		function onKeydown(e) { if (e.key === 'Escape') { close(); } }
+		function onKeydown(e) { if (e.key === 'Escape' && OPEN_OVERLAYS[OPEN_OVERLAYS.length - 1] === overlay) { close(); } }
 		function close() {
 			document.removeEventListener('keydown', onKeydown);
 			if (restoreFocus) { restoreFocus(); }
@@ -710,7 +803,7 @@
 		if (primaryColor) { overlay.style.setProperty('--vsps-primary', primaryColor); }
 
 		var restoreFocus;
-		function onKeydown(e) { if (e.key === 'Escape') { close(); } }
+		function onKeydown(e) { if (e.key === 'Escape' && OPEN_OVERLAYS[OPEN_OVERLAYS.length - 1] === overlay) { close(); } }
 		function close() {
 			document.removeEventListener('keydown', onKeydown);
 			if (restoreFocus) { restoreFocus(); }
@@ -1100,7 +1193,7 @@
 		if (primary) { overlay.style.setProperty('--vsps-primary', primary.trim()); }
 
 		var restoreFocus;
-		function onKeydown(e) { if (e.key === 'Escape') { close(); } }
+		function onKeydown(e) { if (e.key === 'Escape' && OPEN_OVERLAYS[OPEN_OVERLAYS.length - 1] === overlay) { close(); } }
 		function close() {
 			document.removeEventListener('keydown', onKeydown);
 			if (restoreFocus) { restoreFocus(); }
