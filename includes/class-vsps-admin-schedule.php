@@ -121,7 +121,12 @@ class VSPS_Admin_Schedule {
 		};
 		// "Include failed attempts" defaults to CHECKED on a fresh page load; once the
 		// filter form has been submitted (vsps_filtered present) an unchecked box means 0.
-		$failed = isset( $src['vsps_filtered'] ) ? ( ! empty( $src['failed'] ) ? 1 : 0 ) : 1;
+		$failed  = isset( $src['vsps_filtered'] ) ? ( ! empty( $src['failed'] ) ? 1 : 0 ) : 1;
+		$orderby = isset( $src['orderby'] ) ? sanitize_key( wp_unslash( $src['orderby'] ) ) : 'created';
+		if ( ! array_key_exists( $orderby, VSPS_Log::SORTABLE_COLUMNS ) ) {
+			$orderby = 'created';
+		}
+		$order = isset( $src['order'] ) && 'asc' === sanitize_key( wp_unslash( $src['order'] ) ) ? 'asc' : 'desc';
 		return array(
 			'status'              => $status,
 			'after_hours'         => $after_hours,
@@ -130,6 +135,8 @@ class VSPS_Admin_Schedule {
 			'from'                => $date( 'from' ),
 			'to'                  => $date( 'to' ),
 			'failed'              => $failed,
+			'orderby'             => $orderby,
+			'order'               => $order,
 		);
 	}
 
@@ -219,7 +226,16 @@ class VSPS_Admin_Schedule {
 		}
 
 		echo '<table class="widefat striped vsps-bookings"><thead><tr>'
-			. '<th>Created (clinic time)</th>' . ( $show_client ? '<th>Client</th>' : '' ) . '<th>Pet</th><th>Type</th><th>Appointment</th><th>Provider</th><th>Status</th><th>After hours</th><th>Edited</th><th>Source</th>'
+			. self::sort_header( 'created', 'Created (clinic time)', $filters, 'desc' )
+			. ( $show_client ? self::sort_header( 'client', 'Client', $filters, 'asc' ) : '' )
+			. self::sort_header( 'pet', 'Pet', $filters, 'asc' )
+			. self::sort_header( 'type', 'Type', $filters, 'asc' )
+			. self::sort_header( 'appointment', 'Appointment', $filters, 'desc' )
+			. self::sort_header( 'provider', 'Provider', $filters, 'asc' )
+			. self::sort_header( 'status', 'Status', $filters, 'asc' )
+			. self::sort_header( 'after_hours', 'After hours', $filters, 'asc' )
+			. self::sort_header( 'edited', 'Edited', $filters, 'desc' )
+			. self::sort_header( 'source', 'Source', $filters, 'asc' )
 			. '</tr></thead><tbody>';
 		foreach ( $data['rows'] as $row ) {
 			self::render_booking_row( $row, $ctx, $show_client );
@@ -244,6 +260,24 @@ class VSPS_Admin_Schedule {
 			echo '<p class="description">' . (int) $data['total'] . ' ' . ( 1 === (int) $data['total'] ? 'booking' : 'bookings' ) . '</p>';
 		}
 		echo '<p class="description" style="margin-top:10px;">Statuses are refreshed from Vetspire when you open this page (at most every 5 minutes per booking). Cancelled or deleted appointments stay listed with their final status. Only bookings made through the website widget are shown.</p>';
+	}
+
+	/**
+	 * A clickable column header: sorts by $key, keeping every current filter.
+	 * Clicking the already-active column flips its direction; clicking a
+	 * different one starts at $default_dir (recent-first for date columns,
+	 * alphabetical for everything else).
+	 */
+	private static function sort_header( $key, $label, $filters, $default_dir ) {
+		$active  = ( isset( $filters['orderby'] ) ? $filters['orderby'] : 'created' ) === $key;
+		$dir     = $active ? ( 'asc' === $filters['order'] ? 'desc' : 'asc' ) : $default_dir;
+		$args    = self::filters_as_query_args( $filters );
+		$args['orderby'] = $key;
+		$args['order']   = $dir;
+		unset( $args['paged'] ); // a new sort starts back on page 1
+		$url     = add_query_arg( array_merge( $args, array( 'page' => 'vsps-appointments' ) ), admin_url( 'admin.php' ) );
+		$arrow   = $active ? ( 'asc' === $filters['order'] ? ' ▲' : ' ▼' ) : '';
+		return '<th><a href="' . esc_url( $url ) . '" style="text-decoration:none;color:inherit;"><strong>' . esc_html( $label ) . '</strong>' . esc_html( $arrow ) . '</a></th>';
 	}
 
 	private static function render_filters( $filters ) {
@@ -292,6 +326,8 @@ class VSPS_Admin_Schedule {
 		}
 		echo '</select>';
 		echo '<input type="hidden" name="vsps_filtered" value="1" />';
+		echo '<input type="hidden" name="orderby" value="' . esc_attr( $filters['orderby'] ) . '" />';
+		echo '<input type="hidden" name="order" value="' . esc_attr( $filters['order'] ) . '" />';
 		echo '<label><input type="checkbox" name="failed" value="1"' . checked( 1, $filters['failed'], false ) . ' /> Include failed attempts</label>';
 		echo '<button class="button">Filter</button>';
 		echo '<a class="button" href="' . esc_url( admin_url( 'admin.php?page=vsps-appointments' ) ) . '">Reset</a>';

@@ -342,11 +342,51 @@ class VSPS_Log {
 	}
 
 	/**
+	 * Column-sort whitelist for the Bookings table: key => real SQL expression.
+	 * Never build ORDER BY from raw user input — only ever look up one of these.
+	 * "appointment" falls back to the requested slot when there's no confirmed
+	 * start yet, matching what VSPS_Log::appt_local() actually displays.
+	 */
+	const SORTABLE_COLUMNS = array(
+		'created'     => 'created_at',
+		'client'      => 'client_name',
+		'pet'         => 'patient_name',
+		'type'        => 'type_name',
+		// Mirrors appt_local()'s own fallback (slot_time ?: '00:00') -- without
+		// the inner COALESCE, a bare NULLIF(slot_time,'') makes the whole
+		// CONCAT() (and so the outer COALESCE) NULL for a still-unconfirmed
+		// slot with no time recorded, wrongly pushing a row with a real date
+		// to the end of the list instead of sorting it by that date. Comparing
+		// this string form against start_utc's own string form is a
+		// lexicographic, not numeric, comparison (COALESCE needs one common
+		// type) -- correct to the minute, which is all either value carries.
+		'appointment' => "COALESCE(start_utc, CONCAT(slot_date, ' ', COALESCE(NULLIF(slot_time, ''), '00:00')))",
+		'provider'    => 'provider_name',
+		// The raw Vetspire status doesn't line up with what the Status column
+		// actually shows (status_label() also folds in outcome/is_deleted/
+		// is_confirmed) -- this CASE reproduces status_label()'s own branches
+		// and precedence so sorting this column really groups rows by their
+		// displayed badge, not by an enum value the admin never sees.
+		'status'      => "CASE"
+			. " WHEN outcome = 'failed' THEN 'Failed'"
+			. " WHEN is_deleted = 1 THEN 'Deleted in Vetspire'"
+			. " WHEN status = 'CANCELLED' THEN 'Cancelled'"
+			. " WHEN status IN ('COMPLETED','CHECKED_OUT') THEN 'Completed'"
+			. " WHEN status = 'NOSHOW' THEN 'No Show'"
+			. " WHEN is_confirmed = 1 THEN 'Confirmed'"
+			. " ELSE 'Pending' END",
+		'after_hours' => 'after_hours',
+		'edited'      => 'edited_at',
+		'source'      => 'layout',
+	);
+
+	/**
 	 * Filtered, paginated list. $f keys: status (all|pending|confirmed|cancelled|
 	 * deleted|completed|no_show|failed), from, to (Y-m-d, matched against created_at in
 	 * the WordPress site's own timezone — display uses the clinic's timezone
 	 * instead, see utc_to_local(), so the two can disagree by a few hours near
-	 * midnight if the two timezones differ), failed (1 = include failed attempts).
+	 * midnight if the two timezones differ), failed (1 = include failed attempts),
+	 * orderby (a SORTABLE_COLUMNS key, default 'created'), order (asc|desc).
 	 */
 	public static function query( array $f, $page = 1, $per_page = 25 ) {
 		global $wpdb;
@@ -398,8 +438,16 @@ class VSPS_Log {
 		$sql_where = implode( ' AND ', $where );
 		$count_sql = 'SELECT COUNT(*) FROM ' . self::table() . ' WHERE ' . $sql_where;
 		$total     = (int) ( $vals ? $wpdb->get_var( $wpdb->prepare( $count_sql, $vals ) ) : $wpdb->get_var( $count_sql ) );
-		$offset    = max( 0, ( (int) $page - 1 ) * (int) $per_page );
-		$list_sql  = 'SELECT * FROM ' . self::table() . ' WHERE ' . $sql_where . ' ORDER BY created_at DESC, id DESC LIMIT %d OFFSET %d';
+		$offset      = max( 0, ( (int) $page - 1 ) * (int) $per_page );
+		$sort_col    = isset( self::SORTABLE_COLUMNS[ isset( $f['orderby'] ) ? $f['orderby'] : '' ] )
+			? self::SORTABLE_COLUMNS[ $f['orderby'] ] : self::SORTABLE_COLUMNS['created'];
+		$sort_dir    = 'asc' === ( isset( $f['order'] ) ? $f['order'] : '' ) ? 'ASC' : 'DESC';
+		// NULLs (no time yet, never edited, ...) always sort last regardless of
+		// direction -- an ORDER BY <expr> ASC/DESC alone would otherwise put
+		// them first on ASC, which reads as "oldest"/"least" when it's really
+		// "unknown". `id DESC` is a stable, always-present tiebreaker.
+		$list_sql    = 'SELECT * FROM ' . self::table() . ' WHERE ' . $sql_where
+			. " ORDER BY ({$sort_col} IS NULL), {$sort_col} {$sort_dir}, id DESC LIMIT %d OFFSET %d";
 		$rows      = $wpdb->get_results( $wpdb->prepare( $list_sql, array_merge( $vals, array( (int) $per_page, $offset ) ) ) );
 		return array( 'rows' => $rows ? $rows : array(), 'total' => $total );
 	}
