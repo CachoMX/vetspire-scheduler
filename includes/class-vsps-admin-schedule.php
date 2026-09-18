@@ -280,6 +280,14 @@ class VSPS_Admin_Schedule {
 		return '<th><a href="' . esc_url( $url ) . '" style="text-decoration:none;color:inherit;"><strong>' . esc_html( $label ) . '</strong>' . esc_html( $arrow ) . '</a></th>';
 	}
 
+	private static function filter_group( $label, $inner, $label_id = '' ) {
+		$id_attr = $label_id ? ' id="' . esc_attr( $label_id ) . '"' : '';
+		return '<div style="display:flex;flex-direction:column;gap:2px;">'
+			. '<span' . $id_attr . ' style="font-size:11px;font-weight:600;color:#1d2327;">' . esc_html( $label ) . '</span>'
+			. $inner
+			. '</div>';
+	}
+
 	private static function render_filters( $filters ) {
 		unset( $filters['pii'] ); // internal flag, never part of a URL
 		$statuses = array(
@@ -303,28 +311,39 @@ class VSPS_Admin_Schedule {
 
 		echo '<form method="get" action="' . esc_url( admin_url( 'admin.php' ) ) . '" class="vsps-filters" style="margin:0 0 12px;display:flex;flex-wrap:wrap;gap:8px;align-items:center;">';
 		echo '<input type="hidden" name="page" value="vsps-appointments" />';
-		echo '<label>From <input type="date" name="from" value="' . esc_attr( $filters['from'] ) . '" /></label>';
-		echo '<label>To <input type="date" name="to" value="' . esc_attr( $filters['to'] ) . '" /></label>';
-		echo '<select name="appointment_type_id"><option value="0">All appointment types</option>';
+
+		$created  = '<label>From <input type="date" name="from" value="' . esc_attr( $filters['from'] ) . '" /></label> ';
+		$created .= '<label>To <input type="date" name="to" value="' . esc_attr( $filters['to'] ) . '" /></label>';
+		echo self::filter_group( 'Created', $created );
+
+		$type_select = '<select name="appointment_type_id" aria-labelledby="vsps-filter-type"><option value="0">All appointment types</option>';
 		foreach ( VSPS_Log::distinct_types() as $t ) {
-			echo '<option value="' . esc_attr( $t->appointment_type_id ) . '"' . selected( (int) $filters['appointment_type_id'], (int) $t->appointment_type_id, false ) . '>' . esc_html( $t->type_name ) . '</option>';
+			$type_select .= '<option value="' . esc_attr( $t->appointment_type_id ) . '"' . selected( (int) $filters['appointment_type_id'], (int) $t->appointment_type_id, false ) . '>' . esc_html( $t->type_name ) . '</option>';
 		}
-		echo '</select>';
-		echo '<select name="provider"><option value="">All providers</option>';
+		$type_select .= '</select>';
+		echo self::filter_group( 'Type', $type_select, 'vsps-filter-type' );
+
+		$provider_select = '<select name="provider" aria-labelledby="vsps-filter-provider"><option value="">All providers</option>';
 		foreach ( VSPS_Log::distinct_providers() as $p ) {
-			echo '<option value="' . esc_attr( $p ) . '"' . selected( $filters['provider'], $p, false ) . '>' . esc_html( $p ) . '</option>';
+			$provider_select .= '<option value="' . esc_attr( $p ) . '"' . selected( $filters['provider'], $p, false ) . '>' . esc_html( $p ) . '</option>';
 		}
-		echo '</select>';
-		echo '<select name="status">';
+		$provider_select .= '</select>';
+		echo self::filter_group( 'Provider', $provider_select, 'vsps-filter-provider' );
+
+		$status_select = '<select name="status" aria-labelledby="vsps-filter-status">';
 		foreach ( $statuses as $k => $label ) {
-			echo '<option value="' . esc_attr( $k ) . '"' . selected( $filters['status'], $k, false ) . '>' . esc_html( $label ) . '</option>';
+			$status_select .= '<option value="' . esc_attr( $k ) . '"' . selected( $filters['status'], $k, false ) . '>' . esc_html( $label ) . '</option>';
 		}
-		echo '</select>';
-		echo '<select name="after_hours">';
+		$status_select .= '</select>';
+		echo self::filter_group( 'Status', $status_select, 'vsps-filter-status' );
+
+		$after_hours_select = '<select name="after_hours" aria-labelledby="vsps-filter-after-hours">';
 		foreach ( array( 'all' => 'Any time of day', 'yes' => 'After hours only', 'no' => 'Office hours only' ) as $k => $label ) {
-			echo '<option value="' . esc_attr( $k ) . '"' . selected( $filters['after_hours'], $k, false ) . '>' . esc_html( $label ) . '</option>';
+			$after_hours_select .= '<option value="' . esc_attr( $k ) . '"' . selected( $filters['after_hours'], $k, false ) . '>' . esc_html( $label ) . '</option>';
 		}
-		echo '</select>';
+		$after_hours_select .= '</select>';
+		echo self::filter_group( 'After Hours', $after_hours_select, 'vsps-filter-after-hours' );
+
 		echo '<input type="hidden" name="vsps_filtered" value="1" />';
 		echo '<input type="hidden" name="orderby" value="' . esc_attr( $filters['orderby'] ) . '" />';
 		echo '<input type="hidden" name="order" value="' . esc_attr( $filters['order'] ) . '" />';
