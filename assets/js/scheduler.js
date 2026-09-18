@@ -1355,6 +1355,7 @@
 			if (root.getAttribute('data-vsps-noinit')) { return; }
 			new Widget(root);
 		});
+		scanForBookLinks();
 		maybeOpenFromHash();
 	}
 
@@ -1374,6 +1375,54 @@
 
 	function isBookHashHref(href) {
 		return !!href && BOOK_HASH_RE.test(href);
+	}
+
+	/**
+	 * A #vsps-book link is markup the SITE owns (a theme button, a menu item),
+	 * not ours — on some host pages another fixed-position element (a cookie
+	 * banner, a chat widget, a sticky bar) ends up layered on top of it,
+	 * especially on narrow/mobile viewports, so a tap never reaches the link
+	 * at all and nothing we listen for ever fires. Since the site owner
+	 * pointed this specific link at us on purpose, keep it clickable
+	 * regardless of what else is on the page: give it a stacking context
+	 * (position must be non-static for z-index to apply) and a z-index far
+	 * above anything a theme or plugin normally uses. This only affects
+	 * hit-testing/stacking order, not layout, so it doesn't move the link.
+	 * The value only needs to clear realistic theme/plugin chrome (cookie
+	 * banners, chat widgets, sticky bars top out well under six digits) —
+	 * deliberately NOT the highest possible z-index, so a page's own
+	 * legitimate full-screen gate (an age check, a hard consent wall) still
+	 * wins and isn't accidentally bypassable through this trigger. The
+	 * plugin's own modal overlay (.vsps-overlay, scheduler.css) is set even
+	 * higher so it always paints above this boosted link once it opens.
+	 */
+	function ensureBookLinkOnTop(a) {
+		if (a.__vspsBoosted) { return; }
+		a.__vspsBoosted = true;
+		if (window.getComputedStyle(a).position === 'static') {
+			a.style.position = 'relative';
+		}
+		a.style.zIndex = '999999';
+	}
+
+	function scanForBookLinks() {
+		var links = document.querySelectorAll('a[href]');
+		for (var i = 0; i < links.length; i++) {
+			if (isBookHashHref(links[i].getAttribute('href'))) { ensureBookLinkOnTop(links[i]); }
+		}
+	}
+
+	// Menus built or duplicated by the theme's own JS (a mobile off-canvas
+	// drawer, for example) can add a matching link after our initial scan —
+	// watch for that and boost it too, debounced so a busy page's routine DOM
+	// churn doesn't trigger a full rescan on every mutation.
+	var scanPending = null;
+	function scheduleScanForBookLinks() {
+		if (scanPending) { return; }
+		scanPending = window.setTimeout(function () { scanPending = null; scanForBookLinks(); }, 150);
+	}
+	if (window.MutationObserver) {
+		new MutationObserver(scheduleScanForBookLinks).observe(document.documentElement, { childList: true, subtree: true });
 	}
 
 	/**

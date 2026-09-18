@@ -232,7 +232,9 @@
 	display: flex;
 	align-items: center;
 	justify-content: center;
-	z-index: 99999;
+	/* Must clear the z-index scheduler.js forces onto an external #vsps-book
+	   trigger link (999999) so the modal always paints on top of it once open. */
+	z-index: 100000000;
 	padding: 16px;
 }
 
