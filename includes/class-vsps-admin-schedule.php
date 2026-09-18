@@ -108,7 +108,7 @@ class VSPS_Admin_Schedule {
 	private static function filters_from_request() {
 		$src = $_GET; // phpcs:ignore WordPress.Security.NonceVerification.Recommended -- read-only filters
 		$status = isset( $src['status'] ) ? sanitize_key( wp_unslash( $src['status'] ) ) : 'all';
-		if ( ! in_array( $status, array( 'all', 'pending', 'confirmed', 'cancelled', 'deleted', 'completed', 'failed' ), true ) ) {
+		if ( ! in_array( $status, array( 'all', 'pending', 'confirmed', 'cancelled', 'deleted', 'completed', 'no_show', 'failed' ), true ) ) {
 			$status = 'all';
 		}
 		$after_hours = isset( $src['after_hours'] ) ? sanitize_key( wp_unslash( $src['after_hours'] ) ) : 'all';
@@ -254,6 +254,7 @@ class VSPS_Admin_Schedule {
 			'confirmed' => 'Confirmed',
 			'completed' => 'Completed',
 			'cancelled' => 'Cancelled',
+			'no_show'   => 'No Show',
 			'deleted'   => 'Deleted in Vetspire',
 			'failed'    => 'Failed attempts',
 		);

@@ -18,7 +18,13 @@ class VSPS_Log {
 	const DB_VERSION      = '3';
 	const SYNC_STALE_SECS = 300;
 	const SYNC_BATCH      = 40;
-	const TERMINAL        = array( 'CANCELLED', 'COMPLETED', 'NO_SHOW', 'CHECKED_OUT' );
+	// Vetspire's own AppointmentStatus enum (confirmed via GraphQL introspection)
+	// spells this NOSHOW, no underscore -- unlike every other multi-word status
+	// here, which do use one. Easy typo to make; get it wrong and a no-show
+	// appointment never reads as terminal, so it keeps re-syncing forever and
+	// its status badge falls through to the default "Pending" instead of
+	// matching (it's still correct in the CSV, which prints the raw DB value).
+	const TERMINAL        = array( 'CANCELLED', 'COMPLETED', 'NOSHOW', 'CHECKED_OUT' );
 
 	public static function table() {
 		global $wpdb;
@@ -337,7 +343,7 @@ class VSPS_Log {
 
 	/**
 	 * Filtered, paginated list. $f keys: status (all|pending|confirmed|cancelled|
-	 * deleted|completed|failed), from, to (Y-m-d, matched against created_at in
+	 * deleted|completed|no_show|failed), from, to (Y-m-d, matched against created_at in
 	 * the WordPress site's own timezone — display uses the clinic's timezone
 	 * instead, see utc_to_local(), so the two can disagree by a few hours near
 	 * midnight if the two timezones differ), failed (1 = include failed attempts).
@@ -354,7 +360,7 @@ class VSPS_Log {
 				$where[] = "outcome = 'booked'";
 			}
 			if ( 'pending' === $status ) {
-				$where[] = "outcome = 'booked' AND is_deleted = 0 AND is_confirmed = 0 AND status NOT IN ('CANCELLED','COMPLETED','NO_SHOW','CHECKED_OUT')";
+				$where[] = "outcome = 'booked' AND is_deleted = 0 AND is_confirmed = 0 AND status NOT IN ('CANCELLED','COMPLETED','NOSHOW','CHECKED_OUT')";
 			} elseif ( 'confirmed' === $status ) {
 				$where[] = "outcome = 'booked' AND is_deleted = 0 AND is_confirmed = 1 AND status <> 'CANCELLED'";
 			} elseif ( 'cancelled' === $status ) {
@@ -363,6 +369,8 @@ class VSPS_Log {
 				$where[] = "outcome = 'booked' AND is_deleted = 1";
 			} elseif ( 'completed' === $status ) {
 				$where[] = "outcome = 'booked' AND is_deleted = 0 AND status IN ('COMPLETED','CHECKED_OUT')";
+			} elseif ( 'no_show' === $status ) {
+				$where[] = "outcome = 'booked' AND is_deleted = 0 AND status = 'NOSHOW'";
 			}
 		}
 		if ( 'yes' === ( isset( $f['after_hours'] ) ? $f['after_hours'] : '' ) ) {
@@ -420,7 +428,7 @@ class VSPS_Log {
 		$today = current_time( 'Y-m-d' );
 		return (int) $wpdb->get_var( $wpdb->prepare(
 			'SELECT COUNT(*) FROM ' . self::table() . " WHERE outcome = 'booked' AND is_deleted = 0 AND is_confirmed = 0"
-			. " AND status NOT IN ('CANCELLED','COMPLETED','NO_SHOW','CHECKED_OUT') AND (slot_date IS NULL OR slot_date >= %s)",
+			. " AND status NOT IN ('CANCELLED','COMPLETED','NOSHOW','CHECKED_OUT') AND (slot_date IS NULL OR slot_date >= %s)",
 			$today
 		) );
 	}
@@ -461,8 +469,11 @@ class VSPS_Log {
 		if ( in_array( $row->status, array( 'COMPLETED', 'CHECKED_OUT' ), true ) ) {
 			return array( 'Completed', '#1d4ed8', '#e5edff' );
 		}
-		if ( 'NO_SHOW' === $row->status ) {
-			return array( 'No show', '#555', '#eee' );
+		if ( 'NOSHOW' === $row->status ) {
+			// Deliberately not a red like "Failed" (#b3261e/#fdecec) -- a no-show
+			// is a real appointment that happened, not a booking that never
+			// went through, and the two shouldn't read as the same color.
+			return array( 'No Show', '#6b21a8', '#f3e8ff' );
 		}
 		if ( $row->is_confirmed ) {
 			return array( 'Confirmed', '#1a6b3a', '#e3f4ea' );
