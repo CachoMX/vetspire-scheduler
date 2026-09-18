@@ -1395,7 +1395,43 @@
 	 * wins and isn't accidentally bypassable through this trigger. The
 	 * plugin's own modal overlay (.vsps-overlay, scheduler.css) is set even
 	 * higher so it always paints above this boosted link once it opens.
+	 *
+	 * Raising the LINK's own z-index only wins the fight against a sibling
+	 * overlay if nothing between the link and <body> boxes it into a lower-
+	 * ranked stacking context of its own — and that's common in practice:
+	 * Elementor's flex "Container" layout gives every wrapping container
+	 * `position:relative; z-index:0` (confirmed live on iowacolony.easyvet.com,
+	 * where the button sits a few of those containers deep), which caps
+	 * whatever z-index the link claims internally to that container's own
+	 * z-index of 0 as far as anything OUTSIDE the container is concerned — a
+	 * cookie banner at z-index 99999 still wins over the whole subtree. So
+	 * boost every ancestor up to <body> that already establishes a stacking
+	 * context (a non-static position with an explicit z-index, or a property
+	 * that creates one implicitly) too, letting the escalation reach all the
+	 * way out instead of being trapped one level up.
 	 */
+	function establishesStackingContext(node, cs) {
+		// position:fixed/sticky always creates one, independent of z-index.
+		if (cs.position === 'fixed' || cs.position === 'sticky') { return true; }
+		if (cs.zIndex !== 'auto') {
+			if (cs.position !== 'static') { return true; }
+			// A flex/grid ITEM's z-index applies (and creates a context) even
+			// while it stays position:static — no position change needed there.
+			var parent = node.parentElement;
+			if (parent && /flex|grid/.test(window.getComputedStyle(parent).display)) { return true; }
+		}
+		if (cs.isolation === 'isolate') { return true; }
+		if (cs.contain && /layout|paint|strict|content/.test(cs.contain)) { return true; }
+		if (cs.backdropFilter && cs.backdropFilter !== 'none') { return true; }
+		// Deliberately NOT treating opacity<1 / transform / mix-blend-mode /
+		// will-change as triggers here: those are exactly the properties CSS
+		// entrance and scroll animations toggle transiently, and __vspsBoosted
+		// below makes any match permanent — missing a rare animation-only
+		// stacking context is a smaller risk than permanently pinning an
+		// unrelated container's position/z-index mid-fade.
+		return false;
+	}
+
 	function ensureBookLinkOnTop(a) {
 		if (a.__vspsBoosted) { return; }
 		a.__vspsBoosted = true;
@@ -1403,6 +1439,27 @@
 			a.style.position = 'relative';
 		}
 		a.style.zIndex = '999999';
+
+		// Ancestor containers get the same treatment when THEY already box
+		// their own children into a lower-ranked stacking context (see the
+		// comment above) — this can, rarely, also change how such a
+		// container stacks against its own unrelated siblings elsewhere on
+		// the page, or make a previously-static one a new containing block
+		// for its own absolutely-positioned descendants; an acceptable
+		// trade-off for keeping this specific, site-owner-opted-in trigger
+		// reliably clickable.
+		var node = a.parentElement;
+		while (node && node !== document.body && node !== document.documentElement) {
+			if (!node.__vspsBoosted) {
+				var cs = window.getComputedStyle(node);
+				if (establishesStackingContext(node, cs)) {
+					node.__vspsBoosted = true;
+					if (cs.position === 'static') { node.style.position = 'relative'; }
+					node.style.zIndex = '999999';
+				}
+			}
+			node = node.parentElement;
+		}
 	}
 
 	function scanForBookLinks() {
