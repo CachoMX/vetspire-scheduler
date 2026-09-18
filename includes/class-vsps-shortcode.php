@@ -29,36 +29,36 @@ class VSPS_Shortcode {
 			VSPS_VERSION,
 			true
 		);
+
+		// The #vsps-book external trigger is meant to work from a link ANYWHERE
+		// on the site -- a "Book Online" nav item shows on every page, while
+		// the shortcode itself might only be embedded on the homepage. That
+		// only works if the script (and something for it to open) is present
+		// on every front-end page, not only the one the shortcode renders on.
+		// This runs on every page load, so only do it once the plugin actually
+		// has somewhere to book. render() below ALSO enqueues + localizes for
+		// whichever page DOES carry the shortcode (using that instance's own
+		// location, which can differ from the site default) -- WordPress's
+		// wp_localize_script() concatenates raw script text rather than
+		// merging data on a second call for the same object name, so
+		// whichever call runs later (render()'s, since shortcodes process
+		// after this wp_enqueue_scripts hook) fully REPLACES this one; render()
+		// includes the same defaultWidget shape too so that doesn't matter.
+		$settings    = vsps_get_settings();
+		$location_id = absint( $settings['default_location'] );
+		if ( $location_id ) {
+			wp_enqueue_style( 'vsps-scheduler' );
+			wp_enqueue_script( 'vsps-scheduler' );
+			wp_localize_script( 'vsps-scheduler', 'vspsConfig', array_merge(
+				self::common_config( $settings ),
+				array( 'defaultWidget' => self::default_widget_config( $settings, $location_id ) )
+			) );
+		}
 	}
 
-	public static function render( $atts ) {
-		$settings = vsps_get_settings();
-		$atts     = shortcode_atts( array(
-			'location_id'          => $settings['default_location'],
-			'appointment_type_ids' => '',
-			'days'                 => 7,        // days per page of the date strip
-			'max_days'             => 30,       // how far ahead the strip can page (cap 60)
-			'mode'                 => 'book',   // book | link
-			'link_url'             => '',
-			'title'                => __( 'Book an Appointment', 'vetspire-scheduler' ),
-			'layout'               => $settings['layout'], // full | bar | calendar | float
-			'variant'              => '',       // a = minimal form, b = with optional questions
-			'primary'              => '',       // "1" = the #vsps-book external trigger targets THIS instance
-		), $atts, 'vetspire_scheduler' );
-
-		$location_id = absint( $atts['location_id'] );
-		if ( ! $location_id ) {
-			return current_user_can( 'manage_options' )
-				? '<p><em>[vetspire_scheduler] needs a location_id (or set a default in Settings → Vetspire Scheduler).</em></p>'
-				: '';
-		}
-
-		$type_ids = array_values( array_filter( array_map( 'absint', explode( ',', $atts['appointment_type_ids'] ) ) ) );
-		$mode     = 'link' === $atts['mode'] ? 'link' : 'book';
-
-		wp_enqueue_style( 'vsps-scheduler' );
-		wp_enqueue_script( 'vsps-scheduler' );
-		wp_localize_script( 'vsps-scheduler', 'vspsConfig', array(
+	/** The restUrl/analytics/i18n data every page needs, shortcode or not. */
+	private static function common_config( array $settings ) {
+		return array(
 			'restUrl'   => esc_url_raw( rest_url( 'vetspire/v1' ) ),
 			'analytics' => (int) $settings['analytics_enabled'],
 			'i18n'      => array(
@@ -76,6 +76,7 @@ class VSPS_Shortcode {
 				'email'          => __( 'Email', 'vetspire-scheduler' ),
 				'phone'          => __( 'Phone', 'vetspire-scheduler' ),
 				'petName'        => __( 'Pet name', 'vetspire-scheduler' ),
+				'species'        => __( 'Pet type', 'vetspire-scheduler' ),
 				'dog'            => __( 'Dog', 'vetspire-scheduler' ),
 				'cat'            => __( 'Cat', 'vetspire-scheduler' ),
 				'other'          => __( 'Other', 'vetspire-scheduler' ),
@@ -127,6 +128,77 @@ class VSPS_Shortcode {
 				'yes'            => __( 'Yes', 'vetspire-scheduler' ),
 				'no'             => __( 'No', 'vetspire-scheduler' ),
 			),
+		);
+	}
+
+	/**
+	 * A ready-to-book config for the #vsps-book trigger to synthesize a
+	 * standalone lightbox on a page that has no shortcode/widget markup at
+	 * all -- the site's default location/layout/branding, same shape as the
+	 * per-instance config the shortcode below writes into data-vsps-config.
+	 */
+	private static function default_widget_config( array $settings, $location_id ) {
+		return array(
+			'locationId'    => $location_id,
+			'typeIds'       => array(),
+			'days'          => 7,
+			'horizonDays'   => 30,
+			'mode'          => 'book',
+			'linkUrl'       => '',
+			'layout'        => 'full',
+			'defaultTypeId' => absint( $settings['default_type'] ),
+			'petFields'     => array(
+				'breed'    => (int) $settings['ask_breed'],
+				'sex'      => (int) $settings['ask_sex'],
+				'age'      => (int) $settings['ask_age'],
+				'neutered' => (int) $settings['ask_neutered'],
+			),
+			'variant'      => '',
+			'primaryColor' => $settings['primary_color'],
+			'title'        => __( 'Book an Appointment', 'vetspire-scheduler' ),
+		);
+	}
+
+	public static function render( $atts ) {
+		$settings = vsps_get_settings();
+		$atts     = shortcode_atts( array(
+			'location_id'          => $settings['default_location'],
+			'appointment_type_ids' => '',
+			'days'                 => 7,        // days per page of the date strip
+			'max_days'             => 30,       // how far ahead the strip can page (cap 60)
+			'mode'                 => 'book',   // book | link
+			'link_url'             => '',
+			'title'                => __( 'Book an Appointment', 'vetspire-scheduler' ),
+			'layout'               => $settings['layout'], // full | bar | calendar | float
+			'variant'              => '',       // a = minimal form, b = with optional questions
+			'primary'              => '',       // "1" = the #vsps-book external trigger targets THIS instance
+		), $atts, 'vetspire_scheduler' );
+
+		$location_id = absint( $atts['location_id'] );
+		if ( ! $location_id ) {
+			return current_user_can( 'manage_options' )
+				? '<p><em>[vetspire_scheduler] needs a location_id (or set a default in Settings → Vetspire Scheduler).</em></p>'
+				: '';
+		}
+
+		$type_ids = array_values( array_filter( array_map( 'absint', explode( ',', $atts['appointment_type_ids'] ) ) ) );
+		$mode     = 'link' === $atts['mode'] ? 'link' : 'book';
+
+		wp_enqueue_style( 'vsps-scheduler' );
+		wp_enqueue_script( 'vsps-scheduler' );
+		// WordPress's localize() concatenates raw script text rather than
+		// merging data ("var vspsConfig = {...}; var vspsConfig = {...};"),
+		// and the shortcode's own do_shortcode() call runs after
+		// register_assets()'s wp_enqueue_scripts hook -- so whatever this
+		// call writes always wins and fully REPLACES register_assets()'s
+		// object, defaultWidget included. Include it here too (built from
+		// THIS instance's own resolved location, layout, etc. -- a sensible
+		// fallback if the #vsps-book trigger is used on this same page but
+		// for some reason no on-page Widget ends up in primaryWidget()'s
+		// list, e.g. a data-vsps-noinit preview instance).
+		wp_localize_script( 'vsps-scheduler', 'vspsConfig', array_merge(
+			self::common_config( $settings ),
+			array( 'defaultWidget' => self::default_widget_config( $settings, $location_id ) )
 		) );
 
 		$layout = in_array( $atts['layout'], array( 'full', 'bar', 'calendar', 'float' ), true ) ? $atts['layout'] : 'full';

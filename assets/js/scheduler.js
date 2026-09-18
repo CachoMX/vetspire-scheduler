@@ -27,6 +27,7 @@
 		email: 'Email',
 		phone: 'Phone',
 		petName: 'Pet name',
+		species: 'Pet type',
 		dog: 'Dog',
 		cat: 'Cat',
 		other: 'Other',
@@ -114,6 +115,71 @@
 		if (className) { node.className = className; }
 		if (text !== undefined) { node.textContent = text; }
 		return node;
+	}
+
+	/**
+	 * Wires standard popup accessibility onto an overlay already appended to
+	 * the page: marks the dialog for assistive tech, traps Tab/Shift+Tab so
+	 * keyboard focus can't wander into the hidden page behind it (every
+	 * overlay already closes on Escape and on an outside click, so this
+	 * never becomes a trap the visitor can't get OUT of, only one they can't
+	 * accidentally tab out of), and moves focus onto the popup's own first
+	 * control. Returns a function the caller's own close() should call so
+	 * focus lands back on whatever opened the popup instead of <body>.
+	 *
+	 * `openerOverride`: pass this whenever the caller tears down (removes)
+	 * ANOTHER overlay right before building this one -- e.g. picking a slot
+	 * closes the lightbox picker before the booking form opens, and "Back"
+	 * closes the form before the picker reopens. By the time this function's
+	 * own `document.activeElement` read would run, that prior overlay (and
+	 * whatever had focus inside it) is already gone from the DOM, so the
+	 * default capture would silently restore focus to nothing useful. The
+	 * caller captures the real opener BEFORE tearing the old overlay down
+	 * and hands it in here instead.
+	 */
+	function makeAccessibleModal(overlay, dialogEl, openerOverride) {
+		dialogEl.setAttribute('role', 'dialog');
+		dialogEl.setAttribute('aria-modal', 'true');
+		// So the "no focusable content yet" fallback below can actually focus
+		// the dialog itself -- a plain <div>/<aside> isn't focusable otherwise.
+		if (!dialogEl.hasAttribute('tabindex')) { dialogEl.setAttribute('tabindex', '-1'); }
+		var opener = openerOverride || document.activeElement;
+
+		function focusable() {
+			var items = overlay.querySelectorAll(
+				'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]'
+			);
+			return Array.prototype.filter.call(items, function (node) {
+				return (node.offsetWidth || node.offsetHeight) && '-1' !== node.getAttribute('tabindex');
+			});
+		}
+
+		function onTrapKeydown(e) {
+			if ('Tab' !== e.key) { return; }
+			var items = focusable();
+			if (!items.length) { return; }
+			var first = items[0], last = items[items.length - 1];
+			if (e.shiftKey && document.activeElement === first) {
+				e.preventDefault(); last.focus();
+			} else if (!e.shiftKey && document.activeElement === last) {
+				e.preventDefault(); first.focus();
+			}
+		}
+		overlay.addEventListener('keydown', onTrapKeydown);
+
+		// A tick so the just-inserted content has real layout (offsetWidth
+		// checks above) before anything tries to focus it.
+		window.setTimeout(function () {
+			var items = focusable();
+			(items[0] || dialogEl).focus();
+		}, 0);
+
+		return function restoreFocus() {
+			overlay.removeEventListener('keydown', onTrapKeydown);
+			if (opener && 'function' === typeof opener.focus && document.body.contains(opener)) {
+				opener.focus();
+			}
+		};
 	}
 
 	function escHtml(str) {
@@ -338,9 +404,11 @@
 			if (primary) { overlay.style.setProperty('--vsps-primary', primary.trim()); }
 		} catch (e) { /* non-blocking */ }
 
+		var restoreFocus;
 		function onKeydown(e) { if (e.key === 'Escape') { close(); } }
 		function close() {
 			document.removeEventListener('keydown', onKeydown);
+			if (restoreFocus) { restoreFocus(); }
 			overlay.remove();
 		}
 		document.addEventListener('keydown', onKeydown);
@@ -388,8 +456,14 @@
 		var book = el('button', 'vsps-btn-primary vsps-drawer-book', I18N.bookOnline);
 		book.type = 'button';
 		book.addEventListener('click', function () {
+			// Capture before close() removes the drawer (and this very
+			// button) from the DOM -- otherwise openFullModal()'s own default
+			// capture runs after the button is already gone (likely landing
+			// on <body>, which isn't focusable, so restoreFocus() would
+			// later silently do nothing).
+			var opener = document.activeElement;
 			close();
-			self.openFullModal();
+			self.openFullModal(null, '', opener);
 		});
 		drawer.appendChild(book);
 
@@ -415,6 +489,7 @@
 		if (links.childNodes.length) { drawer.appendChild(links); }
 
 		document.body.appendChild(overlay);
+		restoreFocus = makeAccessibleModal(overlay, drawer);
 	};
 
 	Widget.prototype.showMessage = function (text) {
@@ -437,6 +512,12 @@
 
 		if (this.usesTypeSelect()) {
 			var select = el('select', 'vsps-type-select');
+			// The visible <label> below isn't wrapped around or `for`-linked to
+			// this <select> (it can't be: `for` needs an id, and several widget
+			// instances with the same layout can exist on one page) -- give it
+			// an accessible name directly so screen readers announce what the
+			// dropdown is, not just "combo box".
+			select.setAttribute('aria-label', I18N.apptType);
 			this.state.types.forEach(function (t) {
 				var opt = el('option', null, t.name);
 				opt.value = t.id;
@@ -609,22 +690,30 @@
 	};
 
 	/**
-	 * Opens the FULL picker in a lightbox (View All / Book Online / More).
-	 * Choosing a slot closes the picker and opens the booking form modal.
+	 * Builds the full-picker lightbox (overlay + modal + a disposable inner
+	 * widget) and appends it to <body>. Shared by Widget.prototype.openFullModal
+	 * (sourced from an existing on-page widget) and the standalone version
+	 * used when the #vsps-book trigger fires on a page with no widget/shortcode
+	 * at all -- this file's own history is full of subtle bugs fixed in
+	 * exactly this overlay/close/brand-color logic, so it's built once here
+	 * instead of keeping two copies that could drift.
 	 */
-	Widget.prototype.openFullModal = function (initialDate, notice) {
-		var self = this;
+	function buildFullPickerLightbox(cfg, primaryColor, title, host, initialDate, notice, openerOverride) {
+		// Captured once, up front, so both the trap setup below AND the
+		// embedded widget's own _opener (openForm/backToPicker read this back
+		// once THIS lightbox itself gets torn down) agree on the same stable
+		// element -- see the _opener comment further down.
+		var opener = openerOverride || document.activeElement;
 		var overlay = el('div', 'vsps-overlay');
 		var modal = el('div', 'vsps-modal vsps-modal-wide');
 		overlay.appendChild(modal);
-		try {
-			var primary = window.getComputedStyle(this.root).getPropertyValue('--vsps-primary');
-			if (primary) { overlay.style.setProperty('--vsps-primary', primary.trim()); }
-		} catch (e) { /* non-blocking */ }
+		if (primaryColor) { overlay.style.setProperty('--vsps-primary', primaryColor); }
 
+		var restoreFocus;
 		function onKeydown(e) { if (e.key === 'Escape') { close(); } }
 		function close() {
 			document.removeEventListener('keydown', onKeydown);
+			if (restoreFocus) { restoreFocus(); }
 			overlay.remove();
 		}
 		document.addEventListener('keydown', onKeydown);
@@ -636,34 +725,57 @@
 		closeBtn.addEventListener('click', close);
 		modal.appendChild(closeBtn);
 
-		var titleEl = this.root.querySelector('.vsps-title');
 		var inner = el('div', 'vsps-widget vsps-embedded');
 		// The .vsps-widget class defines a default --vsps-primary, which would
 		// override the overlay's inherited value — set it inline like the
 		// shortcode does so the brand color survives into the modal.
-		try {
-			var brandColor = window.getComputedStyle(this.root).getPropertyValue('--vsps-primary');
-			if (brandColor) { inner.style.setProperty('--vsps-primary', brandColor.trim()); }
-		} catch (e) { /* non-blocking */ }
-		var cfg = {};
-		Object.keys(this.config).forEach(function (k) { cfg[k] = self.config[k]; });
-		cfg.layout = 'full';
-		cfg._embedded = true;
-		cfg._initialDate = initialDate || null;
-		cfg._notice = notice || '';
-		inner.setAttribute('data-vsps-config', JSON.stringify(cfg));
+		if (primaryColor) { inner.style.setProperty('--vsps-primary', primaryColor); }
+		var innerCfg = {};
+		Object.keys(cfg).forEach(function (k) { innerCfg[k] = cfg[k]; });
+		innerCfg.layout = 'full';
+		innerCfg._embedded = true;
+		innerCfg._initialDate = initialDate || null;
+		innerCfg._notice = notice || '';
+		inner.setAttribute('data-vsps-config', JSON.stringify(innerCfg));
 		inner.innerHTML = '<h3 class="vsps-title"></h3><div class="vsps-body"><p class="vsps-loading"></p></div>';
-		inner.querySelector('.vsps-title').textContent = titleEl ? titleEl.textContent : 'Book an Appointment';
+		inner.querySelector('.vsps-title').textContent = title || 'Book an Appointment';
 		inner.querySelector('.vsps-loading').textContent = I18N.loading;
 		modal.appendChild(inner);
 		document.body.appendChild(overlay);
+		restoreFocus = makeAccessibleModal(overlay, modal, opener);
 
 		var embedded = new Widget(inner);
 		// When a slot is picked inside the lightbox, close it before the form opens.
 		embedded.onBeforeForm = close;
-		// The lightbox widget is disposable; "Back" from the booking form re-opens
-		// the picker through the on-page widget that owns it.
-		embedded.host = this.host || this;
+		embedded.host = host;
+		// The slot button the visitor is about to click lives inside THIS
+		// lightbox and will be destroyed the moment it closes (onBeforeForm),
+		// so it can never be a valid focus-restore target for the form that
+		// opens next -- openForm()/backToPicker() read this stable opener
+		// back instead of capturing document.activeElement themselves
+		// whenever config._embedded is true.
+		embedded._opener = opener;
+	}
+
+	/**
+	 * Opens the FULL picker in a lightbox (View All / Book Online / More).
+	 * Choosing a slot closes the picker and opens the booking form modal.
+	 *
+	 * `openerOverride`: see makeAccessibleModal — backToPicker() passes this
+	 * when it's reopening the picker right after closing the booking form,
+	 * since by the time this function ran that form (and whatever inside it
+	 * had focus, e.g. its own Back button) would already be gone from the DOM.
+	 */
+	Widget.prototype.openFullModal = function (initialDate, notice, openerOverride) {
+		var primaryColor = '';
+		try {
+			primaryColor = window.getComputedStyle(this.root).getPropertyValue('--vsps-primary').trim();
+		} catch (e) { /* non-blocking */ }
+		var titleEl = this.root.querySelector('.vsps-title');
+		buildFullPickerLightbox(
+			this.config, primaryColor, titleEl ? titleEl.textContent : 'Book an Appointment',
+			this.host || this, initialDate, notice, openerOverride
+		);
 	};
 
 	/**
@@ -672,11 +784,17 @@
 	 * calendar layouts, whose picker is already on the page.
 	 */
 	Widget.prototype.backToPicker = function (notice) {
+		// The Back button about to be clicked lives inside the form, which
+		// bk.close() below is about to remove -- reuse the same stable opener
+		// openForm() resolved (and persisted onto this._opener) rather than
+		// capturing document.activeElement here, which would just be that
+		// soon-to-be-destroyed Back button itself.
+		var opener = this._opener || document.activeElement;
 		var bk = this._bk;
 		if (bk) { bk.close(); }
 		var inline = !this.host && ('full' === this.layout || 'calendar' === this.layout);
 		if (!inline) {
-			(this.host || this).openFullModal(bk ? bk.date : null, notice || '');
+			(this.host || this).openFullModal(bk ? bk.date : null, notice || '', opener);
 			return;
 		}
 		if (notice) {
@@ -952,10 +1070,24 @@
 
 	Widget.prototype.openForm = function (date, slot) {
 		var self = this;
-		// Read the brand color BEFORE closing whatever opened this form: closing a
-		// lightbox picker (onBeforeForm) detaches this.root from the document, and
-		// a detached element's getComputedStyle() can no longer resolve custom
-		// properties — that silently fell back to the default green.
+		// Capture the brand color BEFORE closing whatever opened this form:
+		// closing a lightbox picker (onBeforeForm) detaches this.root, so
+		// getComputedStyle() can no longer resolve custom properties after
+		// that (silently fell back to the default green).
+		//
+		// The focus-restore target needs more care than just "whatever's
+		// focused right now": if this widget is itself disposable (embedded
+		// in a lightbox that onBeforeForm is about to remove), the clicked
+		// slot button is about to be destroyed along with its container, so
+		// it can never be a valid restore target -- inherit the STABLE
+		// opener that lightbox itself was given instead (buildFullPickerLightbox
+		// set this._opener when it created this widget). Otherwise (an
+		// on-page full/calendar widget; nothing here gets removed) the
+		// clicked slot button survives and IS the right target. Persisted
+		// back onto _opener either way so backToPicker() can read the same
+		// value back later without re-capturing a since-destroyed node.
+		var opener = (this.config._embedded && this._opener) ? this._opener : document.activeElement;
+		this._opener = opener;
 		var primary = '';
 		try {
 			primary = window.getComputedStyle(this.root).getPropertyValue('--vsps-primary');
@@ -967,9 +1099,11 @@
 		overlay.appendChild(modal);
 		if (primary) { overlay.style.setProperty('--vsps-primary', primary.trim()); }
 
+		var restoreFocus;
 		function onKeydown(e) { if (e.key === 'Escape') { close(); } }
 		function close() {
 			document.removeEventListener('keydown', onKeydown);
+			if (restoreFocus) { restoreFocus(); }
 			overlay.remove();
 		}
 		document.addEventListener('keydown', onKeydown);
@@ -988,6 +1122,7 @@
 
 		this._bk = { date: date, slot: slot, type: type, modal: modal, step: step, close: close, clientType: 'new' };
 		document.body.appendChild(overlay);
+		restoreFocus = makeAccessibleModal(overlay, modal, opener);
 		this.track('form_started', {
 			location_id: this.config.locationId,
 			appointment_type_id: this.state.typeId,
@@ -1138,22 +1273,31 @@
 		var pf = this.config.petFields || {};
 		var optional = [];
 		if (pf.breed) { optional.push('<input name="breed" placeholder="__BREED__">'); }
-		if (pf.sex) { optional.push('<select name="sex"><option value="">__SEXLABEL__</option><option value="MALE">__MALE__</option><option value="FEMALE">__FEMALE__</option></select>'); }
+		if (pf.sex) { optional.push('<select name="sex" aria-label="__SEXLABEL__"><option value="">__SEXLABEL__</option><option value="MALE">__MALE__</option><option value="FEMALE">__FEMALE__</option></select>'); }
 		if (pf.age) { optional.push('<input type="number" name="age" min="0" max="40" placeholder="__AGE__">'); }
-		if (pf.neutered) { optional.push('<select name="neutered"><option value="">__NEUTERED__</option><option value="yes">__YES__</option><option value="no">__NO__</option></select>'); }
+		if (pf.neutered) { optional.push('<select name="neutered" aria-label="__NEUTERED__"><option value="">__NEUTERED__</option><option value="yes">__YES__</option><option value="no">__NO__</option></select>'); }
 		var rows = '';
 		for (var i = 0; i < optional.length; i += 2) {
 			rows += '<div class="vsps-row">' + optional[i] + (optional[i + 1] || '') + '</div>';
 		}
-		var html = '<div class="vsps-row"><input required name="pet_name" placeholder="__PET__">' +
-			'<select name="species"><option value="Canine">__DOG__</option><option value="Feline">__CAT__</option><option value="Other">__OTHER__</option></select></div>' +
+		// aria-label (not a wrapped/`for`-linked <label>) so this still works
+		// when the pet_name placeholder is the only visual cue and multiple
+		// widget instances on one page can't share a single id.
+		var html = '<div class="vsps-row"><input required name="pet_name" placeholder="__PET__" aria-label="__PET__">' +
+			'<select name="species" aria-label="__SPECIES__"><option value="Canine">__DOG__</option><option value="Feline">__CAT__</option><option value="Other">__OTHER__</option></select></div>' +
 			rows;
+		// Tokens that now appear more than once (an aria-label alongside the
+		// same text visible elsewhere) need a global replace, not the default
+		// replace-first-occurrence-only behavior; escAttr()'s output (it
+		// entity-escapes quotes on top of escHtml()) is safe to reuse in a
+		// plain text node too, so one escaped value works in both spots.
 		return html
-			.replace('__PET__', escAttr(I18N.petName))
+			.replace(/__PET__/g, escAttr(I18N.petName))
+			.replace(/__SPECIES__/g, escAttr(I18N.species))
 			.replace('__DOG__', escHtml(I18N.dog)).replace('__CAT__', escHtml(I18N.cat)).replace('__OTHER__', escHtml(I18N.other))
-			.replace('__BREED__', escAttr(I18N.breed)).replace('__SEXLABEL__', escHtml(I18N.sexLabel))
+			.replace('__BREED__', escAttr(I18N.breed)).replace(/__SEXLABEL__/g, escAttr(I18N.sexLabel))
 			.replace('__MALE__', escHtml(I18N.male)).replace('__FEMALE__', escHtml(I18N.female))
-			.replace('__AGE__', escAttr(I18N.ageYears)).replace('__NEUTERED__', escHtml(I18N.neuteredQ))
+			.replace('__AGE__', escAttr(I18N.ageYears)).replace(/__NEUTERED__/g, escAttr(I18N.neuteredQ))
 			.replace('__YES__', escHtml(I18N.yes)).replace('__NO__', escHtml(I18N.no));
 	};
 
@@ -1498,9 +1642,40 @@
 		return onPage.length ? onPage[0] : null;
 	}
 
+	/**
+	 * Opens the full picker from scratch, with no existing widget/shortcode
+	 * anywhere on the current page to borrow one from -- e.g. a "Book Online"
+	 * nav link that shows on every page of the site while the shortcode
+	 * itself only lives on the homepage. Built on the same shared
+	 * buildFullPickerLightbox() as Widget.prototype.openFullModal, just
+	 * sourced from a raw config object (CFG.defaultWidget, localized from
+	 * the site's Settings) instead of an existing this/this.root.
+	 */
+	function openStandaloneBookingModal(rawConfig, initialDate, notice, openerOverride) {
+		var host = {
+			openFullModal: function (date, n, opener) {
+				// "Back" from the booking form re-opens this same standalone
+				// picker (there's no real on-page widget to hand it back to).
+				openStandaloneBookingModal(rawConfig, date, n, opener);
+			}
+		};
+		buildFullPickerLightbox(
+			rawConfig, rawConfig.primaryColor || '', rawConfig.title,
+			host, initialDate, notice, openerOverride
+		);
+	}
+
 	function openBookHashTarget() {
 		var w = primaryWidget();
-		if (w && typeof w.openFullModal === 'function') { w.openFullModal(); }
+		if (w && typeof w.openFullModal === 'function') {
+			w.openFullModal();
+			return;
+		}
+		// No shortcode/widget anywhere on this page -- still honor the
+		// trigger using the site's default booking config, so a "Book
+		// Online" link works from every page, not only the one or two
+		// pages the shortcode happens to be embedded on.
+		if (CFG.defaultWidget) { openStandaloneBookingModal(CFG.defaultWidget); }
 	}
 
 	document.addEventListener('click', function (e) {

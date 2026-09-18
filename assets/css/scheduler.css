@@ -29,6 +29,26 @@
 	box-sizing: border-box;
 }
 
+/* A visible keyboard-focus indicator on every interactive element, in every
+ * step (buttons, links, selects, inputs) -- :focus-visible so it only shows
+ * for keyboard navigation, not a stray mouse click. `!important` because
+ * many themes reset `outline` globally (Astra's `*{outline:0}` is the one
+ * already documented elsewhere in this fleet), and without a replacement
+ * that leaves keyboard users with literally no way to see where they are. */
+.vsps-widget button:focus-visible,
+.vsps-widget a:focus-visible,
+.vsps-widget select:focus-visible,
+.vsps-widget input:focus-visible,
+.vsps-widget textarea:focus-visible,
+.vsps-overlay button:focus-visible,
+.vsps-overlay a:focus-visible,
+.vsps-overlay select:focus-visible,
+.vsps-overlay input:focus-visible,
+.vsps-overlay textarea:focus-visible {
+	outline: 3px solid var(--vsps-primary, #2f6f4f) !important;
+	outline-offset: 2px !important;
+}
+
 /* Neutralize common theme button decoration inside the widget & modal. */
 .vsps-widget button,
 .vsps-overlay button {
