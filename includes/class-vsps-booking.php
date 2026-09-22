@@ -229,10 +229,17 @@ class VSPS_Booking {
 		if ( empty( $client['patients'] ) || ! is_array( $client['patients'] ) ) {
 			return null;
 		}
+		// trim() on both sides: a stray leading/trailing space in either the
+		// visitor's submitted value or Vetspire's own stored patient name is
+		// invisible on screen (confirmed live: Iowa Colony's "Reba " has a
+		// trailing space nobody could see) but fails an exact strcasecmp,
+		// wrongly telling a real returning client their real pet isn't on
+		// their account.
+		$needle = trim( (string) $patient_name );
 		foreach ( $client['patients'] as $patient ) {
 			$active   = ! isset( $patient['isActive'] ) || $patient['isActive'];
 			$deceased = ! empty( $patient['isDeceased'] );
-			if ( $active && ! $deceased && 0 === strcasecmp( $patient['name'], $patient_name ) ) {
+			if ( $active && ! $deceased && 0 === strcasecmp( trim( (string) $patient['name'] ), $needle ) ) {
 				return array( 'id' => $patient['id'], 'name' => $patient['name'] );
 			}
 		}
