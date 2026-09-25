@@ -77,7 +77,8 @@
 
 .vsps-widget .vsps-label {
 	display: block;
-	font-size: 0.85em;
+	/* Same size as the red "Please select an appointment type first." prompt. */
+	font-size: 1em;
 	font-weight: 600;
 	margin-bottom: 4px;
 	color: var(--vsps-primary);
