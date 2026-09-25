@@ -67,7 +67,9 @@ class VSPS_Shortcode {
 				'loadFailed'     => __( 'Could not load booking options. Please call the clinic.', 'vetspire-scheduler' ),
 				'timesFailed'    => __( 'Could not load times. Please try again later.', 'vetspire-scheduler' ),
 				'noTimes'        => __( 'No online times available in the next %d days. Please call the clinic.', 'vetspire-scheduler' ),
-				'apptType'       => __( 'Select an Appointment Type', 'vetspire-scheduler' ),
+				'apptType'       => __( 'Appointment Type', 'vetspire-scheduler' ),
+				'selectOne'      => __( 'Select One', 'vetspire-scheduler' ),
+				'selectTypeFirst' => __( 'Please select an appointment type first.', 'vetspire-scheduler' ),
 				'open'           => __( 'open', 'vetspire-scheduler' ),
 				'today'          => __( 'Today', 'vetspire-scheduler' ),
 				'tomorrow'       => __( 'Tomorrow', 'vetspire-scheduler' ),
@@ -92,10 +94,19 @@ class VSPS_Shortcode {
 				'viewAll'        => __( 'View All', 'vetspire-scheduler' ),
 				'bookOnline'     => __( 'Book Online', 'vetspire-scheduler' ),
 				'firstAvailable' => __( 'Book First Available Appointment', 'vetspire-scheduler' ),
+				/* translators: %s: appointment type name, e.g. "Wellness Appointment". */
+				'firstAvailableType' => __( 'Book First Available %s', 'vetspire-scheduler' ),
 				'moreAppointments' => __( 'More available appointments »', 'vetspire-scheduler' ),
 				'showingTimesFor' => __( 'Showing available times for', 'vetspire-scheduler' ),
 				'back'           => __( '‹ Back', 'vetspire-scheduler' ),
 				'nextAvailable'  => __( 'Next Available Appointment', 'vetspire-scheduler' ),
+				/* translators: %s: appointment type name, e.g. "Wellness Appointment". */
+				'nextAvailableType' => __( 'Next Available %s', 'vetspire-scheduler' ),
+				/* translators: %s: "a wellness appointment". */
+				'typeConfirmText' => __( 'The time you have selected is for %s. Please confirm the type of appointment, or select another:', 'vetspire-scheduler' ),
+				/* translators: %s: "a wellness appointment". */
+				'typeConfirmYes' => __( 'Yes, I need %s', 'vetspire-scheduler' ),
+				'typeChooseAnother' => __( 'Choose another appointment type', 'vetspire-scheduler' ),
 				'chooseAnother'  => __( 'Choose Another Time', 'vetspire-scheduler' ),
 				'slotGoneMessage' => __( 'The appointment time you selected is no longer available. Please choose another.', 'vetspire-scheduler' ),
 				'earlierDates'   => __( 'Earlier dates', 'vetspire-scheduler' ),

@@ -18,7 +18,9 @@
 		loadFailed: 'Could not load booking options. Please call the clinic.',
 		timesFailed: 'Could not load times. Please try again later.',
 		noTimes: 'No online times available in the next %d days. Please call the clinic.',
-		apptType: 'Select an Appointment Type',
+		apptType: 'Appointment Type',
+		selectOne: 'Select One',
+		selectTypeFirst: 'Please select an appointment type first.',
 		open: 'open',
 		today: 'Today',
 		tomorrow: 'Tomorrow',
@@ -43,10 +45,15 @@
 		viewAll: 'View All',
 		bookOnline: 'Book Online',
 		firstAvailable: 'Book First Available Appointment',
+		firstAvailableType: 'Book First Available %s',
 		moreAppointments: 'More available appointments »',
 		showingTimesFor: 'Showing available times for',
 		back: '‹ Back',
 		nextAvailable: 'Next Available Appointment',
+		nextAvailableType: 'Next Available %s',
+		typeConfirmText: 'The time you have selected is for %s. Please confirm the type of appointment, or select another:',
+		typeConfirmYes: 'Yes, I need %s',
+		typeChooseAnother: 'Choose another appointment type',
 		chooseAnother: 'Choose Another Time',
 		slotGoneMessage: 'The appointment time you selected is no longer available. Please choose another.',
 		earlierDates: 'Earlier dates',
@@ -318,6 +325,27 @@
 		return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
 	}
 
+	function todayIso() {
+		var d = new Date();
+		return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+	}
+
+	/**
+	 * "Wellness Appointment" -> "a wellness appointment" for mid-sentence use.
+	 * All-caps words (acronyms like "TPLO") keep their casing.
+	 */
+	function typePhrase(name) {
+		function isAcronym(part) { return /[A-Z]{2,}/.test(part) && part === part.toUpperCase(); }
+		var words = String(name).split(' ');
+		var soft = words.map(function (w) {
+			return w.split('-').map(function (p) { return isAcronym(p) ? p : p.toLowerCase(); }).join('-');
+		}).join(' ');
+		// Acronyms are read letter by letter: "an MRI scan", "a UTI recheck".
+		var first = words[0].split('-')[0];
+		var vowelSound = isAcronym(first) ? /^[AEFHILMNORSX]/.test(first) : /^[aeiou]/i.test(soft);
+		return (vowelSound ? 'an ' : 'a ') + soft;
+	}
+
 	function formatDateLabel(iso) {
 		var d = dateFromIso(iso);
 		var today = new Date();
@@ -395,8 +423,8 @@
 					self.showMessage(I18N.noOptions);
 					return;
 				}
-				// Admin-chosen primary type goes first (bar/float book it; the
-				// dropdown in full/calendar preselects it).
+				// Admin-chosen primary type goes first (bar/float book it; it also
+				// leads the dropdown in full/calendar).
 				if (self.config.defaultTypeId) {
 					var primary = types.filter(function (t) {
 						return parseInt(t.id, 10) === parseInt(self.config.defaultTypeId, 10);
@@ -406,7 +434,17 @@
 					}
 				}
 				self.state.types = types;
-				self.state.typeId = types[0].id;
+				// The dropdown starts on "Select One" so visitors choose the type
+				// themselves; only a type they already picked (carried back from
+				// the booking form via _typeId) is preselected.
+				var carried = self.config._typeId;
+				delete self.config._typeId;
+				if (self.usesTypeSelect()) {
+					var match = carried ? types.filter(function (t) { return String(t.id) === String(carried); })[0] : null;
+					self.state.typeId = match ? match.id : null;
+				} else {
+					self.state.typeId = types[0].id;
+				}
 				self.renderShell();
 				self.loadAvailability();
 				self.loadLocationInfo();
@@ -436,11 +474,20 @@
 		return first;
 	};
 
-	/** "Next Available Appointment · Sept 15" — shared by the bar and the drawer. */
+	/**
+	 * A label naming the type these times belong to ("Book First Available
+	 * Wellness Appointment"), or the generic one while no type is chosen.
+	 */
+	Widget.prototype.typedLabel = function (template, fallback) {
+		var type = this.currentType();
+		return type && type.name ? template.replace('%s', type.name) : fallback;
+	};
+
+	/** "Next Available Wellness Appointment · Sept 15" — shared by the bar and the drawer. */
 	Widget.prototype.nextAvailableLine = function (className, iso) {
 		var date = iso || this.firstAvailableDate();
 		var line = el('div', className);
-		line.appendChild(el('span', 'vsps-next-title', I18N.nextAvailable));
+		line.appendChild(el('span', 'vsps-next-title', this.typedLabel(I18N.nextAvailableType, I18N.nextAvailable)));
 		if (date) { line.appendChild(el('span', 'vsps-next-date', formatNextDate(date))); }
 		return line;
 	};
@@ -611,12 +658,24 @@
 			// an accessible name directly so screen readers announce what the
 			// dropdown is, not just "combo box".
 			select.setAttribute('aria-label', I18N.apptType);
+			var placeholder = el('option', null, I18N.selectOne);
+			placeholder.value = '';
+			placeholder.disabled = true;
+			placeholder.selected = !this.state.typeId;
+			select.appendChild(placeholder);
 			this.state.types.forEach(function (t) {
 				var opt = el('option', null, t.name);
 				opt.value = t.id;
+				opt.selected = String(t.id) === String(self.state.typeId);
 				select.appendChild(opt);
 			});
+			if (!this.state.typeId) { select.classList.add('vsps-type-empty'); }
 			select.addEventListener('change', function () {
+				if (!select.value) { return; }
+				select.classList.remove('vsps-type-empty');
+				// Keep the day the visitor was looking at (falls back to the
+				// first open day when the new type has nothing that day).
+				if (self.state.selectedDate) { self.config._initialDate = self.state.selectedDate; }
 				self.state.typeId = select.value;
 				self.loadAvailability();
 			});
@@ -677,6 +736,10 @@
 	 */
 	Widget.prototype.loadAvailability = function () {
 		var self = this;
+		if (!this.state.typeId) {
+			this.showTypeRequired();
+			return;
+		}
 		// Race guard: only the latest request may update state (type can be
 		// switched while a slower fetch is still in flight).
 		var requestId = (this.lastRequestId = (this.lastRequestId || 0) + 1);
@@ -726,6 +789,36 @@
 			self.contentEl.innerHTML = '';
 			self.contentEl.appendChild(el('p', 'vsps-message', I18N.timesFailed));
 		});
+	};
+
+	/**
+	 * No appointment type chosen yet: availability depends on the type, so no
+	 * request is made. The upcoming days are still shown (and can be picked)
+	 * without open counts, and the times area asks for a type first.
+	 */
+	Widget.prototype.showTypeRequired = function () {
+		// Invalidate any availability request still in flight.
+		this.lastRequestId = (this.lastRequestId || 0) + 1;
+		var wanted = this.config._initialDate || null;
+		delete this.config._initialDate;
+		var count = 'calendar' === this.layout ? Math.max(this.pageSize(), this.config.horizonDays || 30) : this.pageSize();
+		var start = todayIso();
+		var days = [];
+		for (var i = 0; i < count; i++) {
+			days.push({ date: addDaysIso(start, i), slots: [] });
+		}
+		this.state.days = days;
+		this.state.loadingMore = false;
+		this.state.exhausted = true;
+		this.state.selectedDate = (wanted && days.some(function (d) { return d.date === wanted; })) ? wanted : days[0].date;
+		this.state.calMonth = null;
+		this.renderLayout();
+	};
+
+	Widget.prototype.typeRequiredMessage = function () {
+		var msg = el('p', 'vsps-type-required', I18N.selectTypeFirst);
+		msg.setAttribute('role', 'status');
+		return msg;
 	};
 
 	/** Appends the next page of days (called by the date strip when it runs out). */
@@ -791,7 +884,7 @@
 	 * exactly this overlay/close/brand-color logic, so it's built once here
 	 * instead of keeping two copies that could drift.
 	 */
-	function buildFullPickerLightbox(cfg, primaryColor, title, host, initialDate, notice, openerOverride) {
+	function buildFullPickerLightbox(cfg, primaryColor, title, host, initialDate, notice, openerOverride, typeId) {
 		// Captured once, up front, so both the trap setup below AND the
 		// embedded widget's own _opener (openForm/backToPicker read this back
 		// once THIS lightbox itself gets torn down) agree on the same stable
@@ -829,6 +922,9 @@
 		innerCfg._embedded = true;
 		innerCfg._initialDate = initialDate || null;
 		innerCfg._notice = notice || '';
+		// A type the visitor already chose (Back / "Choose another time" from the
+		// booking form); a fresh picker starts on "Select One".
+		innerCfg._typeId = typeId || null;
 		inner.setAttribute('data-vsps-config', JSON.stringify(innerCfg));
 		inner.innerHTML = '<h3 class="vsps-title"></h3><div class="vsps-body"><p class="vsps-loading"></p></div>';
 		inner.querySelector('.vsps-title').textContent = title || 'Book an Appointment';
@@ -859,7 +955,7 @@
 	 * since by the time this function ran that form (and whatever inside it
 	 * had focus, e.g. its own Back button) would already be gone from the DOM.
 	 */
-	Widget.prototype.openFullModal = function (initialDate, notice, openerOverride) {
+	Widget.prototype.openFullModal = function (initialDate, notice, openerOverride, typeId) {
 		var primaryColor = '';
 		try {
 			primaryColor = window.getComputedStyle(this.root).getPropertyValue('--vsps-primary').trim();
@@ -867,7 +963,7 @@
 		var titleEl = this.root.querySelector('.vsps-title');
 		buildFullPickerLightbox(
 			this.config, primaryColor, titleEl ? titleEl.textContent : 'Book an Appointment',
-			this.host || this, initialDate, notice, openerOverride
+			this.host || this, initialDate, notice, openerOverride, typeId
 		);
 	};
 
@@ -887,7 +983,7 @@
 		if (bk) { bk.close(); }
 		var inline = !this.host && ('full' === this.layout || 'calendar' === this.layout);
 		if (!inline) {
-			(this.host || this).openFullModal(bk ? bk.date : null, notice || '', opener);
+			(this.host || this).openFullModal(bk ? bk.date : null, notice || '', opener, this.state.typeId);
 			return;
 		}
 		if (notice) {
@@ -918,9 +1014,85 @@
 				window.location.href = self.config.linkUrl;
 				return;
 			}
-			self.openForm(dayIso, slot);
+			self.pickSlot(dayIso, slot);
 		});
 		return btn;
+	};
+
+	/**
+	 * The bar/float quick times on the page always belong to the primary type
+	 * (no dropdown there), so when the clinic offers more than one type the
+	 * visitor confirms it first. Times picked inside the full picker skip this:
+	 * the visitor chose the type there themselves.
+	 */
+	Widget.prototype.needsTypeConfirm = function () {
+		return ('bar' === this.layout || 'float' === this.layout) &&
+			!this.config._embedded && this.state.types.length > 1;
+	};
+
+	Widget.prototype.pickSlot = function (date, slot) {
+		if (this.needsTypeConfirm()) {
+			this.openTypeConfirm(date, slot);
+			return;
+		}
+		this.openForm(date, slot);
+	};
+
+	/**
+	 * "The time you have selected is for a wellness appointment…" — Yes goes on
+	 * to the booking form; "Choose another appointment type" and Back open the
+	 * full picker on "Select One" (the clicked day stays selected there).
+	 */
+	Widget.prototype.openTypeConfirm = function (date, slot) {
+		var self = this;
+		var type = this.currentType();
+		var phrase = typePhrase(type.name);
+		var opener = document.activeElement;
+		var primary = '';
+		try {
+			primary = window.getComputedStyle(this.root).getPropertyValue('--vsps-primary');
+		} catch (e) { /* non-blocking */ }
+		var overlay = el('div', 'vsps-overlay');
+		var modal = el('div', 'vsps-modal vsps-type-confirm');
+		overlay.appendChild(modal);
+		if (primary) { overlay.style.setProperty('--vsps-primary', primary.trim()); }
+
+		var restoreFocus;
+		function onKeydown(e) { if (e.key === 'Escape' && OPEN_OVERLAYS[OPEN_OVERLAYS.length - 1] === overlay) { close(); } }
+		function close() {
+			document.removeEventListener('keydown', onKeydown);
+			if (restoreFocus) { restoreFocus(); }
+			overlay.remove();
+		}
+		document.addEventListener('keydown', onKeydown);
+		overlay.addEventListener('click', function (e) { if (e.target === overlay) { close(); } });
+
+		var closeBtn = el('button', 'vsps-modal-close', '×');
+		closeBtn.type = 'button';
+		closeBtn.setAttribute('aria-label', I18N.close);
+		closeBtn.addEventListener('click', function () { close(); });
+		modal.appendChild(closeBtn);
+		modal.appendChild(el('p', 'vsps-step-q', I18N.typeConfirmText.replace('%s', phrase)));
+
+		var yes = el('button', 'vsps-btn-primary vsps-btn-block', I18N.typeConfirmYes.replace('%s', phrase));
+		yes.type = 'button';
+		yes.addEventListener('click', function () {
+			close();
+			self.openForm(date, slot);
+		});
+		function chooseAnother() {
+			close();
+			self.openFullModal(date, '', opener);
+		}
+		var other = el('button', 'vsps-btn-secondary vsps-btn-block', I18N.typeChooseAnother);
+		other.type = 'button';
+		other.addEventListener('click', chooseAnother);
+		modal.appendChild(yes);
+		modal.appendChild(other);
+		modal.appendChild(this.backLink(chooseAnother));
+
+		document.body.appendChild(overlay);
+		restoreFocus = makeAccessibleModal(overlay, modal, opener);
 	};
 
 	/* ---------- layout: full ---------- */
@@ -947,12 +1119,15 @@
 			if (nearEnd()) { self.loadMoreDays(); }
 		});
 		var total = this.state.days.length;
+		// No type chosen: open counts are unknown, every day stays pickable.
+		var pending = !this.state.typeId;
 		this.state.days.forEach(function (d, idx) {
 			var btn = el('button', 'vsps-date-btn', '');
 			btn.type = 'button';
 			btn.appendChild(el('span', 'vsps-date-label', formatDateLabel(d.date)));
-			btn.appendChild(el('span', 'vsps-date-count', d.slots.length ? d.slots.length + ' ' + I18N.open : '—'));
-			if (!d.slots.length) { btn.disabled = true; }
+			var countText = pending ? ' ' : (d.slots.length ? d.slots.length + ' ' + I18N.open : '—');
+			btn.appendChild(el('span', 'vsps-date-count', countText));
+			if (!pending && !d.slots.length) { btn.disabled = true; }
 			if (d.date === self.state.selectedDate) { btn.classList.add('is-active'); }
 			btn.addEventListener('click', function () {
 				self.state.selectedDate = d.date;
@@ -991,6 +1166,10 @@
 
 	Widget.prototype.renderSlots = function () {
 		var self = this;
+		if (!this.state.typeId) {
+			this.contentEl.appendChild(this.typeRequiredMessage());
+			return;
+		}
 		var day = this.day(this.state.selectedDate);
 		if (!day) { return; }
 		var grid = el('div', 'vsps-slot-grid');
@@ -1085,7 +1264,8 @@
 			var entry = byDate[iso];
 			var cell = el('button', 'vsps-cal-day', String(n));
 			cell.type = 'button';
-			if (!entry || !entry.slots.length) {
+			// No type chosen yet: every upcoming day stays pickable.
+			if (!entry || (!entry.slots.length && this.state.typeId)) {
 				cell.disabled = true;
 			} else {
 				if (iso === this.state.selectedDate) { cell.classList.add('is-active'); }
@@ -1100,8 +1280,13 @@
 		}
 		wrap.appendChild(grid);
 
-		wrap.appendChild(el('p', 'vsps-cal-caption', I18N.showingTimesFor + ' ' + formatLongDate(this.state.selectedDate)));
+		if (!this.state.typeId) {
+			wrap.appendChild(this.typeRequiredMessage());
+			this.contentEl.appendChild(wrap);
+			return;
+		}
 
+		wrap.appendChild(el('p', 'vsps-cal-caption', I18N.showingTimesFor + ' ' + formatLongDate(this.state.selectedDate)));
 		var day = this.day(this.state.selectedDate);
 		var chips = el('div', 'vsps-cal-slots');
 		if (day) {
@@ -1118,7 +1303,7 @@
 	Widget.prototype.renderFloat = function () {
 		var self = this;
 		var card = el('div', 'vsps-float');
-		card.appendChild(el('h4', 'vsps-float-title', I18N.firstAvailable));
+		card.appendChild(el('h4', 'vsps-float-title', this.typedLabel(I18N.firstAvailableType, I18N.firstAvailable)));
 
 		var firsts = [];
 		this.state.days.forEach(function (d) {
@@ -1145,7 +1330,7 @@
 					window.location.href = self.config.linkUrl;
 					return;
 				}
-				self.openForm(f.date, f.slot);
+				self.pickSlot(f.date, f.slot);
 			});
 			row.appendChild(btn);
 		});
@@ -1744,17 +1929,17 @@
 	 * sourced from a raw config object (CFG.defaultWidget, localized from
 	 * the site's Settings) instead of an existing this/this.root.
 	 */
-	function openStandaloneBookingModal(rawConfig, initialDate, notice, openerOverride) {
+	function openStandaloneBookingModal(rawConfig, initialDate, notice, openerOverride, typeId) {
 		var host = {
-			openFullModal: function (date, n, opener) {
+			openFullModal: function (date, n, opener, tid) {
 				// "Back" from the booking form re-opens this same standalone
 				// picker (there's no real on-page widget to hand it back to).
-				openStandaloneBookingModal(rawConfig, date, n, opener);
+				openStandaloneBookingModal(rawConfig, date, n, opener, tid);
 			}
 		};
 		buildFullPickerLightbox(
 			rawConfig, rawConfig.primaryColor || '', rawConfig.title,
-			host, initialDate, notice, openerOverride
+			host, initialDate, notice, openerOverride, typeId
 		);
 	}
 

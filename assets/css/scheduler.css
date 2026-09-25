@@ -94,6 +94,21 @@
 	color: var(--vsps-text);
 }
 
+/* "Select One" placeholder showing: gray until a type is chosen. */
+.vsps-widget .vsps-type-select.vsps-type-empty {
+	color: #6b6b6b;
+}
+
+.vsps-widget .vsps-type-select option {
+	color: var(--vsps-text);
+}
+
+.vsps-widget .vsps-type-required {
+	margin: 14px 0 4px;
+	color: #b3261e;
+	font-weight: 600;
+}
+
 .vsps-widget .vsps-single-type {
 	font-weight: 600;
 	margin: 0 0 10px;
@@ -881,6 +896,8 @@
 
 	.vsps-widget .vsps-bar-next .vsps-next-date {
 		font-size: 1em;
+		/* The type name makes the title wrap; keep "Sept 25" on one line. */
+		white-space: nowrap;
 	}
 
 	.vsps-widget .vsps-bar-name {
