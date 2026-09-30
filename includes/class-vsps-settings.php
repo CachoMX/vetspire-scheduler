@@ -90,8 +90,43 @@ class VSPS_Settings {
 		} else {
 			$clean['api_token'] = isset( $current['api_token'] ) ? $current['api_token'] : '';
 		}
+		$clean['hub_key'] = self::sanitize_hub_key(
+			array_key_exists( 'hub_key', $input ) ? $input['hub_key'] : null,
+			isset( $current['hub_key'] ) ? (string) $current['hub_key'] : ''
+		);
 		VSPS_Cache::flush();
 		return $clean;
+	}
+
+	/**
+	 * Hub connection key: vss_ + 48 hex, or empty (= disconnect). The field shows
+	 * a masked placeholder, so a value containing "•" (or a form without the
+	 * field) keeps the stored key. Invalid input keeps the stored key too.
+	 * Any key the admin actually typed clears the hub's 401/403 stop flag, and
+	 * the Settings screen they are redirected to pushes inline and shows the result.
+	 */
+	private static function sanitize_hub_key( $submitted, $current ) {
+		if ( null === $submitted || ! is_string( $submitted ) || false !== strpos( $submitted, '•' ) ) {
+			return $current;
+		}
+		$key = strtolower( trim( sanitize_text_field( $submitted ) ) );
+		if ( '' === $key ) {
+			if ( '' !== $current ) {
+				VSPS_Hub::reset_after_key_change();
+			}
+			return '';
+		}
+		if ( ! preg_match( VSPS_Hub::KEY_PATTERN, $key ) ) {
+			add_settings_error(
+				VSPS_OPTION_KEY,
+				'vsps_hub_key',
+				'That hub connection key is not valid (it starts with "vss_" followed by 48 characters, 0-9 and a-f). The previous key was kept.',
+				'error'
+			);
+			return $current;
+		}
+		VSPS_Hub::reset_after_key_change();
+		return $key;
 	}
 
 	private static function valid_layout( $layout ) {
@@ -184,6 +219,7 @@ class VSPS_Settings {
 			<h1 class="wp-heading-inline">Vetspire Scheduler — Settings</h1>
 			<a href="<?php echo esc_url( admin_url( 'admin.php?page=vsps-appointments' ) ); ?>" class="page-title-action">View Appointments</a>
 			<hr class="wp-header-end" />
+			<?php settings_errors( VSPS_OPTION_KEY ); ?>
 
 			<style>
 				.vsps-cols { display:flex; gap:20px; align-items:flex-start; margin-top:16px; }
@@ -342,6 +378,26 @@ class VSPS_Settings {
 									Push widget events to <code>window.dataLayer</code> (GTM / GA4)
 								</label>
 								<p class="description" style="margin-bottom:0;">Events: <code>vsps_widget_view</code>, <code>vsps_slot_selected</code>, <code>vsps_booking_submitted</code>, <code>vsps_booking_completed</code>, <code>vsps_booking_failed</code>.</p>
+							</div>
+						</div>
+
+						<?php
+						$hub_key    = isset( $settings['hub_key'] ) ? (string) $settings['hub_key'] : '';
+						$hub_masked = '' !== $hub_key ? str_repeat( '•', 12 ) . substr( $hub_key, -4 ) : '';
+						$hub_status = VSPS_Hub::status_line();
+						$hub_colors = array( 'ok' => '#00a32a', 'error' => '#b32d2e', 'none' => '#646970' );
+						?>
+						<div class="vsps-box">
+							<h2>Vetcelerator Hub</h2>
+							<div class="inside">
+								<label for="vsps_hub_key"><strong>Hub connection key</strong></label><br />
+								<input type="password" id="vsps_hub_key" name="<?php echo esc_attr( $opt ); ?>[hub_key]"
+									value="<?php echo esc_attr( $hub_masked ); ?>" class="regular-text" style="margin-top:6px;"
+									placeholder="vss_…" autocomplete="new-password" spellcheck="false" />
+								<p id="vsps-hub-status" style="margin:8px 0 0;color:<?php echo esc_attr( $hub_colors[ $hub_status['state'] ] ); ?>;">
+									<?php echo esc_html( $hub_status['text'] ); ?>
+								</p>
+								<p class="description" style="margin-bottom:0;">Provided by Vetcelerator. Every website booking and failed attempt is sent to the Vetcelerator hub. Clear the field and save to disconnect.</p>
 							</div>
 						</div>
 

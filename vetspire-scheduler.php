@@ -3,7 +3,7 @@
  * Plugin Name: Vetspire Scheduler
  * Plugin URI:  https://vetcelerator.com
  * Description: Embeddable appointment scheduler powered by the Vetspire API. Shows live available times and books appointments on-site so analytics attribution is preserved.
- * Version:     1.20.1
+ * Version:     1.21.0
  * Author:      Vetcelerator
  * License:     GPL-2.0+
  * Text Domain: vetspire-scheduler
@@ -13,10 +13,14 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-define( 'VSPS_VERSION', '1.20.1' );
+define( 'VSPS_VERSION', '1.21.0' );
 define( 'VSPS_PLUGIN_DIR', plugin_dir_path( __FILE__ ) );
 define( 'VSPS_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
 define( 'VSPS_OPTION_KEY', 'vsps_settings' );
+// Vetcelerator hub that receives the bookings log (override in wp-config.php).
+if ( ! defined( 'VSPS_HUB_URL' ) ) {
+	define( 'VSPS_HUB_URL', 'https://hub.vetcelerator.com' );
+}
 
 require_once VSPS_PLUGIN_DIR . 'includes/class-vsps-api.php';
 require_once VSPS_PLUGIN_DIR . 'includes/class-vsps-cache.php';
@@ -26,6 +30,9 @@ require_once VSPS_PLUGIN_DIR . 'includes/class-vsps-settings.php';
 require_once VSPS_PLUGIN_DIR . 'includes/class-vsps-shortcode.php';
 require_once VSPS_PLUGIN_DIR . 'includes/class-vsps-log.php';
 require_once VSPS_PLUGIN_DIR . 'includes/class-vsps-admin-schedule.php';
+require_once VSPS_PLUGIN_DIR . 'includes/class-vsps-hub.php';
+
+register_deactivation_hook( __FILE__, array( 'VSPS_Hub', 'deactivate' ) );
 
 /**
  * Returns plugin settings merged with defaults.
@@ -48,6 +55,7 @@ function vsps_get_settings() {
 		'ask_neutered'      => 0,
 		'source_label'      => 'Online',
 		'admin_show_client'     => 0,
+		'hub_key'           => '', // Vetcelerator hub connection key (vss_...)
 	);
 	$saved = get_option( VSPS_OPTION_KEY, array() );
 	if ( ! is_array( $saved ) ) {
@@ -104,6 +112,7 @@ add_filter( 'plugin_action_links_' . plugin_basename( __FILE__ ), function ( $li
 add_action( 'plugins_loaded', function () {
 	load_plugin_textdomain( 'vetspire-scheduler', false, dirname( plugin_basename( __FILE__ ) ) . '/languages' );
 	VSPS_Log::maybe_install();
+	VSPS_Hub::init();
 	VSPS_Settings::init();
 	VSPS_Rest::init();
 	VSPS_Shortcode::init();

@@ -15,7 +15,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 
 class VSPS_Log {
 
-	const DB_VERSION      = '3';
+	const DB_VERSION      = '4';
 	const SYNC_STALE_SECS = 300;
 	const SYNC_BATCH      = 40;
 	// Vetspire's own AppointmentStatus enum (confirmed via GraphQL introspection)
@@ -74,19 +74,45 @@ class VSPS_Log {
 			after_hours tinyint(1) DEFAULT NULL,
 			synced_at datetime DEFAULT NULL,
 			edited_at datetime DEFAULT NULL,
+			event_id varchar(64) DEFAULT NULL,
+			hub_synced_at datetime DEFAULT NULL,
 			PRIMARY KEY  (id),
 			KEY created_at (created_at),
 			KEY appointment_id (appointment_id),
 			UNIQUE KEY appt_unique (appointment_id),
 			KEY status (status),
-			KEY outcome (outcome)
+			KEY outcome (outcome),
+			KEY event_id (event_id),
+			KEY hub_synced_at (hub_synced_at)
 		) {$charset};";
 		dbDelta( $sql );
 		// Only remember the version when the table is really there; otherwise the
 		// next request tries again instead of silently losing every booking.
 		$exists = $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $table ) );
 		if ( $exists === $table ) {
+			// dbDelta can fail to add a column (permissions, lock timeout) without
+			// saying so: confirm the hub columns before anything relies on them.
+			$missing = array();
+			foreach ( array( 'event_id', 'hub_synced_at' ) as $column ) {
+				if ( ! $wpdb->get_var( $wpdb->prepare( "SHOW COLUMNS FROM {$table} LIKE %s", $column ) ) ) { // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+					$missing[] = $column;
+				}
+			}
+			if ( $missing ) {
+				error_log( '[vetspire-scheduler] could not add column(s) ' . implode( ', ', $missing ) . ' to ' . $table . ': ' . $wpdb->last_error );
+				return; // version not stored: the next request retries the upgrade
+			}
+			// Rows that pre-date event_id get a deterministic one (safe to re-run),
+			// and every not-yet-delivered row is queued for the Vetcelerator hub.
+			$wpdb->query( "UPDATE {$table} SET event_id = CONCAT('wp-', id) WHERE event_id IS NULL OR event_id = ''" ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery
 			update_option( 'vsps_db_version', self::DB_VERSION, false );
+			if ( class_exists( 'VSPS_Hub' ) ) {
+				if ( $wpdb->get_var( "SELECT 1 FROM {$table} WHERE hub_synced_at IS NULL LIMIT 1" ) ) { // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+					VSPS_Hub::mark_pending();
+				} else {
+					VSPS_Hub::ensure_pending_option();
+				}
+			}
 		} else {
 			error_log( '[vetspire-scheduler] could not create ' . $table . ': ' . $wpdb->last_error );
 		}
@@ -94,11 +120,17 @@ class VSPS_Log {
 
 	private static function insert( array $row ) {
 		global $wpdb;
+		$row['event_id'] = wp_generate_uuid4();
 		if ( false === $wpdb->insert( self::table(), $row ) ) {
 			error_log( '[vetspire-scheduler] bookings log insert failed: ' . $wpdb->last_error );
 			return 0;
 		}
-		return (int) $wpdb->insert_id;
+		$id = (int) $wpdb->insert_id;
+		// Deliver to the Vetcelerator hub after the visitor's response is sent.
+		if ( class_exists( 'VSPS_Hub' ) ) {
+			VSPS_Hub::row_written();
+		}
+		return $id;
 	}
 
 	/* ---------- recording ---------- */
@@ -328,8 +360,12 @@ class VSPS_Log {
 				'is_confirmed'        => ! empty( $appt['isConfirmed'] ) ? 1 : 0,
 				'layout'              => 'backfill',
 				'synced_at'           => current_time( 'mysql', true ),
+				'event_id'            => wp_generate_uuid4(),
 			) );
 			$n++;
+		}
+		if ( $n && class_exists( 'VSPS_Hub' ) ) {
+			VSPS_Hub::row_written();
 		}
 		return $n;
 	}
