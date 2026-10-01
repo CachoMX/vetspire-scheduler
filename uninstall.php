@@ -1,6 +1,7 @@
 <?php
 /**
- * Cleanup on uninstall: remove settings and cached transients.
+ * Cleanup on uninstall: remove settings, the hub outbox table and cached transients.
+ * Rows still in the outbox were never received by the hub and are lost.
  */
 
 if ( ! defined( 'WP_UNINSTALL_PLUGIN' ) ) {

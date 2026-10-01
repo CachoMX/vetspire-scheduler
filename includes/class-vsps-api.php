@@ -161,7 +161,7 @@ class VSPS_Api {
 		return is_wp_error( $data ) ? $data : ( isset( $data['createPatient'] ) ? $data['createPatient'] : null );
 	}
 
-	/** Appointments for a location within [start, end) — for the admin schedule. */
+	/** Appointments for a location within [start, end) (not used by the plugin itself). */
 	public function get_appointments( $location_id, $start_iso, $end_iso ) {
 		$data = $this->request(
 			'query ($loc: ID!, $start: DateTime, $end: DateTime) {
@@ -179,58 +179,6 @@ class VSPS_Api {
 			)
 		);
 		return is_wp_error( $data ) ? $data : ( isset( $data['appointments'] ) ? $data['appointments'] : array() );
-	}
-
-	/**
-	 * Current state of several appointments in ONE request (aliased query).
-	 * Returns [id => {id,status,isConfirmed,deleted,start,provider,patient}].
-	 * An id Vetspire reports as unknown is simply absent from the result; any
-	 * other failure (network, auth, 5xx) is returned as WP_Error so callers
-	 * never mistake an outage for "deleted".
-	 */
-	public function get_appointment_states( array $ids ) {
-		$ids = array_values( array_unique( array_map( 'strval', $ids ) ) );
-		if ( ! $ids ) {
-			return array();
-		}
-		$decl  = array();
-		$parts = array();
-		$vars  = array();
-		foreach ( $ids as $i => $id ) {
-			$decl[]            = '$id' . $i . ': ID!';
-			$vars[ 'id' . $i ] = $id;
-			$parts[]           = 'a' . $i . ': appointment(id: $id' . $i . ') { id status isConfirmed deleted start provider { name } patient { name client { givenName familyName } } type { id name } }';
-		}
-		$data = $this->request( 'query (' . implode( ', ', $decl ) . ') { ' . implode( ' ', $parts ) . ' }', $vars );
-		if ( is_wp_error( $data ) ) {
-			if ( count( $ids ) > 1 && 'vsps_graphql' === $data->get_error_code() ) {
-				// One unknown id fails the whole batch: resolve each id on its own.
-				$out = array();
-				foreach ( $ids as $id ) {
-					$one = $this->get_appointment_states( array( $id ) );
-					if ( is_wp_error( $one ) ) {
-						return $one;
-					}
-					$out += $one;
-				}
-				return $out;
-			}
-			if ( 'vsps_graphql' === $data->get_error_code() && self::looks_like_not_found( $data->get_error_message() ) ) {
-				return array();
-			}
-			return $data;
-		}
-		$out = array();
-		foreach ( $data as $entry ) {
-			if ( is_array( $entry ) && isset( $entry['id'] ) ) {
-				$out[ (string) $entry['id'] ] = $entry;
-			}
-		}
-		return $out;
-	}
-
-	private static function looks_like_not_found( $message ) {
-		return (bool) preg_match( '/not found|does not exist|no (such|appointment)|could not find|invalid id|unknown/i', (string) $message );
 	}
 
 	public function update_appointment( $id, $input ) {

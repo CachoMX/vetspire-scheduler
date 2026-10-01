@@ -71,12 +71,13 @@ typed into the form → full ad-to-appointment attribution.
 - Admin token is only used server-side (`wp_remote_post`); REST responses expose no Vetspire IDs
   beyond the appointment id. Never ship a `.env` inside the plugin folder (the bundled
   `.htaccess` denies dotfiles as a backstop, and `.gitignore` excludes it).
-- **Bookings log (wp-admin → Vetspire Scheduler → Bookings):** every booking made through the widget
-  (and every refused attempt) is stored in `wp_vsps_bookings` with its creation time, client/pet/type,
-  slot, source page + layout, and a status refreshed from Vetspire when the page opens (Pending,
-  Confirmed, Completed, Cancelled, Deleted in Vetspire, Failed). Rows never disappear. Filters (date,
-  type, provider, status, after hours) and CSV export are available; editing happens in Vetspire. On
-  first open the log imports the online bookings of the last 30 days.
+- **Bookings live in the Vetcelerator hub, not in WordPress (1.22.0+):** every booking made through
+  the widget (and every refused attempt) is written to `wp_vsps_bookings`, sent to the hub
+  (Settings → "Hub connection key"), and deleted from the site as soon as the hub acknowledges it.
+  The table is only an outbox: a row stays only while the hub has not received it (no key yet, hub
+  unreachable), and it is never deleted before that. Statuses (Pending, Confirmed, Completed,
+  Cancelled, No Show, Deleted in Vetspire), filters and CSV export are on the hub's Scheduler Data
+  page; editing happens in Vetspire. The plugin's only admin screen is Settings.
 - **Server-side slot re-validation:** `/book` never trusts the client. The appointment type must
   be `canBookOnline` at that location, duration comes from the type definition, and the
   date/time must match live `availableTimes` (provider/schedule are taken from the matched

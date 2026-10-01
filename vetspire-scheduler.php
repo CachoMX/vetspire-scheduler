@@ -3,7 +3,7 @@
  * Plugin Name: Vetspire Scheduler
  * Plugin URI:  https://vetcelerator.com
  * Description: Embeddable appointment scheduler powered by the Vetspire API. Shows live available times and books appointments on-site so analytics attribution is preserved.
- * Version:     1.21.0
+ * Version:     1.22.0
  * Author:      Vetcelerator
  * License:     GPL-2.0+
  * Text Domain: vetspire-scheduler
@@ -13,7 +13,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-define( 'VSPS_VERSION', '1.21.0' );
+define( 'VSPS_VERSION', '1.22.0' );
 define( 'VSPS_PLUGIN_DIR', plugin_dir_path( __FILE__ ) );
 define( 'VSPS_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
 define( 'VSPS_OPTION_KEY', 'vsps_settings' );
@@ -29,7 +29,6 @@ require_once VSPS_PLUGIN_DIR . 'includes/class-vsps-rest.php';
 require_once VSPS_PLUGIN_DIR . 'includes/class-vsps-settings.php';
 require_once VSPS_PLUGIN_DIR . 'includes/class-vsps-shortcode.php';
 require_once VSPS_PLUGIN_DIR . 'includes/class-vsps-log.php';
-require_once VSPS_PLUGIN_DIR . 'includes/class-vsps-admin-schedule.php';
 require_once VSPS_PLUGIN_DIR . 'includes/class-vsps-hub.php';
 
 register_deactivation_hook( __FILE__, array( 'VSPS_Hub', 'deactivate' ) );
@@ -54,7 +53,6 @@ function vsps_get_settings() {
 		'ask_age'           => 0,
 		'ask_neutered'      => 0,
 		'source_label'      => 'Online',
-		'admin_show_client'     => 0,
 		'hub_key'           => '', // Vetcelerator hub connection key (vss_...)
 	);
 	$saved = get_option( VSPS_OPTION_KEY, array() );
@@ -99,13 +97,9 @@ if ( file_exists( VSPS_PLUGIN_DIR . 'lib/plugin-update-checker/plugin-update-che
 	$vsps_update_checker->getVcsApi()->enableReleaseAssets();
 }
 
-// "Settings | Appointments" quick links on the Plugins list row.
+// "Settings" quick link on the Plugins list row.
 add_filter( 'plugin_action_links_' . plugin_basename( __FILE__ ), function ( $links ) {
-	array_unshift(
-		$links,
-		'<a href="' . esc_url( admin_url( 'admin.php?page=vsps-settings' ) ) . '">Settings</a>',
-		'<a href="' . esc_url( admin_url( 'admin.php?page=vsps-appointments' ) ) . '">Appointments</a>'
-	);
+	array_unshift( $links, '<a href="' . esc_url( admin_url( 'admin.php?page=vsps-settings' ) ) . '">Settings</a>' );
 	return $links;
 } );
 
@@ -116,5 +110,4 @@ add_action( 'plugins_loaded', function () {
 	VSPS_Settings::init();
 	VSPS_Rest::init();
 	VSPS_Shortcode::init();
-	VSPS_Admin_Schedule::init();
 } );

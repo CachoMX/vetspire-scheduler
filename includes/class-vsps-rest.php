@@ -399,7 +399,6 @@ class VSPS_Rest {
 		}
 
 		VSPS_Log::record_booking( $args, $result, array_merge( $source, array( 'after_hours' => $after_hours ) ) );
-		delete_transient( 'vsps_pending_online' );
 
 		return rest_ensure_response( array(
 			'success'        => true,

@@ -2,9 +2,10 @@
 /**
  * Delivery of the bookings log to the Vetcelerator hub.
  *
- * The local table (VSPS_Log) stays the safety net; every row is ALSO pushed
- * to POST {VSPS_HUB_URL}/api/wp/v1/scheduler/bookings and stamped with
- * hub_synced_at once the hub has answered for it (accepted OR rejected).
+ * The local table (VSPS_Log) is an outbox: every row is pushed to
+ * POST {VSPS_HUB_URL}/api/wp/v1/scheduler/bookings and deleted once the hub
+ * has answered for it (accepted, or listed in its own `rejected`). A row the
+ * hub refuses as a whole request (400/413) is kept and retried a day later.
  *
  * Triggers (belt and braces — WP-Cron alone may never run on a multisite
  * subsite whose server runner uses DISABLE_WP_CRON):
@@ -39,6 +40,10 @@ class VSPS_Hub {
 	const KEY_ERRORS     = array( 'missing_site_key', 'invalid_site_key' );
 	// HTTP requests one push may make while splitting refused (400/413) batches.
 	const MAX_REQUESTS   = 16;
+	// A row the hub refused on its own is kept and retried after this long.
+	const REFUSED_RETRY_SECS = DAY_IN_SECONDS;
+	// Rows older than this that still haven't reached the hub raise an admin notice.
+	const STUCK_SECS = DAY_IN_SECONDS;
 
 	/** Set once per request when a deferred push has been registered. */
 	private static $scheduled = false;
@@ -118,6 +123,12 @@ class VSPS_Hub {
 	public static function pending_count() {
 		global $wpdb;
 		return (int) $wpdb->get_var( 'SELECT COUNT(*) FROM ' . VSPS_Log::table() . ' WHERE hub_synced_at IS NULL' ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+	}
+
+	/** Rows the hub refused on their own (kept here, retried daily). */
+	public static function refused_count() {
+		global $wpdb;
+		return (int) $wpdb->get_var( 'SELECT COUNT(*) FROM ' . VSPS_Log::table() . ' WHERE hub_synced_at IS NULL AND hub_refused_at IS NOT NULL' ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery
 	}
 
 	/* ---------- triggers ---------- */
@@ -237,19 +248,20 @@ class VSPS_Hub {
 			return;
 		}
 		$page = isset( $_GET['page'] ) ? sanitize_key( wp_unslash( $_GET['page'] ) ) : ''; // phpcs:ignore WordPress.Security.NonceVerification.Recommended
-		if ( ! in_array( $page, array( 'vsps-appointments', 'vsps-settings' ), true ) ) {
+		if ( 'vsps-settings' !== $page ) {
 			return;
 		}
 		try {
-			// On Settings, also confirm the key when there's nothing to send, so a
-			// wrong key shows up immediately instead of at the next booking.
-			self::$admin_result = self::push_pending( self::BATCH_SIZE, true, 'vsps-settings' === $page );
+			// Also confirm the key when there's nothing to send, so a wrong key
+			// shows up immediately instead of at the next booking.
+			self::$admin_result = self::push_pending( self::BATCH_SIZE, true, true );
 		} catch ( Throwable $e ) {
 			error_log( '[vetspire-scheduler] hub push failed: ' . $e->getMessage() );
 		}
 	}
 
 	public static function admin_notice() {
+		self::stuck_notice();
 		$r = self::$admin_result;
 		if ( ! is_array( $r ) || empty( $r['attempted'] ) ) {
 			return;
@@ -270,6 +282,35 @@ class VSPS_Hub {
 		}
 	}
 
+	/**
+	 * Booking records that have waited more than a day (no key, bad key, long
+	 * outage, refused by the hub) are personal data sitting in WordPress, and
+	 * they are lost if the plugin is deleted: say so on every admin screen.
+	 * Costs one autoloaded option read unless rows are waiting.
+	 */
+	private static function stuck_notice() {
+		if ( '1' !== (string) get_option( self::PENDING_OPTION, '' ) || ! current_user_can( 'manage_options' ) ) {
+			return;
+		}
+		global $wpdb;
+		$cutoff = gmdate( 'Y-m-d H:i:s', time() - self::STUCK_SECS );
+		$stuck  = (int) $wpdb->get_var( $wpdb->prepare( 'SELECT COUNT(*) FROM ' . VSPS_Log::table() . ' WHERE hub_synced_at IS NULL AND created_at < %s', $cutoff ) ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+		if ( ! $stuck ) {
+			return;
+		}
+		$why = '' === self::key() ? 'no hub connection key is saved' : 'the hub has not accepted them yet';
+		printf(
+			'<div class="notice notice-warning"><p><strong>Vetspire Scheduler:</strong> %s <a href="%s">Open Settings</a></p></div>',
+			esc_html( sprintf(
+				'%d website booking %s waited over a day to reach the Vetcelerator hub (%s). They are kept on this site until delivered and would be lost if the plugin were deleted.',
+				$stuck,
+				1 === $stuck ? 'record has' : 'records have',
+				$why
+			) ),
+			esc_url( admin_url( 'admin.php?page=vsps-settings' ) )
+		);
+	}
+
 	public static function ensure_cron() {
 		if ( ! wp_next_scheduled( self::CRON_HOOK ) ) {
 			wp_schedule_event( time() + 300, 'hourly', self::CRON_HOOK );
@@ -284,8 +325,14 @@ class VSPS_Hub {
 		}
 	}
 
+	/** Last chance before the plugin can be deleted (uninstall drops the outbox). */
 	public static function deactivate() {
 		wp_clear_scheduled_hook( self::CRON_HOOK );
+		try {
+			self::push_pending( self::BATCH_SIZE, true );
+		} catch ( Throwable $e ) {
+			error_log( '[vetspire-scheduler] hub push on deactivation failed: ' . $e->getMessage() );
+		}
 	}
 
 	/* ---------- the push ---------- */
@@ -326,6 +373,8 @@ class VSPS_Hub {
 			// Rows written by older code paths (or the v4 upgrade) get their
 			// deterministic id before they can be sent.
 			$wpdb->query( "UPDATE {$table} SET event_id = CONCAT('wp-', id) WHERE hub_synced_at IS NULL AND (event_id IS NULL OR event_id = '')" ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+			// Anything acknowledged before the outbox change (or whose delete failed).
+			VSPS_Log::purge_delivered();
 
 			$site = array(
 				'plugin_version' => VSPS_VERSION,
@@ -336,14 +385,16 @@ class VSPS_Hub {
 			if ( '' !== $tz ) {
 				$site['clinic_timezone'] = $tz;
 			}
-			$ctx = array(
+			$retry_before = gmdate( 'Y-m-d H:i:s', time() - self::REFUSED_RETRY_SECS );
+			$ctx          = array(
 				'requests' => 0,
 				'ok'       => false,
 				'suspects' => array(),
 			);
 
 			for ( $batch = 0; $batch < self::MAX_BATCHES; $batch++ ) {
-				$rows = $wpdb->get_results( $wpdb->prepare( "SELECT * FROM {$table} WHERE hub_synced_at IS NULL ORDER BY id ASC LIMIT %d", $limit ) ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+				// Rows the hub refused on their own wait a day before being retried.
+				$rows = $wpdb->get_results( $wpdb->prepare( "SELECT * FROM {$table} WHERE hub_synced_at IS NULL AND (hub_refused_at IS NULL OR hub_refused_at < %s) ORDER BY id ASC LIMIT %d", $retry_before, $limit ) ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery
 				if ( empty( $rows ) ) {
 					break;
 				}
@@ -424,14 +475,24 @@ class VSPS_Hub {
 	}
 
 	/**
-	 * Single rows the hub refused on their own are dropped (marked as sent,
-	 * event_id logged, no PII) only when another request in the same push
-	 * succeeded: proof the request itself is fine and the row is the problem.
-	 * Otherwise the refusal is treated as a hub-side problem: back off.
+	 * Single rows the hub refused on their own (400/413 for a one-row request)
+	 * are KEPT, stamped hub_refused_at and retried a day later: they stop
+	 * blocking the queue, but a hub-side validation bug can never destroy a
+	 * booking. That applies only when another request in the same push
+	 * succeeded (proof the request itself is fine); otherwise the refusal is
+	 * treated as a hub-side problem: back off.
 	 */
 	private static function settle_suspects( array $result, array $ctx ) {
 		$first = $ctx['suspects'][0];
-		if ( ! $ctx['ok'] ) {
+		// Rows refused before and refused again on their daily retry are not a
+		// new hub problem: re-stamp them instead of backing off every 5 minutes.
+		$all_known = true;
+		foreach ( $ctx['suspects'] as $suspect ) {
+			if ( empty( $suspect['row']->hub_refused_at ) ) {
+				$all_known = false;
+			}
+		}
+		if ( ! $ctx['ok'] && ! $all_known ) {
 			$fail = self::fail( $first['code'], $first['message'], true );
 			return array( 'delivered' => $result['delivered'], 'error' => $fail['error'] );
 		}
@@ -439,9 +500,8 @@ class VSPS_Hub {
 		$now = gmdate( 'Y-m-d H:i:s' );
 		foreach ( $ctx['suspects'] as $suspect ) {
 			$event_id = (string) $suspect['row']->event_id;
-			$wpdb->update( VSPS_Log::table(), array( 'hub_synced_at' => $now ), array( 'id' => (int) $suspect['row']->id ) ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery
-			error_log( '[vetspire-scheduler] hub refused record ' . self::clean_text( $event_id ) . ' on its own (HTTP ' . (int) $suspect['code'] . '); marked as sent so it no longer blocks the queue' );
-			$result['delivered']++;
+			$wpdb->update( VSPS_Log::table(), array( 'hub_refused_at' => $now ), array( 'id' => (int) $suspect['row']->id ) ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+			error_log( '[vetspire-scheduler] hub refused record ' . self::clean_text( $event_id ) . ' on its own (HTTP ' . (int) $suspect['code'] . '); kept and retried in 24 h' );
 		}
 		return $result;
 	}
@@ -541,15 +601,14 @@ class VSPS_Hub {
 		}
 		$done = array_values( array_unique( array_intersect( $done, $ids ) ) );
 
-		$delivered = 0;
-		if ( $done ) {
-			global $wpdb;
-			$placeholders = implode( ',', array_fill( 0, count( $done ), '%s' ) );
-			$delivered    = (int) $wpdb->query( $wpdb->prepare( // phpcs:ignore WordPress.DB.DirectDatabaseQuery
-				'UPDATE ' . VSPS_Log::table() . " SET hub_synced_at = %s WHERE event_id IN ({$placeholders})",
-				array_merge( array( gmdate( 'Y-m-d H:i:s' ) ), $done )
-			) );
+		// The hub now holds these rows (accepted, or rejected for good): they
+		// are deleted here, the booking data is not kept on the site. A row a
+		// concurrent push already deleted still counts as acknowledged.
+		if ( false === VSPS_Log::delete_events( $done ) ) {
+			// The hub has them, but they couldn't be removed here: say so (re-sends are harmless).
+			return self::fail( $code, 'The hub received the records but this site could not remove them from its outbox (database error). Retrying in 5 minutes.', true );
 		}
+		$delivered = count( $done );
 		if ( 0 === $delivered ) {
 			// 200 but nothing we sent was acknowledged: treat as a hub fault, not a loop.
 			return self::fail( $code, 'The hub did not acknowledge any record. Retrying in 5 minutes.', true );
@@ -685,7 +744,7 @@ class VSPS_Hub {
 		if ( '' === $tz && $allow_api ) {
 			$api = vsps_api();
 			if ( null !== $api ) {
-				// Same cache key as the Bookings screen's own location lookup.
+				// Cached for an hour so cron/admin pushes don't call Vetspire each time.
 				$location = VSPS_Cache::remember( array( 'admin-loc', $location_id ), function () use ( $api, $location_id ) {
 					return $api->get_location( $location_id );
 				}, 3600 );
@@ -741,15 +800,17 @@ class VSPS_Hub {
 			return array( 'state' => 'none', 'text' => 'Not connected (no key)' );
 		}
 		$s       = self::status();
-		$pending = self::pending_count();
-		$ago     = function ( $ts ) {
+		$pending      = self::pending_count();
+		$refused      = $pending ? self::refused_count() : 0;
+		$refused_text = $refused ? ' (' . $refused . ' refused by the hub, retried daily)' : '';
+		$ago          = function ( $ts ) {
 			return $ts ? human_time_diff( (int) $ts, time() ) . ' ago' : 'never';
 		};
 		if ( ! empty( $s['stopped'] ) || ! empty( $s['last_error'] ) ) {
 			return array(
 				'state' => 'error',
 				'text'  => 'Error: ' . ( ! empty( $s['last_error'] ) ? $s['last_error'] : 'sending is paused.' )
-					. ' (last attempt ' . $ago( isset( $s['last_attempt'] ) ? $s['last_attempt'] : 0 ) . ') · ' . $pending . ' waiting',
+					. ' (last attempt ' . $ago( isset( $s['last_attempt'] ) ? $s['last_attempt'] : 0 ) . ') · ' . $pending . ' waiting' . $refused_text,
 			);
 		}
 		if ( ! empty( $s['last_success'] ) ) {
@@ -759,6 +820,6 @@ class VSPS_Hub {
 		} else {
 			$sent = 'not verified yet';
 		}
-		return array( 'state' => 'ok', 'text' => 'Connected — ' . $sent . ' · ' . $pending . ' waiting' );
+		return array( 'state' => 'ok', 'text' => 'Connected — ' . $sent . ' · ' . $pending . ' waiting' . $refused_text );
 	}
 }

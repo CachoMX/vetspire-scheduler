@@ -13,20 +13,44 @@ if ( ! defined( 'ABSPATH' ) ) {
 class VSPS_Settings {
 
 	public static function init() {
-		add_action( 'admin_menu', array( __CLASS__, 'add_menu' ), 20 );
+		add_action( 'admin_menu', array( __CLASS__, 'add_menu' ) );
 		add_action( 'admin_init', array( __CLASS__, 'register' ) );
+		// Unknown admin pages are refused in menu.php, before admin_init runs.
+		add_action( 'admin_page_access_denied', array( __CLASS__, 'redirect_old_bookings_page' ) );
 	}
 
-	/** Submenu under the top-level menu registered by VSPS_Admin_Schedule. */
+	/** Top-level menu; Settings is the plugin's only screen (bookings live in the hub). */
 	public static function add_menu() {
+		add_menu_page(
+			'Vetspire Scheduler',
+			'Vetspire Scheduler',
+			'manage_options',
+			'vsps-settings',
+			array( __CLASS__, 'render_page' ),
+			'dashicons-calendar-alt',
+			56
+		);
 		add_submenu_page(
-			'vsps-appointments',
+			'vsps-settings',
 			'Vetspire Scheduler — Settings',
 			'Settings',
 			'manage_options',
 			'vsps-settings',
 			array( __CLASS__, 'render_page' )
 		);
+	}
+
+	/** The removed Bookings screen (bookmarks, old links) lands on Settings instead of an access error. */
+	public static function redirect_old_bookings_page() {
+		if ( isset( $_GET['page'] ) && 'vsps-appointments' === $_GET['page'] && current_user_can( 'manage_options' ) ) { // phpcs:ignore WordPress.Security.NonceVerification.Recommended
+			wp_safe_redirect( admin_url( 'admin.php?page=vsps-settings' ) );
+			exit;
+		}
+	}
+
+	/** The hub's Scheduler Data page, where the bookings are viewed now. */
+	public static function hub_bookings_url() {
+		return untrailingslashit( (string) VSPS_HUB_URL ) . '/scheduler';
 	}
 
 	public static function register() {
@@ -72,7 +96,6 @@ class VSPS_Settings {
 			'ask_sex'           => empty( $input['ask_sex'] ) ? 0 : 1,
 			'ask_age'           => empty( $input['ask_age'] ) ? 0 : 1,
 			'ask_neutered'      => empty( $input['ask_neutered'] ) ? 0 : 1,
-			'admin_show_client'     => empty( $input['admin_show_client'] ) ? 0 : 1,
 			'source_label'      => '' !== trim( isset( $input['source_label'] ) ? $input['source_label'] : '' )
 				? substr( sanitize_text_field( $input['source_label'] ), 0, 40 ) : 'Online',
 			'primary_color'     => sanitize_hex_color( isset( $input['primary_color'] ) ? $input['primary_color'] : '#2f6f4f' ),
@@ -217,7 +240,7 @@ class VSPS_Settings {
 		?>
 		<div class="wrap">
 			<h1 class="wp-heading-inline">Vetspire Scheduler — Settings</h1>
-			<a href="<?php echo esc_url( admin_url( 'admin.php?page=vsps-appointments' ) ); ?>" class="page-title-action">View Appointments</a>
+			<a href="<?php echo esc_url( self::hub_bookings_url() ); ?>" class="page-title-action" target="_blank" rel="noopener">View bookings in the hub</a>
 			<hr class="wp-header-end" />
 			<?php settings_errors( VSPS_OPTION_KEY ); ?>
 
@@ -353,19 +376,7 @@ class VSPS_Settings {
 									<input type="text" id="vsps_source_label" name="<?php echo esc_attr( $opt ); ?>[source_label]"
 										value="<?php echo esc_attr( $settings['source_label'] ); ?>" class="regular-text" style="margin-left:8px;max-width:200px;" maxlength="40" />
 								</p>
-								<p class="description" style="margin-bottom:0;">Tags appointments sent by this widget (shows in the appointment reason in Vetspire and as the badge in the Appointments view). E.g. "Vetcelerator".</p>
-							</div>
-						</div>
-
-						<div class="vsps-box">
-							<h2>Admin View</h2>
-							<div class="inside">
-								<label style="display:block;margin-bottom:8px;">
-									<input type="checkbox" name="<?php echo esc_attr( $opt ); ?>[admin_show_client]"
-										value="1" <?php checked( 1, (int) $settings['admin_show_client'] ); ?> />
-									Show the client name &amp; phone column
-								</label>
-								<p class="description" style="margin-bottom:0;">Off by default — pet names are enough for the schedule overview, and owner details stay in Vetspire.</p>
+								<p class="description" style="margin-bottom:0;">Tags appointments sent by this widget (shows in the appointment reason in Vetspire). E.g. "Vetcelerator".</p>
 							</div>
 						</div>
 
@@ -397,7 +408,7 @@ class VSPS_Settings {
 								<p id="vsps-hub-status" style="margin:8px 0 0;color:<?php echo esc_attr( $hub_colors[ $hub_status['state'] ] ); ?>;">
 									<?php echo esc_html( $hub_status['text'] ); ?>
 								</p>
-								<p class="description" style="margin-bottom:0;">Provided by Vetcelerator. Every website booking and failed attempt is sent to the Vetcelerator hub. Clear the field and save to disconnect.</p>
+								<p class="description" style="margin-bottom:0;">Provided by Vetcelerator. Every website booking and failed attempt is sent to the Vetcelerator hub and then removed from this site; bookings are viewed in the hub. Until a key is saved they wait here. Clear the field and save to disconnect.</p>
 							</div>
 						</div>
 
