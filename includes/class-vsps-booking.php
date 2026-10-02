@@ -10,6 +10,9 @@ if ( ! defined( 'ABSPATH' ) ) {
 
 class VSPS_Booking {
 
+	// Every widget booking is tagged with this in the Vetspire appointment reason (not configurable).
+	const SOURCE_LABEL = 'Vetcelerator';
+
 	/**
 	 * Books an appointment. $args is already-sanitized data:
 	 *  location_id, appointment_type_id, date (Y-m-d), time (HH:MM),
@@ -177,8 +180,7 @@ class VSPS_Booking {
 			'duration'          => $duration,
 			'bookedOnline'      => true,
 			'sendConfirmation'  => true,
-			'reason'            => ( isset( $args['source_label'] ) && '' !== $args['source_label'] ? $args['source_label'] : 'Online' )
-				. ' booking' . ( '' !== $args['notes'] ? ': ' . $args['notes'] : '' ),
+			'reason'            => self::SOURCE_LABEL . ' booking' . ( '' !== $args['notes'] ? ': ' . $args['notes'] : '' ),
 		);
 		if ( '' !== $provider_id ) {
 			$input['providerId'] = $provider_id;

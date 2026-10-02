@@ -96,8 +96,6 @@ class VSPS_Settings {
 			'ask_sex'           => empty( $input['ask_sex'] ) ? 0 : 1,
 			'ask_age'           => empty( $input['ask_age'] ) ? 0 : 1,
 			'ask_neutered'      => empty( $input['ask_neutered'] ) ? 0 : 1,
-			'source_label'      => '' !== trim( isset( $input['source_label'] ) ? $input['source_label'] : '' )
-				? substr( sanitize_text_field( $input['source_label'] ), 0, 40 ) : 'Online',
 			'primary_color'     => sanitize_hex_color( isset( $input['primary_color'] ) ? $input['primary_color'] : '#2f6f4f' ),
 			'layout'            => self::valid_layout( isset( $input['layout'] ) ? $input['layout'] : 'full' ),
 			'default_type'      => absint( isset( $input['default_type'] ) ? $input['default_type'] : 0 ) ? (string) absint( $input['default_type'] ) : '',
@@ -371,12 +369,6 @@ class VSPS_Settings {
 									</label>
 								<?php endforeach; ?>
 								<p class="description">All questions map 1:1 to Vetspire fields. A/B test: add <code>variant="a"</code> (minimal) or <code>variant="b"</code> (with the checked questions) to two copies of the shortcode.</p>
-								<p style="margin-bottom:0;">
-									<label for="vsps_source_label"><strong>Booking source label</strong></label>
-									<input type="text" id="vsps_source_label" name="<?php echo esc_attr( $opt ); ?>[source_label]"
-										value="<?php echo esc_attr( $settings['source_label'] ); ?>" class="regular-text" style="margin-left:8px;max-width:200px;" maxlength="40" />
-								</p>
-								<p class="description" style="margin-bottom:0;">Tags appointments sent by this widget (shows in the appointment reason in Vetspire). E.g. "Vetcelerator".</p>
 							</div>
 						</div>
 

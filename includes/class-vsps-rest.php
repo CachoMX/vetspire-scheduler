@@ -357,10 +357,6 @@ class VSPS_Rest {
 			return new WP_Error( 'vsps_rate', 'Too many booking attempts. Please call the clinic.', array( 'status' => 429 ) );
 		}
 
-		$settings = vsps_get_settings();
-		$args['source_label'] = isset( $settings['source_label'] ) && '' !== trim( (string) $settings['source_label'] )
-			? substr( sanitize_text_field( $settings['source_label'] ), 0, 40 ) : 'Online';
-
 		$source = self::booking_source( $request );
 		$result = VSPS_Booking::book( $api, $args );
 		if ( is_wp_error( $result ) ) {

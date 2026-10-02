@@ -317,9 +317,10 @@ class VSPS_Hub {
 		}
 	}
 
+	/** Hourly: send anything waiting, or check in, so the hub's "Last synced with WordPress" stays current. */
 	public static function cron_push() {
 		try {
-			self::push_pending( self::BATCH_SIZE, true );
+			self::push_pending( self::BATCH_SIZE, true, true );
 		} catch ( Throwable $e ) {
 			error_log( '[vetspire-scheduler] hub cron push failed: ' . $e->getMessage() );
 		}
