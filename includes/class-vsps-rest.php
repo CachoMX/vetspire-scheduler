@@ -454,26 +454,16 @@ class VSPS_Rest {
 				'species'  => sanitize_text_field( isset( $patient['species'] ) ? $patient['species'] : '' ),
 				'breed'    => sanitize_text_field( isset( $patient['breed'] ) ? $patient['breed'] : '' ),
 				'sex'      => self::valid_sex( isset( $patient['sex'] ) ? $patient['sex'] : '' ),
-				'age'      => min( 40, absint( isset( $patient['age'] ) ? $patient['age'] : 0 ) ),
+				// '' = not answered; 0 is a real answer (under a year old).
+				'age'      => isset( $patient['age'] ) && is_numeric( $patient['age'] ) ? min( 40, absint( $patient['age'] ) ) : '',
 				'neutered' => in_array( isset( $patient['neutered'] ) ? $patient['neutered'] : '', array( 'yes', 'no' ), true ) ? $patient['neutered'] : '',
 			),
 		);
 
-		// Data governance: fields the admin disabled never reach Vetspire,
-		// even from forged requests that bypass the form.
-		$governance = vsps_get_settings();
-		if ( empty( $governance['ask_breed'] ) ) {
-			$args['patient']['breed'] = '';
-		}
-		if ( empty( $governance['ask_sex'] ) ) {
-			$args['patient']['sex'] = '';
-		}
-		if ( empty( $governance['ask_age'] ) ) {
-			$args['patient']['age'] = 0;
-		}
-		if ( empty( $governance['ask_neutered'] ) ) {
-			$args['patient']['neutered'] = '';
-		}
+		// The optional fields (address, weight, microchip, ...) from Settings → Booking Form.
+		$extras          = VSPS_Fields::parse_extras( $client, $patient );
+		$args['client']  = array_merge( $args['client'], $extras['client'] );
+		$args['patient'] = array_merge( $args['patient'], $extras['patient'] );
 
 		if ( ! $args['location_id'] || ! $args['appointment_type_id'] ) {
 			return new WP_Error( 'vsps_invalid', 'Missing location or appointment type.', array( 'status' => 400 ) );
@@ -504,9 +494,14 @@ class VSPS_Rest {
 					return new WP_Error( 'vsps_invalid', 'The last 4 digits of the phone on file are required to add a pet.', array( 'status' => 400 ) );
 				}
 			}
-			return $args;
+			$required = self::enforce_fields( $request, $args );
+			return is_wp_error( $required ) ? $required : $args;
 		}
 		$args['pet_is_new'] = true;
+		$required = self::enforce_fields( $request, $args );
+		if ( is_wp_error( $required ) ) {
+			return $required;
+		}
 		if ( '' === $args['client']['given_name'] || '' === $args['client']['family_name'] ) {
 			return new WP_Error( 'vsps_invalid', 'First and last name are required.', array( 'status' => 400 ) );
 		}
@@ -517,6 +512,18 @@ class VSPS_Rest {
 			return new WP_Error( 'vsps_invalid', 'Pet name and species are required.', array( 'status' => 400 ) );
 		}
 		return $args;
+	}
+
+	/**
+	 * Hidden / out-of-scope fields are blanked (they never reach Vetspire, even
+	 * from forged requests) and required ones must be filled. Uses the same
+	 * variant ("a"/"b") the widget rendered with.
+	 */
+	private static function enforce_fields( WP_REST_Request $request, array &$args ) {
+		$variant = strtolower( sanitize_key( (string) $request->get_param( 'variant' ) ) );
+		$fields  = VSPS_Fields::resolve( vsps_get_settings(), in_array( $variant, array( 'a', 'b' ), true ) ? $variant : '' );
+		$error   = VSPS_Fields::enforce( $args, $fields );
+		return null === $error ? true : $error;
 	}
 
 	private static function valid_sex( $sex ) {

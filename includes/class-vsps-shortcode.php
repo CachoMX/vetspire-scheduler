@@ -58,9 +58,21 @@ class VSPS_Shortcode {
 
 	/** The restUrl/analytics/i18n data every page needs, shortcode or not. */
 	private static function common_config( array $settings ) {
+		// Only fetched (12 h cache) when a clinic actually asks the question.
+		$fields   = VSPS_Fields::resolve( $settings );
+		$referral = $fields['referral']['show'] ? VSPS_Fields::referral_sources() : array();
+		$pronouns = array();
+		foreach ( VSPS_Fields::PRONOUNS as $value => $label ) {
+			$pronouns[] = array( 'id' => $value, 'name' => $label );
+		}
 		return array(
 			'restUrl'   => esc_url_raw( rest_url( 'vetspire/v1' ) ),
 			'analytics' => (int) $settings['analytics_enabled'],
+			'choices'   => array(
+				'referral' => $referral,
+				'titles'   => VSPS_Fields::TITLES,
+				'pronouns' => $pronouns,
+			),
 			'i18n'      => array(
 				'loading'        => __( 'Loading available times…', 'vetspire-scheduler' ),
 				'noOptions'      => __( 'Online booking is not available right now. Please call the clinic.', 'vetspire-scheduler' ),
@@ -82,7 +94,27 @@ class VSPS_Shortcode {
 				'dog'            => __( 'Dog', 'vetspire-scheduler' ),
 				'cat'            => __( 'Cat', 'vetspire-scheduler' ),
 				'other'          => __( 'Other', 'vetspire-scheduler' ),
-				'reason'         => __( 'Reason for visit (optional)', 'vetspire-scheduler' ),
+				'reason'         => __( 'Reason for visit', 'vetspire-scheduler' ),
+				'optional'       => __( '(optional)', 'vetspire-scheduler' ),
+				'address1'       => __( 'Street address', 'vetspire-scheduler' ),
+				'address2'       => __( 'Apt / Suite', 'vetspire-scheduler' ),
+				'city'           => __( 'City', 'vetspire-scheduler' ),
+				'state'          => __( 'State', 'vetspire-scheduler' ),
+				'zip'            => __( 'ZIP code', 'vetspire-scheduler' ),
+				'phoneAlt'       => __( 'Alternate phone', 'vetspire-scheduler' ),
+				'emailSecondary' => __( 'Secondary email', 'vetspire-scheduler' ),
+				'referral'       => __( 'How did you hear about us?', 'vetspire-scheduler' ),
+				'title'          => __( 'Title', 'vetspire-scheduler' ),
+				'pronouns'       => __( 'Pronouns', 'vetspire-scheduler' ),
+				'ownerDob'       => __( 'Your date of birth', 'vetspire-scheduler' ),
+				'businessName'   => __( 'Business name', 'vetspire-scheduler' ),
+				'clientNotes'    => __( 'Notes for the clinic', 'vetspire-scheduler' ),
+				'mixed'          => __( 'Mixed breed?', 'vetspire-scheduler' ),
+				'birthDate'      => __( "Pet's birth date", 'vetspire-scheduler' ),
+				'weight'         => __( 'Weight', 'vetspire-scheduler' ),
+				'color'          => __( 'Color', 'vetspire-scheduler' ),
+				'microchip'      => __( 'Microchip number', 'vetspire-scheduler' ),
+				'petNotes'       => __( 'Notes about your pet', 'vetspire-scheduler' ),
 				'cancel'         => __( 'Cancel', 'vetspire-scheduler' ),
 				'confirm'        => __( 'Confirm Booking', 'vetspire-scheduler' ),
 				'booking'        => __( 'Booking…', 'vetspire-scheduler' ),
@@ -130,12 +162,12 @@ class VSPS_Shortcode {
 				'addingPetTo'    => __( 'Adding a new pet to the account for', 'vetspire-scheduler' ),
 				'last4Label'     => __( 'Last 4 digits of the phone on file', 'vetspire-scheduler' ),
 				'cantVerify'     => __( "Can't verify? Book with the full form instead", 'vetspire-scheduler' ),
-				'breed'          => __( 'Breed (optional)', 'vetspire-scheduler' ),
-				'sexLabel'       => __( 'Sex (optional)', 'vetspire-scheduler' ),
+				'breed'          => __( 'Breed', 'vetspire-scheduler' ),
+				'sexLabel'       => __( 'Sex', 'vetspire-scheduler' ),
 				'male'           => __( 'Male', 'vetspire-scheduler' ),
 				'female'         => __( 'Female', 'vetspire-scheduler' ),
-				'ageYears'       => __( 'Age in years (optional)', 'vetspire-scheduler' ),
-				'neuteredQ'      => __( 'Spayed / Neutered? (optional)', 'vetspire-scheduler' ),
+				'ageYears'       => __( 'Age in years', 'vetspire-scheduler' ),
+				'neuteredQ'      => __( 'Spayed / Neutered?', 'vetspire-scheduler' ),
 				'yes'            => __( 'Yes', 'vetspire-scheduler' ),
 				'no'             => __( 'No', 'vetspire-scheduler' ),
 			),
@@ -158,12 +190,7 @@ class VSPS_Shortcode {
 			'linkUrl'       => '',
 			'layout'        => 'full',
 			'defaultTypeId' => absint( $settings['default_type'] ),
-			'petFields'     => array(
-				'breed'    => (int) $settings['ask_breed'],
-				'sex'      => (int) $settings['ask_sex'],
-				'age'      => (int) $settings['ask_age'],
-				'neutered' => (int) $settings['ask_neutered'],
-			),
+			'fields'        => VSPS_Fields::for_widget( VSPS_Fields::resolve( $settings ) ),
 			'variant'      => '',
 			'primaryColor' => $settings['primary_color'],
 			'title'        => __( 'Book an Appointment', 'vetspire-scheduler' ),
@@ -214,20 +241,10 @@ class VSPS_Shortcode {
 
 		$layout = in_array( $atts['layout'], array( 'full', 'bar', 'calendar', 'float' ), true ) ? $atts['layout'] : 'full';
 
-		$variant    = in_array( strtolower( $atts['variant'] ), array( 'a', 'b' ), true ) ? strtolower( $atts['variant'] ) : '';
-		$pet_fields = array(
-			'breed'    => (int) $settings['ask_breed'],
-			'sex'      => (int) $settings['ask_sex'],
-			'age'      => (int) $settings['ask_age'],
-			'neutered' => (int) $settings['ask_neutered'],
-		);
-		if ( 'a' === $variant ) {
-			$pet_fields = array( 'breed' => 0, 'sex' => 0, 'age' => 0, 'neutered' => 0 );
-		} elseif ( 'b' === $variant && 0 === array_sum( $pet_fields ) ) {
-			// Variant B with nothing configured would be identical to A — turn
-			// everything on so the test actually compares something.
-			$pet_fields = array( 'breed' => 1, 'sex' => 1, 'age' => 1, 'neutered' => 1 );
-		}
+		$variant = in_array( strtolower( $atts['variant'] ), array( 'a', 'b' ), true ) ? strtolower( $atts['variant'] ) : '';
+		// Settings → Booking Form decides which fields show and which are
+		// required; variant "a"/"b" (A/B test) narrows or widens that set.
+		$fields = VSPS_Fields::for_widget( VSPS_Fields::resolve( $settings, $variant ) );
 
 		$days_per_page = min( 14, max( 1, absint( $atts['days'] ) ) );
 		$config = array(
@@ -239,7 +256,7 @@ class VSPS_Shortcode {
 			'linkUrl'       => esc_url_raw( $atts['link_url'] ),
 			'layout'        => $layout,
 			'defaultTypeId' => absint( $settings['default_type'] ),
-			'petFields'     => $pet_fields,
+			'fields'        => $fields,
 			'variant'       => $variant,
 		);
 

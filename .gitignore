@@ -3,3 +3,6 @@
 *.log
 node_modules/
 dist/
+
+# Local credential files (.env.local holds the Vetspire/WP/Nectar secrets).
+.env*

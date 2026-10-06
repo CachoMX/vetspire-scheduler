@@ -32,6 +32,14 @@ Visitor ──> Widget (JS) ──> WP REST proxy (PHP, cached) ──> Vetspire
    - Click **Test Connection** — it lists the org's locations with their IDs.
    - Set the default Location ID (and optionally the Allowed Location IDs allow-list —
      once set, only those locations can be queried or booked from this site).
+   - **Booking Form:** a table of every field the widget can ask for, each with **Show** and
+     **Required**. Name, email, phone, pet name and species are always on (Vetspire needs them);
+     the reason for visit is always shown and can be made required. Optional fields: address,
+     alternate phone, secondary email, how they heard about the clinic (the clinic's own Vetspire
+     list), title, pronouns, owner's date of birth, business name, notes; and for the pet: breed,
+     mixed breed, sex, spayed/neutered, age, birth date, weight (saved as a Vetspire weight entry),
+     color, microchip, notes. Owner fields are asked only of new clients, pet fields only when a new
+     pet is added. Required fields are checked in the browser and again on the server.
 3. Drop the shortcode in any page/builder module:
 
 ```

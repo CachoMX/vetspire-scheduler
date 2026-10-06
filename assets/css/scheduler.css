@@ -321,6 +321,31 @@
 	resize: vertical;
 }
 
+/* Date fields show no placeholder, so they carry a small caption. */
+.vsps-overlay .vsps-form .vsps-field-date {
+	display: block;
+	margin-bottom: 10px;
+}
+
+.vsps-overlay .vsps-form .vsps-field-date span {
+	display: block;
+	font-size: 0.85em;
+	color: #555;
+	margin-bottom: 4px;
+}
+
+/* Weight: number + lb/kg side by side, together taking one half of a row. */
+.vsps-overlay .vsps-form .vsps-weight {
+	display: flex;
+	gap: 6px;
+	width: 100%;
+}
+
+.vsps-overlay .vsps-form .vsps-weight select {
+	width: 72px;
+	flex-shrink: 0;
+}
+
 .vsps-overlay .vsps-error {
 	color: #b00020;
 	margin: 4px 0 8px;

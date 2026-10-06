@@ -15,6 +15,7 @@ class VSPS_Settings {
 	public static function init() {
 		add_action( 'admin_menu', array( __CLASS__, 'add_menu' ) );
 		add_action( 'admin_init', array( __CLASS__, 'register' ) );
+		add_action( 'update_option_' . VSPS_OPTION_KEY, array( __CLASS__, 'purge_page_caches' ) );
 		// Unknown admin pages are refused in menu.php, before admin_init runs.
 		add_action( 'admin_page_access_denied', array( __CLASS__, 'redirect_old_bookings_page' ) );
 	}
@@ -92,10 +93,8 @@ class VSPS_Settings {
 			'cache_ttl'         => isset( $current['cache_ttl'] ) ? (int) $current['cache_ttl'] : 300,
 			'analytics_enabled' => empty( $input['analytics_enabled'] ) ? 0 : 1,
 			'extended_pet_fields' => 0,
-			'ask_breed'         => empty( $input['ask_breed'] ) ? 0 : 1,
-			'ask_sex'           => empty( $input['ask_sex'] ) ? 0 : 1,
-			'ask_age'           => empty( $input['ask_age'] ) ? 0 : 1,
-			'ask_neutered'      => empty( $input['ask_neutered'] ) ? 0 : 1,
+			// Every booking-form field's show / required choice (VSPS_Fields).
+			'fields'            => VSPS_Fields::sanitize( isset( $input['fields'] ) ? $input['fields'] : array() ),
 			'primary_color'     => sanitize_hex_color( isset( $input['primary_color'] ) ? $input['primary_color'] : '#2f6f4f' ),
 			'layout'            => self::valid_layout( isset( $input['layout'] ) ? $input['layout'] : 'full' ),
 			'default_type'      => absint( isset( $input['default_type'] ) ? $input['default_type'] : 0 ) ? (string) absint( $input['default_type'] ) : '',
@@ -148,6 +147,69 @@ class VSPS_Settings {
 		}
 		VSPS_Hub::reset_after_key_change();
 		return $key;
+	}
+
+	/**
+	 * The widget's settings (fields, required flags, colors) are baked into
+	 * each page's HTML, so cached pages would keep serving the old form, and
+	 * a newly required field would then be refused by the server with no
+	 * input to fill. Purge the common page caches after a save.
+	 */
+	public static function purge_page_caches() {
+		if ( function_exists( 'rocket_clean_domain' ) ) {
+			rocket_clean_domain(); // WP Rocket
+		}
+		do_action( 'litespeed_purge_all' ); // LiteSpeed Cache
+		if ( function_exists( 'w3tc_flush_all' ) ) {
+			w3tc_flush_all(); // W3 Total Cache
+		}
+		if ( function_exists( 'wp_cache_clear_cache' ) ) {
+			wp_cache_clear_cache(); // WP Super Cache
+		}
+		do_action( 'cloudflare_purge_everything' ); // Cloudflare plugin, when present
+	}
+
+	/** Settings → Booking Form: one row per field with Show / Required checkboxes. */
+	private static function render_fields_table( array $settings ) {
+		$opt      = VSPS_OPTION_KEY;
+		$resolved = VSPS_Fields::resolve( $settings );
+		$groups   = array(
+			'client' => 'Pet owner (new clients)',
+			'pet'    => 'Pet (new pets)',
+			'visit'  => 'Every booking',
+		);
+		echo '<table class="widefat striped vsps-fields-table"><thead><tr><th>Field</th><th class="vsps-fcol">Show</th><th class="vsps-fcol">Required</th></tr></thead><tbody>';
+		foreach ( $groups as $scope => $heading ) {
+			echo '<tr class="vsps-fgroup"><th colspan="3">' . esc_html( $heading ) . '</th></tr>';
+			foreach ( VSPS_Fields::REGISTRY as $key => $def ) {
+				if ( $scope !== $def[0] ) {
+					continue;
+				}
+				$f           = $resolved[ $key ];
+				$lock_show   = VSPS_Fields::locked_show( $key );
+				$lock_req    = VSPS_Fields::locked_required( $key );
+				$name        = $opt . '[fields][' . $key . ']';
+				$row_class   = $lock_show && $lock_req ? ' class="vsps-flocked"' : '';
+				echo '<tr' . $row_class . '><td>' . esc_html( $def[1] ) . '</td>';
+				printf(
+					'<td class="vsps-fcol"><input type="checkbox" class="vsps-fshow" data-field="%1$s" name="%2$s[show]" value="1" aria-label="%3$s"%4$s%5$s /></td>',
+					esc_attr( $key ),
+					esc_attr( $name ),
+					esc_attr( 'Show ' . $def[1] ),
+					checked( $f['show'], true, false ),
+					$lock_show ? ' disabled' : ''
+				);
+				printf(
+					'<td class="vsps-fcol"><input type="checkbox" class="vsps-freq" data-field="%1$s" name="%2$s[req]" value="1" aria-label="%3$s"%4$s%5$s /></td></tr>',
+					esc_attr( $key ),
+					esc_attr( $name ),
+					esc_attr( 'Require ' . $def[1] ),
+					checked( $f['req'], true, false ),
+					( $lock_req || ! $f['show'] ) ? ' disabled' : ''
+				);
+			}
+		}
+		echo '</tbody></table>';
 	}
 
 	private static function valid_layout( $layout ) {
@@ -250,6 +312,12 @@ class VSPS_Settings {
 				@media (max-width:1100px){ .vsps-cols{display:block;} .vsps-side{width:auto;} }
 				.vsps-box { background:#fff; border:1px solid #dcdcde; border-radius:4px; margin-bottom:16px; }
 				.vsps-box > h2 { margin:0; padding:10px 14px; border-bottom:1px solid #f0f0f1; font-size:14px; }
+				.vsps-fields-table { margin:6px 0 10px; }
+				.vsps-fields-table th, .vsps-fields-table td { padding:6px 10px; vertical-align:middle; }
+				.vsps-fields-table .vsps-fcol { width:80px; text-align:center; }
+				.vsps-fields-table .vsps-fgroup th { background:#f6f7f7; font-weight:600; }
+				.vsps-fields-table .vsps-flocked td { color:#8c8f94; }
+				.vsps-fields-table input[disabled] { opacity:.55; cursor:not-allowed; }
 				.vsps-box .inside { padding:14px; margin:0; }
 				.vsps-cards { display:grid; grid-template-columns:repeat(2,1fr); gap:12px; --vsps-accent:<?php echo esc_attr( $color ); ?>; }
 				.vsps-card { display:block; border:2px solid #dcdcde; border-radius:6px; padding:10px; cursor:pointer; text-align:center; background:#fff; transition:border-color .12s, transform .12s, box-shadow .12s; position:relative; }
@@ -353,22 +421,9 @@ class VSPS_Settings {
 						<div class="vsps-box">
 							<h2>Booking Form</h2>
 							<div class="inside">
-								<p style="margin-top:0;"><strong>Optional pet questions</strong> (each adds one field to the same single screen; fewer fields convert better):</p>
-								<?php
-								$ask_fields = array(
-									'ask_breed'    => 'Breed',
-									'ask_sex'      => 'Sex',
-									'ask_age'      => 'Age (years)',
-									'ask_neutered' => 'Spayed / Neutered',
-								);
-								foreach ( $ask_fields as $ask_key => $ask_label ) : ?>
-									<label style="display:inline-block;margin:0 16px 6px 0;">
-										<input type="checkbox" name="<?php echo esc_attr( $opt ); ?>[<?php echo esc_attr( $ask_key ); ?>]"
-											value="1" <?php checked( 1, (int) $settings[ $ask_key ] ); ?> />
-										<?php echo esc_html( $ask_label ); ?>
-									</label>
-								<?php endforeach; ?>
-								<p class="description">All questions map 1:1 to Vetspire fields. A/B test: add <code>variant="a"</code> (minimal) or <code>variant="b"</code> (with the checked questions) to two copies of the shortcode.</p>
+								<p style="margin-top:0;">Choose which fields the booking form shows and which ones the pet owner must fill in. Grayed-out fields are always on: Vetspire needs them to book. Owner fields are only asked of new clients; pet fields only when a new pet is added. Fewer fields convert better.</p>
+								<?php self::render_fields_table( $settings ); ?>
+								<p class="description" style="margin-bottom:0;">Every field is saved to its own place in Vetspire. A/B test: add <code>variant="a"</code> (only the always-on fields) or <code>variant="b"</code> (the fields checked here) to two copies of the shortcode.</p>
 							</div>
 						</div>
 
@@ -498,10 +553,10 @@ class VSPS_Settings {
 						var cfg = JSON.parse(preview.getAttribute('data-vsps-config'));
 						cfg.locationId = locationId;
 						cfg.layout = currentLayout();
-						cfg.petFields = {};
-						['breed', 'sex', 'age', 'neutered'].forEach(function (f) {
-							var cb = document.querySelector('input[name*="ask_' + f + '"]');
-							cfg.petFields[f] = cb && cb.checked ? 1 : 0;
+						cfg.fields = {};
+						document.querySelectorAll('.vsps-fshow').forEach(function (cb) {
+							var req = document.querySelector('.vsps-freq[data-field="' + cb.getAttribute('data-field') + '"]');
+							cfg.fields[cb.getAttribute('data-field')] = cb.checked ? (req && req.checked ? 2 : 1) : 0;
 						});
 						var typeSel = document.getElementById('vsps_default_type');
 						cfg.defaultTypeId = ( typeSel && ! typeSel.disabled ) ? parseInt(typeSel.value, 10) || 0 : 0;
@@ -536,7 +591,18 @@ class VSPS_Settings {
 				}
 				var typeSelMain = document.getElementById('vsps_default_type');
 				if (typeSelMain) { typeSelMain.addEventListener('change', reinit); }
-				document.querySelectorAll('input[name*="ask_"]').forEach(function (cb) {
+				// "Required" only makes sense for a shown field; locked rows never change.
+				document.querySelectorAll('.vsps-fshow').forEach(function (cb) {
+					cb.addEventListener('change', function () {
+						var req = document.querySelector('.vsps-freq[data-field="' + cb.getAttribute('data-field') + '"]');
+						if (req && !cb.disabled) {
+							req.disabled = !cb.checked;
+							if (!cb.checked) { req.checked = false; }
+						}
+						reinit();
+					});
+				});
+				document.querySelectorAll('.vsps-freq').forEach(function (cb) {
 					cb.addEventListener('change', reinit);
 				});
 				document.querySelectorAll('.vsps-layout-radio').forEach(function (radio) {

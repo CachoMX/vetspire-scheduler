@@ -33,7 +33,27 @@
 		dog: 'Dog',
 		cat: 'Cat',
 		other: 'Other',
-		reason: 'Reason for visit (optional)',
+		reason: 'Reason for visit',
+		optional: '(optional)',
+		address1: 'Street address',
+		address2: 'Apt / Suite',
+		city: 'City',
+		state: 'State',
+		zip: 'ZIP code',
+		phoneAlt: 'Alternate phone',
+		emailSecondary: 'Secondary email',
+		referral: 'How did you hear about us?',
+		title: 'Title',
+		pronouns: 'Pronouns',
+		ownerDob: 'Your date of birth',
+		businessName: 'Business name',
+		clientNotes: 'Notes for the clinic',
+		mixed: 'Mixed breed?',
+		birthDate: "Pet's birth date",
+		weight: 'Weight',
+		color: 'Color',
+		microchip: 'Microchip number',
+		petNotes: 'Notes about your pet',
 		cancel: 'Cancel',
 		confirm: 'Confirm Booking',
 		booking: 'Booking…',
@@ -64,12 +84,12 @@
 		reviews: 'Google Reviews',
 		directions: 'Get Directions',
 		callUs: 'Call Us',
-		breed: 'Breed (optional)',
-		sexLabel: 'Sex (optional)',
+		breed: 'Breed',
+		sexLabel: 'Sex',
 		male: 'Male',
 		female: 'Female',
-		ageYears: 'Age in years (optional)',
-		neuteredQ: 'Spayed / Neutered? (optional)',
+		ageYears: 'Age in years',
+		neuteredQ: 'Spayed / Neutered?',
 		yes: 'Yes',
 		no: 'No',
 		haveVisited: 'Have you visited us before?',
@@ -261,11 +281,17 @@
 		overlay.addEventListener('focusout', onFocusOut);
 
 		// A tick so the just-inserted content has real layout (offsetWidth
-		// checks above) before anything tries to focus it.
+		// checks above) before anything tries to focus it. If the content
+		// already put focus on its own first field (the booking forms do),
+		// leave it there; otherwise start on the first control that isn't the
+		// × close button (WCAG focus order: keyboard users land on what they
+		// need to fill in, not on "close").
 		window.setTimeout(function () {
 			if (closed) { return; }
+			if (dialogEl.contains(document.activeElement) && document.activeElement !== dialogEl) { return; }
 			var items = focusable();
-			(items[0] || dialogEl).focus();
+			var first = items.filter(function (node) { return !/(^|\s)vsps-(modal|drawer)-close(\s|$)/.test(node.className); })[0];
+			(first || items[0] || dialogEl).focus();
 		}, 0);
 
 		return function restoreFocus() {
@@ -1527,12 +1553,9 @@
 		step.innerHTML = '';
 		step.appendChild(el('p', 'vsps-step-q', I18N.bookingFor + ': \ud83d\udc3e ' + petName));
 		var form = el('form', 'vsps-form');
-		form.innerHTML = '<textarea name="notes" placeholder="__REASON__" rows="2"></textarea>' +
+		form.innerHTML = this.reasonHtml() +
 			'<p class="vsps-error" style="display:none;"></p>' +
-			'<div class="vsps-actions"><button type="submit" class="vsps-btn-primary">__CONFIRM__</button></div>';
-		form.innerHTML = form.innerHTML
-			.replace('__REASON__', escAttr(I18N.reason))
-			.replace('__CONFIRM__', escHtml(I18N.confirm));
+			'<div class="vsps-actions"><button type="submit" class="vsps-btn-primary">' + escHtml(I18N.confirm) + '</button></div>';
 		step.appendChild(form);
 		step.appendChild(this.backLink(function () { self.renderPetChoice(); }));
 		form.addEventListener('submit', function (e) {
@@ -1542,42 +1565,165 @@
 				pet_is_new: false,
 				client: { given_name: '', family_name: '', email: self._bk.email, phone: '' },
 				patient: { name: petName, species: '', breed: '', sex: '', age: '', neutered: '' },
-				notes: form.querySelector('[name="notes"]').value || ''
+				notes: (form.querySelector('[name="notes"]').value || '').trim()
 			});
 		});
 	};
 
-	Widget.prototype.petFieldsHtml = function () {
+	/**
+	 * Settings → Booking Form flags per field: 0 hidden, 1 optional, 2 required.
+	 * Pages cached before the full field list existed only carry the old
+	 * four pet toggles (petFields); those map to "optional".
+	 */
+	Widget.prototype.fieldFlags = function () {
+		if (this.config.fields) { return this.config.fields; }
 		var pf = this.config.petFields || {};
-		var optional = [];
-		if (pf.breed) { optional.push('<input name="breed" placeholder="__BREED__">'); }
-		if (pf.sex) { optional.push('<select name="sex" aria-label="__SEXLABEL__"><option value="">__SEXLABEL__</option><option value="MALE">__MALE__</option><option value="FEMALE">__FEMALE__</option></select>'); }
-		if (pf.age) { optional.push('<input type="number" name="age" min="0" max="40" placeholder="__AGE__">'); }
-		if (pf.neutered) { optional.push('<select name="neutered" aria-label="__NEUTERED__"><option value="">__NEUTERED__</option><option value="yes">__YES__</option><option value="no">__NO__</option></select>'); }
-		var rows = '';
-		for (var i = 0; i < optional.length; i += 2) {
-			rows += '<div class="vsps-row">' + optional[i] + (optional[i + 1] || '') + '</div>';
-		}
-		// aria-label (not a wrapped/`for`-linked <label>) so this still works
-		// when the pet_name placeholder is the only visual cue and multiple
-		// widget instances on one page can't share a single id.
-		var html = '<div class="vsps-row"><input required name="pet_name" placeholder="__PET__" aria-label="__PET__">' +
-			'<select name="species" aria-label="__SPECIES__"><option value="Canine">__DOG__</option><option value="Feline">__CAT__</option><option value="Other">__OTHER__</option></select></div>' +
-			rows;
-		// Tokens that now appear more than once (an aria-label alongside the
-		// same text visible elsewhere) need a global replace, not the default
-		// replace-first-occurrence-only behavior; escAttr()'s output (it
-		// entity-escapes quotes on top of escHtml()) is safe to reuse in a
-		// plain text node too, so one escaped value works in both spots.
-		return html
-			.replace(/__PET__/g, escAttr(I18N.petName))
-			.replace(/__SPECIES__/g, escAttr(I18N.species))
-			.replace('__DOG__', escHtml(I18N.dog)).replace('__CAT__', escHtml(I18N.cat)).replace('__OTHER__', escHtml(I18N.other))
-			.replace('__BREED__', escAttr(I18N.breed)).replace(/__SEXLABEL__/g, escAttr(I18N.sexLabel))
-			.replace('__MALE__', escHtml(I18N.male)).replace('__FEMALE__', escHtml(I18N.female))
-			.replace('__AGE__', escAttr(I18N.ageYears)).replace(/__NEUTERED__/g, escAttr(I18N.neuteredQ))
-			.replace('__YES__', escHtml(I18N.yes)).replace('__NO__', escHtml(I18N.no));
+		return { breed: pf.breed ? 1 : 0, sex: pf.sex ? 1 : 0, age: pf.age ? 1 : 0, neutered: pf.neutered ? 1 : 0, reason: 1 };
 	};
+
+	/** Label as the visitor sees it: "(optional)" on optional fields, nothing on required ones. */
+	function fieldLabel(text, flag) {
+		return flag === 1 ? text + ' ' + I18N.optional : text;
+	}
+
+	function fieldInput(name, text, flag, type, extra) {
+		var label = escAttr(fieldLabel(text, flag));
+		return '<input name="' + name + '" type="' + (type || 'text') + '" placeholder="' + label + '" aria-label="' + label + '"' +
+			(flag === 2 ? ' required' : '') + (extra || '') + '>';
+	}
+
+	/** options: [{id, name}]; the first, empty option doubles as the visible label. */
+	function fieldSelect(name, text, flag, options) {
+		var label = escAttr(fieldLabel(text, flag));
+		var html = '<select name="' + name + '" aria-label="' + label + '"' + (flag === 2 ? ' required' : '') + '>' +
+			'<option value="">' + label + '</option>';
+		options.forEach(function (o) {
+			html += '<option value="' + escAttr(o.id) + '">' + escHtml(o.name) + '</option>';
+		});
+		return html + '</select>';
+	}
+
+	/** Date inputs show no placeholder, so they get a visible caption. */
+	function fieldDate(name, text, flag) {
+		var label = fieldLabel(text, flag);
+		var today = new Date().toISOString().slice(0, 10);
+		return '<label class="vsps-field-date"><span>' + escHtml(label) + '</span>' +
+			'<input type="date" name="' + name + '" max="' + today + '" aria-label="' + escAttr(label) + '"' + (flag === 2 ? ' required' : '') + '></label>';
+	}
+
+	function fieldTextarea(name, text, flag) {
+		var label = escAttr(fieldLabel(text, flag));
+		return '<textarea name="' + name + '" rows="2" placeholder="' + label + '" aria-label="' + label + '"' + (flag === 2 ? ' required' : '') + '></textarea>';
+	}
+
+	/** Two fields per row; anything marked wide (dates, notes) takes a row of its own. */
+	function fieldRows(items) {
+		var html = '';
+		var pair = [];
+		items.forEach(function (item) {
+			if (item.wide) {
+				if (pair.length) { html += '<div class="vsps-row">' + pair.join('') + '</div>'; pair = []; }
+				html += item.html;
+				return;
+			}
+			pair.push(item.html);
+			if (pair.length === 2) { html += '<div class="vsps-row">' + pair.join('') + '</div>'; pair = []; }
+		});
+		if (pair.length) { html += '<div class="vsps-row">' + pair.join('') + '</div>'; }
+		return html;
+	}
+
+	var YES_NO = function () { return [{ id: 'yes', name: I18N.yes }, { id: 'no', name: I18N.no }]; };
+
+	/** New-client owner fields beyond name / email / phone. */
+	Widget.prototype.ownerExtrasHtml = function () {
+		var f = this.fieldFlags();
+		var choices = CFG.choices || {};
+		var items = [];
+		if (f.address) {
+			items.push({ wide: true, html: '<div class="vsps-row">' + fieldInput('address_line1', I18N.address1, f.address, 'text', ' autocomplete="address-line1"') + '</div>' });
+			items.push({ html: fieldInput('address_line2', I18N.address2, 1, 'text', ' autocomplete="address-line2"') });
+			items.push({ html: fieldInput('address_city', I18N.city, f.address, 'text', ' autocomplete="address-level2"') });
+			items.push({ html: fieldInput('address_state', I18N.state, f.address, 'text', ' autocomplete="address-level1"') });
+			items.push({ html: fieldInput('address_postal', I18N.zip, f.address, 'text', ' autocomplete="postal-code" inputmode="numeric"') });
+		}
+		if (f.phone_alt) { items.push({ html: fieldInput('phone_alt', I18N.phoneAlt, f.phone_alt, 'tel') }); }
+		if (f.email_secondary) { items.push({ html: fieldInput('email_secondary', I18N.emailSecondary, f.email_secondary, 'email') }); }
+		if (f.referral && choices.referral && choices.referral.length) {
+			items.push({ wide: true, html: '<div class="vsps-row">' + fieldSelect('referral_id', I18N.referral, f.referral, choices.referral) + '</div>' });
+		}
+		if (f.title) {
+			items.push({ html: fieldSelect('title', I18N.title, f.title, (choices.titles || []).map(function (t) { return { id: t, name: t }; })) });
+		}
+		if (f.pronouns) { items.push({ html: fieldSelect('pronouns', I18N.pronouns, f.pronouns, choices.pronouns || []) }); }
+		if (f.business_name) { items.push({ html: fieldInput('business_name', I18N.businessName, f.business_name) }); }
+		if (f.owner_dob) { items.push({ wide: true, html: fieldDate('owner_dob', I18N.ownerDob, f.owner_dob) }); }
+		if (f.client_notes) { items.push({ wide: true, html: fieldTextarea('client_notes', I18N.clientNotes, f.client_notes) }); }
+		return fieldRows(items);
+	};
+
+	/** Pet name + species (always) and the optional pet questions. */
+	Widget.prototype.petFieldsHtml = function () {
+		var f = this.fieldFlags();
+		// aria-label (not a wrapped/`for`-linked <label>) so this still works
+		// when the placeholder is the only visual cue and multiple widget
+		// instances on one page can't share a single id.
+		var html = '<div class="vsps-row"><input required name="pet_name" placeholder="' + escAttr(I18N.petName) + '" aria-label="' + escAttr(I18N.petName) + '">' +
+			'<select name="species" aria-label="' + escAttr(I18N.species) + '"><option value="Canine">' + escHtml(I18N.dog) + '</option>' +
+			'<option value="Feline">' + escHtml(I18N.cat) + '</option><option value="Other">' + escHtml(I18N.other) + '</option></select></div>';
+		var items = [];
+		if (f.breed) { items.push({ html: fieldInput('breed', I18N.breed, f.breed) }); }
+		if (f.mixed) { items.push({ html: fieldSelect('mixed', I18N.mixed, f.mixed, YES_NO()) }); }
+		if (f.sex) { items.push({ html: fieldSelect('sex', I18N.sexLabel, f.sex, [{ id: 'MALE', name: I18N.male }, { id: 'FEMALE', name: I18N.female }]) }); }
+		if (f.neutered) { items.push({ html: fieldSelect('neutered', I18N.neuteredQ, f.neutered, YES_NO()) }); }
+		if (f.age) { items.push({ html: fieldInput('age', I18N.ageYears, f.age, 'number', ' min="0" max="40"') }); }
+		if (f.weight) {
+			items.push({ html: '<span class="vsps-weight">' + fieldInput('weight', I18N.weight, f.weight, 'number', ' min="0.1" max="2000" step="0.1"') +
+				'<select name="weight_unit" aria-label="' + escAttr(I18N.weight) + '"><option value="LB">lb</option><option value="KG">kg</option></select></span>' });
+		}
+		if (f.color) { items.push({ html: fieldInput('color', I18N.color, f.color) }); }
+		if (f.microchip) { items.push({ html: fieldInput('microchip', I18N.microchip, f.microchip, 'text', ' inputmode="numeric"') }); }
+		if (f.birth_date) { items.push({ wide: true, html: fieldDate('birth_date', I18N.birthDate, f.birth_date) }); }
+		if (f.pet_notes) { items.push({ wide: true, html: fieldTextarea('pet_notes', I18N.petNotes, f.pet_notes) }); }
+		return html + fieldRows(items);
+	};
+
+	/** Reason for visit: always shown; required when the clinic says so. */
+	Widget.prototype.reasonHtml = function () {
+		var flag = this.fieldFlags().reason;
+		return fieldTextarea('notes', I18N.reason, flag === 2 ? 2 : 1);
+	};
+
+	function formValue(fd, name) {
+		var v = fd.get(name);
+		return v === null ? '' : String(v).trim();
+	}
+
+	/** Pet payload from the form (fields that aren't on it come back empty). */
+	function collectPet(fd) {
+		return {
+			name: formValue(fd, 'pet_name'), species: formValue(fd, 'species'),
+			breed: formValue(fd, 'breed'), sex: formValue(fd, 'sex'), age: formValue(fd, 'age'), neutered: formValue(fd, 'neutered'),
+			mixed: formValue(fd, 'mixed'), birth_date: formValue(fd, 'birth_date'), weight: formValue(fd, 'weight'),
+			weight_unit: formValue(fd, 'weight_unit'), color: formValue(fd, 'color'), microchip: formValue(fd, 'microchip'),
+			notes: formValue(fd, 'pet_notes')
+		};
+	}
+
+	/** New-client owner payload. */
+	function collectOwner(fd) {
+		return {
+			given_name: formValue(fd, 'given_name'), family_name: formValue(fd, 'family_name'),
+			email: formValue(fd, 'email'), phone: formValue(fd, 'phone'),
+			address: {
+				line1: formValue(fd, 'address_line1'), line2: formValue(fd, 'address_line2'), city: formValue(fd, 'address_city'),
+				state: formValue(fd, 'address_state'), postal: formValue(fd, 'address_postal')
+			},
+			phone_alt: formValue(fd, 'phone_alt'), email_secondary: formValue(fd, 'email_secondary'),
+			referral_id: formValue(fd, 'referral_id'), title: formValue(fd, 'title'), pronouns: formValue(fd, 'pronouns'),
+			owner_dob: formValue(fd, 'owner_dob'), business_name: formValue(fd, 'business_name'), notes: formValue(fd, 'client_notes')
+		};
+	}
 
 	/**
 	 * Existing client adding a pet: pet fields + last-4-of-phone ownership
@@ -1591,14 +1737,11 @@
 		step.appendChild(el('p', 'vsps-step-q', I18N.addingPetTo + ' ' + this._bk.email));
 		var form = el('form', 'vsps-form');
 		form.innerHTML = this.petFieldsHtml() +
-			'<div class="vsps-row"><input required name="phone_last4" inputmode="numeric" pattern="[0-9]{4}" maxlength="4" placeholder="__LAST4__"></div>' +
-			'<textarea name="notes" placeholder="__REASON__" rows="2"></textarea>' +
+			'<div class="vsps-row"><input required name="phone_last4" inputmode="numeric" pattern="[0-9]{4}" maxlength="4" placeholder="' +
+			escAttr(I18N.last4Label) + '" aria-label="' + escAttr(I18N.last4Label) + '"></div>' +
+			this.reasonHtml() +
 			'<p class="vsps-error" style="display:none;"></p>' +
-			'<div class="vsps-actions"><button type="submit" class="vsps-btn-primary">__CONFIRM__</button></div>';
-		form.innerHTML = form.innerHTML
-			.replace('__LAST4__', escAttr(I18N.last4Label))
-			.replace('__REASON__', escAttr(I18N.reason))
-			.replace('__CONFIRM__', escHtml(I18N.confirm));
+			'<div class="vsps-actions"><button type="submit" class="vsps-btn-primary">' + escHtml(I18N.confirm) + '</button></div>';
 		step.appendChild(form);
 		var fallback = el('button', 'vsps-back', I18N.cantVerify);
 		fallback.type = 'button';
@@ -1606,22 +1749,19 @@
 			self._bk.clientType = 'new';
 			self.renderNewForm(self._bk.email, '');
 		});
+		// "Can't verify? …" is this window's only way out besides × (Nicole's QC:
+		// no "< Back" here, it sat on the same line and read as one link).
 		step.appendChild(fallback);
-		step.appendChild(this.backLink(function () { self.renderPetChoice(); }));
 		form.addEventListener('submit', function (e) {
 			e.preventDefault();
 			var fd = new FormData(form);
 			self.submitBooking(form, {
 				client_type: 'existing',
 				pet_is_new: true,
-				phone_last4: fd.get('phone_last4') || '',
+				phone_last4: formValue(fd, 'phone_last4'),
 				client: { given_name: '', family_name: '', email: self._bk.email, phone: '' },
-				patient: {
-					name: fd.get('pet_name'), species: fd.get('species'),
-					breed: fd.get('breed') || '', sex: fd.get('sex') || '',
-					age: fd.get('age') || '', neutered: fd.get('neutered') || ''
-				},
-				notes: fd.get('notes') || ''
+				patient: collectPet(fd),
+				notes: formValue(fd, 'notes')
 			});
 		});
 		form.querySelector('[name="pet_name"]').focus();
@@ -1640,8 +1780,9 @@
 			'<input required name="family_name" placeholder="__LAST__" autocomplete="family-name"></div>' +
 			'<div class="vsps-row"><input required type="email" name="email" placeholder="__EMAILP__" autocomplete="email">' +
 			'<input required type="tel" name="phone" placeholder="__PHONE__" autocomplete="tel"></div>' +
+			this.ownerExtrasHtml() +
 			this.petFieldsHtml() +
-			'<textarea name="notes" placeholder="__REASON__" rows="2"></textarea>' +
+			this.reasonHtml() +
 			'<input type="text" name="vsps_hp" tabindex="-1" autocomplete="nope-937" aria-hidden="true" style="position:absolute;left:-9999px;">' +
 			'<p class="vsps-error" style="display:none;"></p>' +
 			'<div class="vsps-actions">' +
@@ -1650,7 +1791,6 @@
 		form.innerHTML = form.innerHTML
 			.replace('__FIRST__', escAttr(I18N.firstName)).replace('__LAST__', escAttr(I18N.lastName))
 			.replace('__EMAILP__', escAttr(I18N.email)).replace('__PHONE__', escAttr(I18N.phone))
-			.replace('__REASON__', escAttr(I18N.reason))
 			.replace('__CANCEL__', escHtml(I18N.cancel)).replace('__CONFIRM__', escHtml(I18N.confirm));
 		step.appendChild(form);
 		step.appendChild(this.backLink(function () { self.renderChoiceStep(); }));
@@ -1663,16 +1803,9 @@
 				client_type: 'new',
 				pet_is_new: true,
 				vsps_hp: fd.get('vsps_hp') || '',
-				client: {
-					given_name: fd.get('given_name'), family_name: fd.get('family_name'),
-					email: fd.get('email'), phone: fd.get('phone')
-				},
-				patient: {
-					name: fd.get('pet_name'), species: fd.get('species'),
-					breed: fd.get('breed') || '', sex: fd.get('sex') || '',
-					age: fd.get('age') || '', neutered: fd.get('neutered') || ''
-				},
-				notes: fd.get('notes') || ''
+				client: collectOwner(fd),
+				patient: collectPet(fd),
+				notes: formValue(fd, 'notes')
 			});
 		});
 		form.querySelector('[name="given_name"]').focus();

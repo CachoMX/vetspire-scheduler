@@ -161,6 +161,34 @@ class VSPS_Api {
 		return is_wp_error( $data ) ? $data : ( isset( $data['createPatient'] ) ? $data['createPatient'] : null );
 	}
 
+	/** The org's "how did you hear about us" options (id, name). */
+	public function get_referral_sources() {
+		$data = $this->request( '{ clientReferralSources { id name position } }' );
+		if ( is_wp_error( $data ) ) {
+			return $data;
+		}
+		$list = isset( $data['clientReferralSources'] ) && is_array( $data['clientReferralSources'] ) ? $data['clientReferralSources'] : array();
+		usort( $list, function ( $a, $b ) {
+			return (int) ( isset( $a['position'] ) ? $a['position'] : 0 ) - (int) ( isset( $b['position'] ) ? $b['position'] : 0 );
+		} );
+		return $list;
+	}
+
+	/** Weight lives in the patient's vitals, not on the patient record: recorded as its own entry. */
+	public function record_patient_weight( $patient_id, $weight, $unit ) {
+		$data = $this->request(
+			'mutation ($patientId: ID!, $weight: Decimal!, $unit: WeightUnit!) {
+				recordPatientWeight(patientId: $patientId, weight: $weight, weightUnit: $unit) { id }
+			}',
+			array(
+				'patientId' => (string) $patient_id,
+				'weight'    => (string) $weight,
+				'unit'      => $unit,
+			)
+		);
+		return is_wp_error( $data ) ? $data : true;
+	}
+
 	/** Appointments for a location within [start, end) (not used by the plugin itself). */
 	public function get_appointments( $location_id, $start_iso, $end_iso ) {
 		$data = $this->request(

@@ -100,14 +100,7 @@ class VSPS_Booking {
 		if ( $client ) {
 			$existing_client = true;
 		} else {
-			$client = $api->create_client( array(
-				'givenName'         => $args['client']['given_name'],
-				'familyName'        => $args['client']['family_name'],
-				'email'             => $args['client']['email'],
-				'phoneNumbers'      => array( array( 'value' => $args['client']['phone'] ) ),
-				'primaryLocationId' => (string) $args['location_id'],
-				'notes'             => 'Created via website online scheduler.',
-			) );
+			$client = $api->create_client( self::client_input( $args ) );
 			if ( is_wp_error( $client ) ) {
 				return $client;
 			}
@@ -154,14 +147,18 @@ class VSPS_Booking {
 			if ( '' !== $args['patient']['sex'] ) {
 				$patient_input['sex'] = $args['patient']['sex'];
 			}
-			if ( ! empty( $args['patient']['age'] ) ) {
+			if ( isset( $args['patient']['age'] ) && '' !== $args['patient']['age'] ) {
 				$patient_input['birthYear']      = (int) gmdate( 'Y' ) - (int) $args['patient']['age'];
 				$patient_input['isEstimatedAge'] = true;
 			}
 			if ( ! empty( $args['patient']['neutered'] ) ) {
 				$patient_input['neutered'] = 'yes' === $args['patient']['neutered'];
 			}
-			$patient = $api->create_patient( $client['id'], $patient_input );
+			$patient_input = array_merge( $patient_input, self::patient_extras( $args['patient'] ) );
+			if ( isset( $patient_input['birthDate'] ) ) {
+				unset( $patient_input['birthYear'] );
+			}
+			$patient       = $api->create_patient( $client['id'], $patient_input );
 			if ( is_wp_error( $patient ) ) {
 				return $patient;
 			}
@@ -169,6 +166,14 @@ class VSPS_Booking {
 				return new WP_Error( 'vsps_patient', 'Could not create patient in Vetspire.' );
 			}
 			$patient_id = $patient['id'];
+			// Weight is a vitals entry, not a patient field. Best effort: the pet
+			// and appointment matter more than one measurement the clinic retakes.
+			if ( ! empty( $args['patient']['weight'] ) ) {
+				$weighed = $api->record_patient_weight( $patient_id, $args['patient']['weight'], $args['patient']['weight_unit'] );
+				if ( is_wp_error( $weighed ) ) {
+					error_log( '[vetspire-scheduler] could not record weight for patient ' . $patient_id . ': ' . $weighed->get_error_code() );
+				}
+			}
 		}
 
 		// 3. Create the appointment on the selected slot.
@@ -209,6 +214,81 @@ class VSPS_Booking {
 			'type_name'       => isset( $type['name'] ) ? $type['name'] : '',
 			'provider_name'   => isset( $slot['provider']['name'] ) ? $slot['provider']['name'] : '',
 		);
+	}
+
+	/** createClient input: the core fields plus whichever optional ones the visitor filled. */
+	private static function client_input( array $args ) {
+		$c      = $args['client'];
+		$phones = array( array( 'value' => $c['phone'], 'preferred' => true ) );
+		if ( ! empty( $c['phone_alt'] ) ) {
+			$phones[] = array( 'value' => $c['phone_alt'], 'name' => 'Alternate' );
+		}
+		$notes = 'Created via website online scheduler.';
+		if ( ! empty( $c['notes'] ) ) {
+			$notes .= "
+Notes from the client: " . $c['notes'];
+		}
+		$input = array(
+			'givenName'         => $c['given_name'],
+			'familyName'        => $c['family_name'],
+			'email'             => $c['email'],
+			'phoneNumbers'      => $phones,
+			'primaryLocationId' => (string) $args['location_id'],
+			'notes'             => $notes,
+		);
+		$a = isset( $c['address'] ) ? $c['address'] : array();
+		// Only a complete address (an optional one can be half filled in).
+		if ( ! empty( $a['line1'] ) && ! empty( $a['city'] ) && ! empty( $a['state'] ) && ! empty( $a['postal'] ) ) {
+			$input['addresses'] = array( array_filter( array(
+				'line1'      => $a['line1'],
+				'line2'      => $a['line2'],
+				'city'       => $a['city'],
+				'state'      => $a['state'],
+				'postalCode' => $a['postal'],
+				'isPrimary'  => true,
+				'use'        => 'HOME',
+			), function ( $v ) {
+				return '' !== $v;
+			} ) );
+		}
+		$map = array(
+			'email_secondary' => 'secondaryEmail',
+			'referral_id'     => 'clientReferralSourceId',
+			'title'           => 'title',
+			'pronouns'        => 'pronouns',
+			'owner_dob'       => 'dateOfBirth',
+			'business_name'   => 'businessName',
+		);
+		foreach ( $map as $from => $to ) {
+			if ( ! empty( $c[ $from ] ) ) {
+				$input[ $to ] = $c[ $from ];
+			}
+		}
+		return $input;
+	}
+
+	/** createPatient extras beyond name/species/breed/sex/age/neutered. */
+	private static function patient_extras( array $p ) {
+		$out = array();
+		if ( ! empty( $p['mixed'] ) ) {
+			$out['isMixed'] = 'yes' === $p['mixed'];
+		}
+		if ( ! empty( $p['birth_date'] ) ) {
+			// An exact birth date beats the "about N years" estimate from age.
+			$out['birthDate']      = $p['birth_date'];
+			$out['isEstimatedAge'] = false;
+		}
+		$map = array(
+			'color'           => 'color',
+			'microchip'       => 'microchip',
+			'notes'           => 'notes',
+		);
+		foreach ( $map as $from => $to ) {
+			if ( ! empty( $p[ $from ] ) ) {
+				$out[ $to ] = $p[ $from ];
+			}
+		}
+		return $out;
 	}
 
 	/** True when the client's phone(s) on file end with the given 4 digits. */
