@@ -34,7 +34,7 @@
 		cat: 'Cat',
 		other: 'Other',
 		reason: 'Reason for visit',
-		optional: '(optional)',
+		requiredNote: 'Required',
 		address1: 'Street address',
 		address2: 'Apt / Suite',
 		city: 'City',
@@ -188,6 +188,11 @@
 		if (!dialogEl.hasAttribute('tabindex')) { dialogEl.setAttribute('tabindex', '-1'); }
 		var opener = openerOverride || document.activeElement;
 
+		/** First control that isn't the × close button (falls back to × if nothing else). */
+		function firstControl(items) {
+			return items.filter(function (node) { return !/(^|\s)vsps-(modal|drawer)-close(\s|$)/.test(node.className); })[0] || items[0];
+		}
+
 		function focusable() {
 			var items = overlay.querySelectorAll(
 				'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]'
@@ -253,8 +258,7 @@
 		// overlay while it's still open gets pulled back immediately.
 		function onFocusin(e) {
 			if (!closed && !insideAnyOpenOverlay(e.target)) {
-				var items = focusable();
-				(items[0] || dialogEl).focus();
+				(firstControl(focusable()) || dialogEl).focus();
 			}
 		}
 		document.addEventListener('focusin', onFocusin, true);
@@ -273,8 +277,7 @@
 		function onFocusOut() {
 			window.setTimeout(function () {
 				if (!closed && !insideAnyOpenOverlay(document.activeElement)) {
-					var items = focusable();
-					(items[0] || dialogEl).focus();
+					(firstControl(focusable()) || dialogEl).focus();
 				}
 			}, 0);
 		}
@@ -289,9 +292,7 @@
 		window.setTimeout(function () {
 			if (closed) { return; }
 			if (dialogEl.contains(document.activeElement) && document.activeElement !== dialogEl) { return; }
-			var items = focusable();
-			var first = items.filter(function (node) { return !/(^|\s)vsps-(modal|drawer)-close(\s|$)/.test(node.className); })[0];
-			(first || items[0] || dialogEl).focus();
+			(firstControl(focusable()) || dialogEl).focus();
 		}, 0);
 
 		return function restoreFocus() {
@@ -411,6 +412,7 @@
 
 	function Widget(root) {
 		this.root = root;
+		this._createdAt = Date.now();
 		try {
 			this.config = JSON.parse(root.getAttribute('data-vsps-config'));
 		} catch (e) {
@@ -530,6 +532,7 @@
 		if (this.locLine) { return; }
 		var line = el('div', 'vsps-locline');
 		var nameBtn = el('button', 'vsps-locline-name', '');
+		nameBtn.setAttribute('data-vsps-key', 'locline-name');
 		nameBtn.type = 'button';
 		nameBtn.appendChild(el('span', null, '\ud83d\udccd ' + this.locInfo.name));
 		nameBtn.appendChild(el('span', 'vsps-locline-arrow', '\u203a'));
@@ -547,6 +550,7 @@
 		label.appendChild(this.nextAvailableLine('vsps-bar-next', this.barDate));
 		if (this.locInfo) {
 			var nameBtn = el('button', 'vsps-bar-name', '');
+			nameBtn.setAttribute('data-vsps-key', 'bar-name');
 			nameBtn.type = 'button';
 			nameBtn.appendChild(el('span', null, this.locInfo.name));
 			nameBtn.appendChild(el('span', 'vsps-locline-arrow', '\u203a'));
@@ -593,6 +597,7 @@
 		if (query) {
 			var map = document.createElement('iframe');
 			map.className = 'vsps-drawer-map';
+			map.title = (info.name || 'Clinic') + ' map';
 			map.setAttribute('loading', 'lazy');
 			map.setAttribute('referrerpolicy', 'no-referrer-when-downgrade');
 			map.src = 'https://maps.google.com/maps?q=' + encodeURIComponent(query) + '&z=14&output=embed';
@@ -715,6 +720,31 @@
 
 		this.contentEl = el('div', 'vsps-content');
 		this.body.appendChild(this.contentEl);
+		this.takeInitialFocus();
+	};
+
+	/**
+	 * Inside a popup (the full picker) the content arrives after the popup
+	 * opened, so at that moment × was the only thing focusable. Once the real
+	 * controls exist, move focus from × to the first one (the type dropdown,
+	 * else the selected day) — only while the visitor hasn't moved it yet.
+	 */
+	Widget.prototype.takeInitialFocus = function () {
+		if (!this.config._embedded || this._initialFocusDone) { return; }
+		if (Date.now() - this._createdAt > 5000) { this._initialFocusDone = true; return; }
+		var modal = this.root.closest ? this.root.closest('.vsps-modal') : null;
+		var active = document.activeElement;
+		if (!modal || !(active === modal || active === document.body || (modal.contains(active) && /vsps-modal-close/.test(active.className)))) {
+			if (modal && modal.contains(active) && !/vsps-modal-close/.test(active.className)) { this._initialFocusDone = true; }
+			return;
+		}
+		var target = this.body.querySelector('.vsps-type-select') ||
+			this.contentEl.querySelector('.vsps-date-btn.is-active, .vsps-cal-day.is-active, .vsps-date-btn:not([disabled]), .vsps-cal-day:not([disabled])');
+		if (target) {
+			target.focus({ preventScroll: true });
+			revealInStrip(target);
+			this._initialFocusDone = true;
+		}
 	};
 
 	Widget.prototype.currentType = function () {
@@ -770,7 +800,9 @@
 		// switched while a slower fetch is still in flight).
 		var requestId = (this.lastRequestId = (this.lastRequestId || 0) + 1);
 		this.contentEl.innerHTML = '';
-		this.contentEl.appendChild(el('p', 'vsps-loading', I18N.loading));
+		var loadingEl = el('p', 'vsps-loading', I18N.loading);
+		loadingEl.setAttribute('role', 'status');
+		this.contentEl.appendChild(loadingEl);
 		this.state.days = [];
 		this.state.loadingMore = false;
 		this.state.exhausted = false;
@@ -883,7 +915,51 @@
 		this.loadMoreDays().then(function (more) { if (more) { self.fillHorizon(); } });
 	};
 
+	/**
+	 * Re-rendering rebuilds every button, which drops keyboard focus (to the ×
+	 * close button via the popup's safety net, or to <body> on the page).
+	 * Remember which control had focus by its data-vsps-key and put focus
+	 * back on its replacement (WCAG 2.4.3 / 2.4.7). Seen live: tabbing along
+	 * the date strip scrolls it, which pages in more days and re-renders.
+	 */
 	Widget.prototype.renderLayout = function () {
+		var focused = document.activeElement;
+		var hadFocus = !!focused && focused !== document.body && this.contentEl.contains(focused);
+		var focusKey = hadFocus ? focused.getAttribute('data-vsps-key') : null;
+		this.renderLayoutInner();
+		if (hadFocus && focusKey) { this.restoreFocus(focusKey); } else if (!hadFocus) { this.takeInitialFocus(); }
+	};
+
+	Widget.prototype.restoreFocus = function (key) {
+		var root = this.contentEl;
+		var target = key ? root.querySelector('[data-vsps-key="' + key.replace(/"/g, '') + '"]') : null;
+		if (!target || target.disabled) {
+			// "More dates" is disabled while it loads: stay on the last loaded day.
+			var days = root.querySelectorAll('.vsps-date-btn:not(.vsps-date-more):not([disabled])');
+			target = ('more-dates' === key && days.length) ? days[days.length - 1]
+				: root.querySelector('.vsps-date-btn.is-active, .vsps-cal-day.is-active') ||
+				root.querySelector('button:not([disabled]), select, input, a[href]');
+		}
+		if (target) {
+			target.focus({ preventScroll: true });
+			revealInStrip(target);
+		}
+	};
+
+	/** Scrolls the date strip just enough that the focused day is fully visible (WCAG 2.4.11). */
+	function revealInStrip(node) {
+		var strip = node && node.closest ? node.closest('.vsps-dates') : null;
+		if (!strip) { return; }
+		var r = node.getBoundingClientRect();
+		var box = strip.getBoundingClientRect();
+		if (r.left < box.left + 6) {
+			strip.scrollLeft -= (box.left + 8) - r.left;
+		} else if (r.right > box.right - 6) {
+			strip.scrollLeft += r.right - (box.right - 8);
+		}
+	}
+
+	Widget.prototype.renderLayoutInner = function () {
 		this.contentEl.innerHTML = '';
 		if (this.inlineNotice) {
 			this.contentEl.appendChild(el('p', 'vsps-notice', this.inlineNotice));
@@ -1027,6 +1103,10 @@
 		var self = this;
 		var btn = el('button', className || 'vsps-slot-btn', formatTime(slot.time));
 		btn.type = 'button';
+		btn.setAttribute('data-vsps-key', 'slot:' + dayIso + ':' + slot.time + ':' + (slot.providerId || '') + ':' + (className || 'vsps-slot-btn'));
+		// The visible text is just "9:30 AM": say which day too (WCAG 2.4.6 / 4.1.2).
+		btn.setAttribute('aria-label', formatTime(slot.time) + ', ' + formatLongDate(dayIso) +
+			(slot.provider && slot.provider.name ? ', ' + slot.provider.name : ''));
 		if (slot.provider && slot.provider.name) { btn.title = slot.provider.name; }
 		btn.addEventListener('click', function () {
 			self.track('slot_selected', {
@@ -1131,6 +1211,8 @@
 		var next = el('button', 'vsps-dates-arrow vsps-dates-next', '\u203a');
 		prev.type = 'button';
 		next.type = 'button';
+		prev.setAttribute('data-vsps-key', 'dates-prev');
+		next.setAttribute('data-vsps-key', 'dates-next');
 		prev.setAttribute('aria-label', I18N.earlierDates);
 		next.setAttribute('aria-label', I18N.laterDates);
 		function nearEnd() { return datesEl.scrollLeft + datesEl.clientWidth >= datesEl.scrollWidth - 60; }
@@ -1144,12 +1226,19 @@
 			self.datesScroll = datesEl.scrollLeft;
 			if (nearEnd()) { self.loadMoreDays(); }
 		});
+		datesEl.addEventListener('focusin', function (e) {
+			var keyboard = true;
+			try { keyboard = e.target.matches(':focus-visible'); } catch (err) { /* old browsers: keep revealing */ }
+			if (keyboard) { revealInStrip(e.target); }
+		});
 		var total = this.state.days.length;
 		// No type chosen: open counts are unknown, every day stays pickable.
 		var pending = !this.state.typeId;
 		this.state.days.forEach(function (d, idx) {
 			var btn = el('button', 'vsps-date-btn', '');
 			btn.type = 'button';
+			btn.setAttribute('data-vsps-key', 'date:' + d.date);
+			btn.setAttribute('aria-pressed', d.date === self.state.selectedDate ? 'true' : 'false');
 			btn.appendChild(el('span', 'vsps-date-label', formatDateLabel(d.date)));
 			var countText = pending ? ' ' : (d.slots.length ? d.slots.length + ' ' + I18N.open : '—');
 			btn.appendChild(el('span', 'vsps-date-count', countText));
@@ -1168,6 +1257,7 @@
 		if (this.horizonLeft() > 0 && !this.state.exhausted) {
 			var more = el('button', 'vsps-date-btn vsps-date-more', '');
 			more.type = 'button';
+			more.setAttribute('data-vsps-key', 'more-dates');
 			more.appendChild(el('span', 'vsps-date-label', this.state.loadingMore ? '\u2026' : '\u203a'));
 			more.appendChild(el('span', 'vsps-date-count', I18N.moreDates));
 			more.disabled = !!this.state.loadingMore;
@@ -1224,12 +1314,14 @@
 		});
 		var viewAll = el('button', 'vsps-bar-viewall', I18N.viewAll);
 		viewAll.type = 'button';
+		viewAll.setAttribute('data-vsps-key', 'viewall');
 		viewAll.addEventListener('click', function () { self.openFullModal(); });
 		chips.appendChild(viewAll);
 		bar.appendChild(chips);
 
 		var cta = el('button', 'vsps-bar-cta', I18N.bookOnline);
 		cta.type = 'button';
+		cta.setAttribute('data-vsps-key', 'cta');
 		cta.addEventListener('click', function () { self.openFullModal(); });
 		bar.appendChild(cta);
 
@@ -1262,6 +1354,8 @@
 		var next = el('button', 'vsps-cal-arrow', '›');
 		prev.type = 'button';
 		next.type = 'button';
+		prev.setAttribute('data-vsps-key', 'cal-prev');
+		next.setAttribute('data-vsps-key', 'cal-next');
 		prev.disabled = !months[(m === 0 ? (y - 1) + '-11' : y + '-' + (m - 1))];
 		next.disabled = !months[(m === 11 ? (y + 1) + '-0' : y + '-' + (m + 1))];
 		prev.addEventListener('click', function () {
@@ -1290,6 +1384,9 @@
 			var entry = byDate[iso];
 			var cell = el('button', 'vsps-cal-day', String(n));
 			cell.type = 'button';
+			cell.setAttribute('data-vsps-key', 'cal:' + iso);
+			cell.setAttribute('aria-label', formatLongDate(iso));
+			cell.setAttribute('aria-pressed', iso === this.state.selectedDate ? 'true' : 'false');
 			// No type chosen yet: every upcoming day stays pickable.
 			if (!entry || (!entry.slots.length && this.state.typeId)) {
 				cell.disabled = true;
@@ -1342,6 +1439,7 @@
 		firsts.forEach(function (f) {
 			var btn = el('button', 'vsps-float-slot', '');
 			btn.type = 'button';
+			btn.setAttribute('data-vsps-key', 'float:' + f.date + ':' + f.slot.time);
 			btn.appendChild(el('span', 'vsps-float-time', formatTime(f.slot.time).toLowerCase()));
 			btn.appendChild(el('span', 'vsps-float-date', formatShortDate(f.date)));
 			btn.addEventListener('click', function () {
@@ -1364,6 +1462,7 @@
 
 		var more = el('button', 'vsps-float-more', I18N.moreAppointments);
 		more.type = 'button';
+		more.setAttribute('data-vsps-key', 'float-more');
 		more.addEventListener('click', function () { self.openFullModal(); });
 		card.appendChild(more);
 
@@ -1458,6 +1557,7 @@
 		step.appendChild(fresh);
 		// First step: Back returns to the time picker instead of forcing the ×.
 		step.appendChild(this.backLink(function () { self.backToPicker(); }));
+		this.focusStep();
 	};
 
 	Widget.prototype.backLink = function (handler) {
@@ -1472,12 +1572,9 @@
 		var step = this._bk.step;
 		step.innerHTML = '';
 		var form = el('form', 'vsps-form');
-		form.innerHTML = '<input required type="email" name="lookup_email" placeholder="__EMAIL__" autocomplete="email">' +
-			'<p class="vsps-error" style="display:none;"></p>' +
-			'<div class="vsps-actions"><button type="submit" class="vsps-btn-primary">__CONTINUE__</button></div>';
-		form.innerHTML = form.innerHTML
-			.replace('__EMAIL__', escAttr(I18N.emailAtClinic))
-			.replace('__CONTINUE__', escHtml(I18N.continueBtn));
+		form.innerHTML = '<div class="vsps-row">' + fieldInput('lookup_email', I18N.emailAtClinic, 2, 'email', ' autocomplete="email"') + '</div>' +
+			'<p class="vsps-error" role="alert" style="display:none;"></p>' +
+			'<div class="vsps-actions"><button type="submit" class="vsps-btn-primary">' + escHtml(I18N.continueBtn) + '</button></div>';
 		step.appendChild(form);
 		step.appendChild(this.backLink(function () { self.renderChoiceStep(); }));
 		if (this._bk.email) { form.querySelector('[name="lookup_email"]').value = this._bk.email; }
@@ -1536,6 +1633,7 @@
 		list.appendChild(np);
 		step.appendChild(list);
 		step.appendChild(this.backLink(function () { self.renderEmailStep(); }));
+		this.focusStep();
 	};
 
 	/** Back target after the lookup: the pet chips when the account has pets, else the email step. */
@@ -1553,11 +1651,12 @@
 		step.innerHTML = '';
 		step.appendChild(el('p', 'vsps-step-q', I18N.bookingFor + ': \ud83d\udc3e ' + petName));
 		var form = el('form', 'vsps-form');
-		form.innerHTML = this.reasonHtml() +
-			'<p class="vsps-error" style="display:none;"></p>' +
+		form.innerHTML = (this.fieldFlags().reason === 2 ? requiredNote() : '') + this.reasonHtml() +
+			'<p class="vsps-error" role="alert" style="display:none;"></p>' +
 			'<div class="vsps-actions"><button type="submit" class="vsps-btn-primary">' + escHtml(I18N.confirm) + '</button></div>';
 		step.appendChild(form);
 		step.appendChild(this.backLink(function () { self.renderPetChoice(); }));
+		this.focusStep();
 		form.addEventListener('submit', function (e) {
 			e.preventDefault();
 			self.submitBooking(form, {
@@ -1581,59 +1680,77 @@
 		return { breed: pf.breed ? 1 : 0, sex: pf.sex ? 1 : 0, age: pf.age ? 1 : 0, neutered: pf.neutered ? 1 : 0, reason: 1 };
 	};
 
-	/** Label as the visitor sees it: "(optional)" on optional fields, nothing on required ones. */
-	function fieldLabel(text, flag) {
-		return flag === 1 ? text + ' ' + I18N.optional : text;
+	/**
+	 * Every form field gets a VISIBLE label (WCAG 1.3.1 / 3.3.2: a placeholder
+	 * alone disappears while typing and isn't a reliable accessible name).
+	 * The <label> wraps its control, so no ids are needed and several widget
+	 * instances can share a page. Required fields show a red asterisk
+	 * (aria-hidden: screen readers get "required" from the attribute itself).
+	 */
+	function fieldWrap(text, flag, control, extraClass) {
+		return '<label class="vsps-field' + (extraClass ? ' ' + extraClass : '') + '"><span class="vsps-field-label">' + escHtml(text) +
+			(flag === 2 ? '<span class="vsps-req" aria-hidden="true"> *</span>' : '') + '</span>' + control + '</label>';
 	}
 
 	function fieldInput(name, text, flag, type, extra) {
-		var label = escAttr(fieldLabel(text, flag));
-		return '<input name="' + name + '" type="' + (type || 'text') + '" placeholder="' + label + '" aria-label="' + label + '"' +
-			(flag === 2 ? ' required' : '') + (extra || '') + '>';
+		return fieldWrap(text, flag, '<input name="' + name + '" type="' + (type || 'text') + '"' + (flag === 2 ? ' required' : '') + (extra || '') + '>');
 	}
 
-	/** options: [{id, name}]; the first, empty option doubles as the visible label. */
-	function fieldSelect(name, text, flag, options) {
-		var label = escAttr(fieldLabel(text, flag));
-		var html = '<select name="' + name + '" aria-label="' + label + '"' + (flag === 2 ? ' required' : '') + '>' +
-			'<option value="">' + label + '</option>';
+	/** options: [{id, name}]; the first option is an empty "Select…" choice. */
+	function fieldSelect(name, text, flag, options, noBlank) {
+		var html = '<select name="' + name + '"' + (flag === 2 ? ' required' : '') + '>' +
+			(noBlank ? '' : '<option value="">' + escHtml(I18N.selectOne) + '</option>');
 		options.forEach(function (o) {
 			html += '<option value="' + escAttr(o.id) + '">' + escHtml(o.name) + '</option>';
 		});
-		return html + '</select>';
+		return fieldWrap(text, flag, html + '</select>');
 	}
 
-	/** Date inputs show no placeholder, so they get a visible caption. */
 	function fieldDate(name, text, flag) {
-		var label = fieldLabel(text, flag);
 		var today = new Date().toISOString().slice(0, 10);
-		return '<label class="vsps-field-date"><span>' + escHtml(label) + '</span>' +
-			'<input type="date" name="' + name + '" max="' + today + '" aria-label="' + escAttr(label) + '"' + (flag === 2 ? ' required' : '') + '></label>';
+		return fieldInput(name, text, flag, 'date', ' max="' + today + '"');
 	}
 
 	function fieldTextarea(name, text, flag) {
-		var label = escAttr(fieldLabel(text, flag));
-		return '<textarea name="' + name + '" rows="2" placeholder="' + label + '" aria-label="' + label + '"' + (flag === 2 ? ' required' : '') + '></textarea>';
+		return fieldWrap(text, flag, '<textarea name="' + name + '" rows="2"' + (flag === 2 ? ' required' : '') + '></textarea>');
 	}
 
 	/** Two fields per row; anything marked wide (dates, notes) takes a row of its own. */
 	function fieldRows(items) {
 		var html = '';
 		var pair = [];
+		function flush() {
+			if (pair.length) { html += '<div class="vsps-row">' + pair.join('') + '</div>'; pair = []; }
+		}
 		items.forEach(function (item) {
 			if (item.wide) {
-				if (pair.length) { html += '<div class="vsps-row">' + pair.join('') + '</div>'; pair = []; }
-				html += item.html;
+				flush();
+				html += '<div class="vsps-row">' + item.html + '</div>';
 				return;
 			}
 			pair.push(item.html);
-			if (pair.length === 2) { html += '<div class="vsps-row">' + pair.join('') + '</div>'; pair = []; }
+			if (pair.length === 2) { flush(); }
 		});
-		if (pair.length) { html += '<div class="vsps-row">' + pair.join('') + '</div>'; }
+		flush();
 		return html;
 	}
 
+	/** "* Required" legend at the top of any form that has a required field (WCAG 3.3.2). */
+	function requiredNote() {
+		return '<p class="vsps-req-note"><span class="vsps-req" aria-hidden="true">*</span> ' + escHtml(I18N.requiredNote) + '</p>';
+	}
+
 	var YES_NO = function () { return [{ id: 'yes', name: I18N.yes }, { id: 'no', name: I18N.no }]; };
+
+	/** New-client owner core fields (always required). */
+	function ownerCoreHtml() {
+		return fieldRows([
+			{ html: fieldInput('given_name', I18N.firstName, 2, 'text', ' autocomplete="given-name"') },
+			{ html: fieldInput('family_name', I18N.lastName, 2, 'text', ' autocomplete="family-name"') },
+			{ html: fieldInput('email', I18N.email, 2, 'email', ' autocomplete="email"') },
+			{ html: fieldInput('phone', I18N.phone, 2, 'tel', ' autocomplete="tel"') }
+		]);
+	}
 
 	/** New-client owner fields beyond name / email / phone. */
 	Widget.prototype.ownerExtrasHtml = function () {
@@ -1641,7 +1758,7 @@
 		var choices = CFG.choices || {};
 		var items = [];
 		if (f.address) {
-			items.push({ wide: true, html: '<div class="vsps-row">' + fieldInput('address_line1', I18N.address1, f.address, 'text', ' autocomplete="address-line1"') + '</div>' });
+			items.push({ wide: true, html: fieldInput('address_line1', I18N.address1, f.address, 'text', ' autocomplete="address-line1"') });
 			items.push({ html: fieldInput('address_line2', I18N.address2, 1, 'text', ' autocomplete="address-line2"') });
 			items.push({ html: fieldInput('address_city', I18N.city, f.address, 'text', ' autocomplete="address-level2"') });
 			items.push({ html: fieldInput('address_state', I18N.state, f.address, 'text', ' autocomplete="address-level1"') });
@@ -1650,14 +1767,14 @@
 		if (f.phone_alt) { items.push({ html: fieldInput('phone_alt', I18N.phoneAlt, f.phone_alt, 'tel') }); }
 		if (f.email_secondary) { items.push({ html: fieldInput('email_secondary', I18N.emailSecondary, f.email_secondary, 'email') }); }
 		if (f.referral && choices.referral && choices.referral.length) {
-			items.push({ wide: true, html: '<div class="vsps-row">' + fieldSelect('referral_id', I18N.referral, f.referral, choices.referral) + '</div>' });
+			items.push({ wide: true, html: fieldSelect('referral_id', I18N.referral, f.referral, choices.referral) });
 		}
 		if (f.title) {
 			items.push({ html: fieldSelect('title', I18N.title, f.title, (choices.titles || []).map(function (t) { return { id: t, name: t }; })) });
 		}
 		if (f.pronouns) { items.push({ html: fieldSelect('pronouns', I18N.pronouns, f.pronouns, choices.pronouns || []) }); }
 		if (f.business_name) { items.push({ html: fieldInput('business_name', I18N.businessName, f.business_name) }); }
-		if (f.owner_dob) { items.push({ wide: true, html: fieldDate('owner_dob', I18N.ownerDob, f.owner_dob) }); }
+		if (f.owner_dob) { items.push({ html: fieldDate('owner_dob', I18N.ownerDob, f.owner_dob) }); }
 		if (f.client_notes) { items.push({ wide: true, html: fieldTextarea('client_notes', I18N.clientNotes, f.client_notes) }); }
 		return fieldRows(items);
 	};
@@ -1665,33 +1782,41 @@
 	/** Pet name + species (always) and the optional pet questions. */
 	Widget.prototype.petFieldsHtml = function () {
 		var f = this.fieldFlags();
-		// aria-label (not a wrapped/`for`-linked <label>) so this still works
-		// when the placeholder is the only visual cue and multiple widget
-		// instances on one page can't share a single id.
-		var html = '<div class="vsps-row"><input required name="pet_name" placeholder="' + escAttr(I18N.petName) + '" aria-label="' + escAttr(I18N.petName) + '">' +
-			'<select name="species" aria-label="' + escAttr(I18N.species) + '"><option value="Canine">' + escHtml(I18N.dog) + '</option>' +
-			'<option value="Feline">' + escHtml(I18N.cat) + '</option><option value="Other">' + escHtml(I18N.other) + '</option></select></div>';
-		var items = [];
+		var items = [
+			{ html: fieldInput('pet_name', I18N.petName, 2) },
+			{ html: fieldSelect('species', I18N.species, 2, [{ id: 'Canine', name: I18N.dog }, { id: 'Feline', name: I18N.cat }, { id: 'Other', name: I18N.other }], true) }
+		];
 		if (f.breed) { items.push({ html: fieldInput('breed', I18N.breed, f.breed) }); }
 		if (f.mixed) { items.push({ html: fieldSelect('mixed', I18N.mixed, f.mixed, YES_NO()) }); }
 		if (f.sex) { items.push({ html: fieldSelect('sex', I18N.sexLabel, f.sex, [{ id: 'MALE', name: I18N.male }, { id: 'FEMALE', name: I18N.female }]) }); }
 		if (f.neutered) { items.push({ html: fieldSelect('neutered', I18N.neuteredQ, f.neutered, YES_NO()) }); }
 		if (f.age) { items.push({ html: fieldInput('age', I18N.ageYears, f.age, 'number', ' min="0" max="40"') }); }
 		if (f.weight) {
-			items.push({ html: '<span class="vsps-weight">' + fieldInput('weight', I18N.weight, f.weight, 'number', ' min="0.1" max="2000" step="0.1"') +
-				'<select name="weight_unit" aria-label="' + escAttr(I18N.weight) + '"><option value="LB">lb</option><option value="KG">kg</option></select></span>' });
+			items.push({ html: fieldWrap(I18N.weight, f.weight, '<span class="vsps-weight"><input name="weight" type="number" min="0.1" max="2000" step="0.1"' +
+				(f.weight === 2 ? ' required' : '') + '><select name="weight_unit" aria-label="' + escAttr(I18N.weight) + ' unit"><option value="LB">lb</option><option value="KG">kg</option></select></span>') });
 		}
 		if (f.color) { items.push({ html: fieldInput('color', I18N.color, f.color) }); }
 		if (f.microchip) { items.push({ html: fieldInput('microchip', I18N.microchip, f.microchip, 'text', ' inputmode="numeric"') }); }
-		if (f.birth_date) { items.push({ wide: true, html: fieldDate('birth_date', I18N.birthDate, f.birth_date) }); }
+		if (f.birth_date) { items.push({ html: fieldDate('birth_date', I18N.birthDate, f.birth_date) }); }
 		if (f.pet_notes) { items.push({ wide: true, html: fieldTextarea('pet_notes', I18N.petNotes, f.pet_notes) }); }
-		return html + fieldRows(items);
+		return fieldRows(items);
 	};
 
 	/** Reason for visit: always shown; required when the clinic says so. */
 	Widget.prototype.reasonHtml = function () {
 		var flag = this.fieldFlags().reason;
-		return fieldTextarea('notes', I18N.reason, flag === 2 ? 2 : 1);
+		return '<div class="vsps-row">' + fieldTextarea('notes', I18N.reason, flag === 2 ? 2 : 1) + '</div>';
+	};
+
+	/** Focus the first control of the current booking step (WCAG 2.4.3: where the visitor starts, never ×). */
+	Widget.prototype.focusStep = function () {
+		var step = this._bk && this._bk.step;
+		if (!step) { return; }
+		var first = Array.prototype.filter.call(
+			step.querySelectorAll('input, select, textarea, button'),
+			function (n) { return !n.disabled && '-1' !== n.getAttribute('tabindex') && 'hidden' !== n.type && (n.offsetWidth || n.offsetHeight); }
+		)[0];
+		if (first) { first.focus(); }
 	};
 
 	function formValue(fd, name) {
@@ -1736,11 +1861,10 @@
 		step.innerHTML = '';
 		step.appendChild(el('p', 'vsps-step-q', I18N.addingPetTo + ' ' + this._bk.email));
 		var form = el('form', 'vsps-form');
-		form.innerHTML = this.petFieldsHtml() +
-			'<div class="vsps-row"><input required name="phone_last4" inputmode="numeric" pattern="[0-9]{4}" maxlength="4" placeholder="' +
-			escAttr(I18N.last4Label) + '" aria-label="' + escAttr(I18N.last4Label) + '"></div>' +
+		form.innerHTML = requiredNote() + this.petFieldsHtml() +
+			'<div class="vsps-row">' + fieldInput('phone_last4', I18N.last4Label, 2, 'text', ' inputmode="numeric" pattern="[0-9]{4}" maxlength="4" autocomplete="off"') + '</div>' +
 			this.reasonHtml() +
-			'<p class="vsps-error" style="display:none;"></p>' +
+			'<p class="vsps-error" role="alert" style="display:none;"></p>' +
 			'<div class="vsps-actions"><button type="submit" class="vsps-btn-primary">' + escHtml(I18N.confirm) + '</button></div>';
 		step.appendChild(form);
 		var fallback = el('button', 'vsps-back', I18N.cantVerify);
@@ -1775,22 +1899,16 @@
 			step.appendChild(el('p', 'vsps-message', notice));
 		}
 		var form = el('form', 'vsps-form');
-		form.innerHTML =
-			'<div class="vsps-row"><input required name="given_name" placeholder="__FIRST__" autocomplete="given-name">' +
-			'<input required name="family_name" placeholder="__LAST__" autocomplete="family-name"></div>' +
-			'<div class="vsps-row"><input required type="email" name="email" placeholder="__EMAILP__" autocomplete="email">' +
-			'<input required type="tel" name="phone" placeholder="__PHONE__" autocomplete="tel"></div>' +
+		form.innerHTML = requiredNote() + ownerCoreHtml() +
 			this.ownerExtrasHtml() +
 			this.petFieldsHtml() +
 			this.reasonHtml() +
 			'<input type="text" name="vsps_hp" tabindex="-1" autocomplete="nope-937" aria-hidden="true" style="position:absolute;left:-9999px;">' +
-			'<p class="vsps-error" style="display:none;"></p>' +
+			'<p class="vsps-error" role="alert" style="display:none;"></p>' +
 			'<div class="vsps-actions">' +
 			'<button type="button" class="vsps-btn-secondary">__CANCEL__</button>' +
 			'<button type="submit" class="vsps-btn-primary">__CONFIRM__</button></div>';
 		form.innerHTML = form.innerHTML
-			.replace('__FIRST__', escAttr(I18N.firstName)).replace('__LAST__', escAttr(I18N.lastName))
-			.replace('__EMAILP__', escAttr(I18N.email)).replace('__PHONE__', escAttr(I18N.phone))
 			.replace('__CANCEL__', escHtml(I18N.cancel)).replace('__CONFIRM__', escHtml(I18N.confirm));
 		step.appendChild(form);
 		step.appendChild(this.backLink(function () { self.renderChoiceStep(); }));
@@ -1862,13 +1980,17 @@
 				booked_at: data.booked_at
 			});
 			bk.modal.innerHTML = '';
-			bk.modal.appendChild(el('h4', 'vsps-modal-title', I18N.booked));
-			bk.modal.appendChild(el('p', 'vsps-modal-sub', bk.type.name + ' \u2014 ' + formatDateLabel(bk.date) + ' ' + I18N.at + ' ' + formatTime(bk.slot.time)));
-			bk.modal.appendChild(el('p', 'vsps-message', I18N.confirmationTo));
+			var done = el('div', 'vsps-booked');
+			done.setAttribute('role', 'status');
+			bk.modal.appendChild(done);
+			done.appendChild(el('h4', 'vsps-modal-title', I18N.booked));
+			done.appendChild(el('p', 'vsps-modal-sub', bk.type.name + ' \u2014 ' + formatDateLabel(bk.date) + ' ' + I18N.at + ' ' + formatTime(bk.slot.time)));
+			done.appendChild(el('p', 'vsps-message', I18N.confirmationTo));
 			var closeBtn = el('button', 'vsps-btn-primary', I18N.close);
 			closeBtn.type = 'button';
 			closeBtn.addEventListener('click', bk.close);
 			bk.modal.appendChild(closeBtn);
+			closeBtn.focus();
 			self.loadAvailability();
 		}).catch(function (err) {
 			if (reqToken !== bk.reqToken) { return; }
@@ -1884,6 +2006,9 @@
 			var message  = slotGone ? I18N.slotGoneMessage : ( err.message || I18N.bookingFailed );
 			errorEl.textContent = message;
 			errorEl.style.display = 'block';
+			errorEl.removeAttribute('role');
+			errorEl.setAttribute('tabindex', '-1');
+			errorEl.focus();
 			bk.step.querySelectorAll('.vsps-back').forEach(function (b) { b.disabled = false; b.style.opacity = ''; });
 			if (slotGone) {
 				// Retrying the same time can never succeed, so the primary action

@@ -131,7 +131,10 @@
 	display: flex;
 	gap: 8px;
 	overflow-x: auto;
-	padding: 2px 0;
+	/* Room for the 3px focus outline + 2px offset: a scrolling box clips
+	   anything drawn outside it, so a tight padding cut the ring in half. */
+	padding: 6px;
+	scroll-padding-inline: 8px;
 	-webkit-overflow-scrolling: touch;
 	scrollbar-width: none;
 }
@@ -321,17 +324,37 @@
 	resize: vertical;
 }
 
-/* Date fields show no placeholder, so they carry a small caption. */
-.vsps-overlay .vsps-form .vsps-field-date {
-	display: block;
-	margin-bottom: 10px;
+/* Every field has a visible label above it (WCAG 1.3.1 / 3.3.2); required
+   ones carry a red asterisk, explained by the "* Required" note. */
+.vsps-overlay .vsps-form .vsps-field {
+	display: flex;
+	flex-direction: column;
+	flex: 1 1 0;
+	min-width: 0;
+	margin: 0;
 }
 
-.vsps-overlay .vsps-form .vsps-field-date span {
+.vsps-overlay .vsps-form .vsps-field-label {
 	display: block;
 	font-size: 0.85em;
-	color: #555;
+	font-weight: 600;
+	color: #333;
 	margin-bottom: 4px;
+}
+
+.vsps-overlay .vsps-req {
+	color: #b3261e;
+	font-weight: 700;
+}
+
+.vsps-overlay .vsps-req-note {
+	font-size: 0.85em;
+	color: #444;
+	margin: 0 0 10px;
+}
+
+.vsps-overlay .vsps-form .vsps-field textarea {
+	margin-bottom: 0;
 }
 
 /* Weight: number + lb/kg side by side, together taking one half of a row. */
@@ -392,6 +415,10 @@
 @media (max-width: 480px) {
 	.vsps-overlay .vsps-form .vsps-row {
 		flex-direction: column;
+	}
+
+	.vsps-overlay .vsps-form .vsps-field {
+		flex: 1 1 auto;
 	}
 }
 
@@ -701,9 +728,11 @@
 	border: none;
 	font-size: 24px;
 	line-height: 1;
-	color: #666;
+	color: #555;
 	cursor: pointer;
 	padding: 4px 8px;
+	min-width: 32px;
+	min-height: 32px;
 }
 
 .vsps-overlay .vsps-widget.vsps-embedded {
@@ -1016,12 +1045,15 @@
 .vsps-overlay .vsps-back {
 	background: none;
 	border: none;
-	color: #666;
+	color: #555;
 	text-decoration: underline;
 	cursor: pointer;
 	font: inherit;
 	font-size: 0.9em;
 	padding: 6px 0 0;
+	/* WCAG 2.5.8: at least 24×24 px to tap. */
+	min-height: 24px;
+	min-width: 24px;
 }
 
 .vsps-overlay .vsps-pet-list {
