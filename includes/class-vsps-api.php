@@ -1,6 +1,6 @@
 <?php
 /**
- * Server-side GraphQL client for the Vetspire API.
+ * Vetspire adapter: server-side GraphQL client for the Vetspire API.
  * The API token is admin-level: it must NEVER reach the browser.
  */
 
@@ -8,7 +8,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-class VSPS_Api {
+class VSPS_Api implements VSPS_Pims {
 
 	private $token;
 	private $endpoint;
@@ -17,6 +17,162 @@ class VSPS_Api {
 		$this->token    = $token;
 		$this->endpoint = $endpoint;
 	}
+
+	public function platform() {
+		return 'vetspire';
+	}
+
+	public function connection() {
+		$data = $this->get_org_and_locations();
+		if ( is_wp_error( $data ) ) {
+			return $data;
+		}
+		return array(
+			'org'       => isset( $data['org']['name'] ) ? (string) $data['org']['name'] : '',
+			'locations' => isset( $data['locations'] ) && is_array( $data['locations'] ) ? $data['locations'] : array(),
+		);
+	}
+
+	/* ---------- booking (VSPS_Pims) ---------- */
+
+	public function create_booking_client( array $args ) {
+		return $this->create_client( self::client_input( $args ) );
+	}
+
+	public function create_booking_patient( array $client, array $args ) {
+		$p     = $args['patient'];
+		$input = array(
+			'name'    => $p['name'],
+			'species' => $p['species'],
+		);
+		if ( '' !== $p['breed'] ) {
+			$input['breed'] = $p['breed'];
+		}
+		if ( '' !== $p['sex'] ) {
+			$input['sex'] = $p['sex'];
+		}
+		if ( isset( $p['age'] ) && '' !== $p['age'] ) {
+			$input['birthYear']      = (int) gmdate( 'Y' ) - (int) $p['age'];
+			$input['isEstimatedAge'] = true;
+		}
+		if ( ! empty( $p['neutered'] ) ) {
+			$input['neutered'] = 'yes' === $p['neutered'];
+		}
+		$input = array_merge( $input, self::patient_extras( $p ) );
+		if ( isset( $input['birthDate'] ) ) {
+			unset( $input['birthYear'] );
+		}
+		$patient = $this->create_patient( $client['id'], $input );
+		if ( is_wp_error( $patient ) || empty( $patient['id'] ) ) {
+			return $patient;
+		}
+		// Weight is a vitals entry, not a patient field. Best effort: the pet
+		// and appointment matter more than one measurement the clinic retakes.
+		if ( ! empty( $p['weight'] ) ) {
+			$weighed = $this->record_patient_weight( $patient['id'], $p['weight'], $p['weight_unit'] );
+			if ( is_wp_error( $weighed ) ) {
+				error_log( '[vetspire-scheduler] could not record weight for patient ' . $patient['id'] . ': ' . $weighed->get_error_code() );
+			}
+		}
+		return $patient;
+	}
+
+	public function create_booking_appointment( array $booking ) {
+		$input = array(
+			'locationId'        => (string) $booking['location_id'],
+			'appointmentTypeId' => (string) $booking['appointment_type_id'],
+			'patientId'         => (string) $booking['patient_id'],
+			'start'             => $booking['start'],
+			'duration'          => (int) $booking['duration'],
+			'bookedOnline'      => true,
+			'sendConfirmation'  => true,
+			'reason'            => $booking['reason'],
+		);
+		if ( '' !== (string) $booking['provider_id'] ) {
+			$input['providerId'] = (string) $booking['provider_id'];
+		}
+		if ( '' !== (string) $booking['schedule_id'] ) {
+			$input['scheduleId'] = (string) $booking['schedule_id'];
+		}
+		return $this->create_appointment( $input );
+	}
+
+	/** createClient input: the core fields plus whichever optional ones the visitor filled. */
+	private static function client_input( array $args ) {
+		$c      = $args['client'];
+		$phones = array( array( 'value' => $c['phone'], 'preferred' => true ) );
+		if ( ! empty( $c['phone_alt'] ) ) {
+			$phones[] = array( 'value' => $c['phone_alt'], 'name' => 'Alternate' );
+		}
+		$notes = 'Created via website online scheduler.';
+		if ( ! empty( $c['notes'] ) ) {
+			$notes .= "
+Notes from the client: " . $c['notes'];
+		}
+		$input = array(
+			'givenName'         => $c['given_name'],
+			'familyName'        => $c['family_name'],
+			'email'             => $c['email'],
+			'phoneNumbers'      => $phones,
+			'primaryLocationId' => (string) $args['location_id'],
+			'notes'             => $notes,
+		);
+		$a = isset( $c['address'] ) ? $c['address'] : array();
+		// Only a complete address (an optional one can be half filled in).
+		if ( ! empty( $a['line1'] ) && ! empty( $a['city'] ) && ! empty( $a['state'] ) && ! empty( $a['postal'] ) ) {
+			$input['addresses'] = array( array_filter( array(
+				'line1'      => $a['line1'],
+				'line2'      => $a['line2'],
+				'city'       => $a['city'],
+				'state'      => $a['state'],
+				'postalCode' => $a['postal'],
+				'isPrimary'  => true,
+				'use'        => 'HOME',
+			), function ( $v ) {
+				return '' !== $v;
+			} ) );
+		}
+		$map = array(
+			'email_secondary' => 'secondaryEmail',
+			'referral_id'     => 'clientReferralSourceId',
+			'title'           => 'title',
+			'pronouns'        => 'pronouns',
+			'owner_dob'       => 'dateOfBirth',
+			'business_name'   => 'businessName',
+		);
+		foreach ( $map as $from => $to ) {
+			if ( ! empty( $c[ $from ] ) ) {
+				$input[ $to ] = $c[ $from ];
+			}
+		}
+		return $input;
+	}
+
+	/** createPatient extras beyond name/species/breed/sex/age/neutered. */
+	private static function patient_extras( array $p ) {
+		$out = array();
+		if ( ! empty( $p['mixed'] ) ) {
+			$out['isMixed'] = 'yes' === $p['mixed'];
+		}
+		if ( ! empty( $p['birth_date'] ) ) {
+			// An exact birth date beats the "about N years" estimate from age.
+			$out['birthDate']      = $p['birth_date'];
+			$out['isEstimatedAge'] = false;
+		}
+		$map = array(
+			'color'     => 'color',
+			'microchip' => 'microchip',
+			'notes'     => 'notes',
+		);
+		foreach ( $map as $from => $to ) {
+			if ( ! empty( $p[ $from ] ) ) {
+				$out[ $to ] = $p[ $from ];
+			}
+		}
+		return $out;
+	}
+
+	/* ---------- raw Vetspire calls ---------- */
 
 	/**
 	 * Executes a GraphQL request.
@@ -68,7 +224,7 @@ class VSPS_Api {
 		return is_wp_error( $data ) ? $data : ( isset( $data['location'] ) ? $data['location'] : null );
 	}
 
-	/** Public clinic profile for the location drawer (address, phone, hours…). */
+	/** Public clinic profile for the location drawer (address, phone, hours…). Already the normalized shape. */
 	public function get_location_info( $location_id ) {
 		$data = $this->request(
 			'query ($id: ID!) {

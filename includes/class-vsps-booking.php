@@ -1,7 +1,8 @@
 <?php
 /**
- * Booking orchestration: dedupe client by email, create client/patient
- * when needed, then create the appointment in Vetspire.
+ * Booking orchestration, the same for every platform (VSPS_Pims): validate the
+ * type and slot against live data, reuse or create the client and the pet,
+ * then create the appointment (a request on request-based platforms).
  */
 
 if ( ! defined( 'ABSPATH' ) ) {
@@ -10,19 +11,19 @@ if ( ! defined( 'ABSPATH' ) ) {
 
 class VSPS_Booking {
 
-	// Every widget booking is tagged with this in the Vetspire appointment reason (not configurable).
+	// Every widget booking is tagged with this in the appointment reason (not configurable).
 	const SOURCE_LABEL = 'Vetcelerator';
 
 	/**
 	 * Books an appointment. $args is already-sanitized data:
 	 *  location_id, appointment_type_id, date (Y-m-d), time (HH:MM),
-	 *  provider_id, schedule_id, duration,
-	 *  client { given_name, family_name, email, phone },
-	 *  patient { name, species, breed, sex }, notes.
+	 *  provider_id, schedule_id,
+	 *  client { given_name, family_name, email, phone, ... },
+	 *  patient { name, species, breed, sex, ... }, notes.
 	 *
-	 * @return array|WP_Error { appointment_id, start, client_id, patient_id, existing_client }
+	 * @return array|WP_Error { appointment_id, start, client_id, patient_id, existing_client, request, ... }
 	 */
-	public static function book( VSPS_Api $api, $args ) {
+	public static function book( VSPS_Pims $api, $args ) {
 		$location = $api->get_location( $args['location_id'] );
 		if ( is_wp_error( $location ) ) {
 			return $location;
@@ -62,8 +63,8 @@ class VSPS_Booking {
 			}
 			$slot = self::match_slot( $slots, $args['time'], $args['provider_id'] );
 			if ( null === $slot ) {
-				// Vetspire occasionally answers availableTimes with a partial list
-				// (seen live: a free slot rejected, then booked fine seconds later).
+				// The PIMS occasionally answers with a partial list (seen live on
+				// Vetspire: a free slot rejected, then booked fine seconds later).
 				// One short retry before telling the visitor the time is gone.
 				usleep( 400000 );
 				$again = $api->get_available_times( $args['location_id'], $args['appointment_type_id'], $args['date'] );
@@ -86,7 +87,7 @@ class VSPS_Booking {
 			return $start;
 		}
 
-		// 1. Reuse existing client when the email already exists in Vetspire.
+		// 1. Reuse the existing client when the email is already on file.
 		$client          = $api->find_client_by_email( $args['client']['email'] );
 		$existing_client = false;
 		if ( is_wp_error( $client ) ) {
@@ -100,21 +101,24 @@ class VSPS_Booking {
 		if ( $client ) {
 			$existing_client = true;
 		} else {
-			$client = $api->create_client( self::client_input( $args ) );
+			$client = $api->create_booking_client( $args );
 			if ( is_wp_error( $client ) ) {
 				return $client;
 			}
 			if ( empty( $client['id'] ) ) {
-				return new WP_Error( 'vsps_client', 'Could not create client in Vetspire.' );
+				return new WP_Error( 'vsps_client', 'Could not create the client in the practice system.' );
 			}
 		}
 
 		// 2. Reuse the client's patient when the name matches, otherwise create it.
-		// Keep Vetspire's own casing/spelling for the log (visitor might type "fluffy"
-		// for a pet Vetspire has on file as "Fluffy") so a later sync never mistakes
-		// that difference for a real edit made in Vetspire.
+		// Keep the PIMS's own casing/spelling for the log (visitor might type "fluffy"
+		// for a pet on file as "Fluffy") so a later sync never mistakes that
+		// difference for a real edit made in the PIMS.
 		$matched_patient = self::match_patient( $client, $args['patient']['name'] );
 		$patient_id      = $matched_patient ? $matched_patient['id'] : null;
+		// A platform can keep one email on several owner records (Nectar): the
+		// appointment then belongs to the owner the matched pet is on.
+		$client_id = $matched_patient && ! empty( $matched_patient['clientId'] ) ? $matched_patient['clientId'] : $client['id'];
 		if ( null === $patient_id && $existing_client ) {
 			// The security decision keys off what the SERVER found ($existing_client),
 			// never off the client-supplied client_type — otherwise the "new client"
@@ -123,12 +127,12 @@ class VSPS_Booking {
 				return new WP_Error( 'vsps_pet_missing', 'We could not find that pet on your account. Please pick again or add it as a new pet.' );
 			}
 			// Creating a pet on an account that already exists requires proving
-			// ownership of the phone Vetspire has on file: the explicit last-4
-			// field (returning flow) or the last 4 of the full phone typed on the
-			// new-client form. FAIL CLOSED: if the digits don't match — including
-			// when the account has NO phone on file to verify against — we refuse
-			// and tell them to call the clinic, so a stranger who only knows the
-			// email can never inject a pet into someone's record.
+			// ownership of the phone on file: the explicit last-4 field (returning
+			// flow) or the last 4 of the full phone typed on the new-client form.
+			// FAIL CLOSED: if the digits don't match — including when the account
+			// has NO phone on file to verify against — we refuse and tell them to
+			// call the clinic, so a stranger who only knows the email can never
+			// inject a pet into someone's record.
 			$claim = isset( $args['phone_last4'] ) && '' !== $args['phone_last4']
 				? $args['phone_last4']
 				: substr( preg_replace( '/\D/', '', $args['client']['phone'] ), -4 );
@@ -137,158 +141,49 @@ class VSPS_Booking {
 			}
 		}
 		if ( null === $patient_id ) {
-			$patient_input = array(
-				'name'    => $args['patient']['name'],
-				'species' => $args['patient']['species'],
-			);
-			if ( '' !== $args['patient']['breed'] ) {
-				$patient_input['breed'] = $args['patient']['breed'];
-			}
-			if ( '' !== $args['patient']['sex'] ) {
-				$patient_input['sex'] = $args['patient']['sex'];
-			}
-			if ( isset( $args['patient']['age'] ) && '' !== $args['patient']['age'] ) {
-				$patient_input['birthYear']      = (int) gmdate( 'Y' ) - (int) $args['patient']['age'];
-				$patient_input['isEstimatedAge'] = true;
-			}
-			if ( ! empty( $args['patient']['neutered'] ) ) {
-				$patient_input['neutered'] = 'yes' === $args['patient']['neutered'];
-			}
-			$patient_input = array_merge( $patient_input, self::patient_extras( $args['patient'] ) );
-			if ( isset( $patient_input['birthDate'] ) ) {
-				unset( $patient_input['birthYear'] );
-			}
-			$patient       = $api->create_patient( $client['id'], $patient_input );
+			$patient = $api->create_booking_patient( $client, $args );
 			if ( is_wp_error( $patient ) ) {
 				return $patient;
 			}
 			if ( empty( $patient['id'] ) ) {
-				return new WP_Error( 'vsps_patient', 'Could not create patient in Vetspire.' );
+				return new WP_Error( 'vsps_patient', 'Could not create the patient in the practice system.' );
 			}
 			$patient_id = $patient['id'];
-			// Weight is a vitals entry, not a patient field. Best effort: the pet
-			// and appointment matter more than one measurement the clinic retakes.
-			if ( ! empty( $args['patient']['weight'] ) ) {
-				$weighed = $api->record_patient_weight( $patient_id, $args['patient']['weight'], $args['patient']['weight_unit'] );
-				if ( is_wp_error( $weighed ) ) {
-					error_log( '[vetspire-scheduler] could not record weight for patient ' . $patient_id . ': ' . $weighed->get_error_code() );
-				}
-			}
 		}
 
 		// 3. Create the appointment on the selected slot.
-		$input = array(
-			'locationId'        => (string) $args['location_id'],
-			'appointmentTypeId' => (string) $args['appointment_type_id'],
-			'patientId'         => (string) $patient_id,
-			'start'             => $start,
-			'duration'          => $duration,
-			'bookedOnline'      => true,
-			'sendConfirmation'  => true,
-			'reason'            => self::SOURCE_LABEL . ' booking' . ( '' !== $args['notes'] ? ': ' . $args['notes'] : '' ),
-		);
-		if ( '' !== $provider_id ) {
-			$input['providerId'] = $provider_id;
-		}
-		if ( '' !== $schedule_id ) {
-			$input['scheduleId'] = $schedule_id;
-		}
-
-		$appointment = $api->create_appointment( $input );
+		$appointment = $api->create_booking_appointment( array(
+			'location_id'         => (string) $args['location_id'],
+			'appointment_type_id' => (string) $args['appointment_type_id'],
+			'client_id'           => (string) $client_id,
+			'patient_id'          => (string) $patient_id,
+			'start'               => $start,
+			'duration'            => $duration,
+			'provider_id'         => $provider_id,
+			'schedule_id'         => $schedule_id,
+			'reason'              => self::SOURCE_LABEL . ' booking' . ( '' !== $args['notes'] ? ': ' . $args['notes'] : '' ),
+		) );
 		if ( is_wp_error( $appointment ) ) {
 			return $appointment;
 		}
 		if ( empty( $appointment['id'] ) ) {
-			return new WP_Error( 'vsps_appointment', 'Could not create appointment in Vetspire.' );
+			return new WP_Error( 'vsps_appointment', 'Could not create the appointment in the practice system.' );
 		}
 
 		return array(
 			'appointment_id'  => $appointment['id'],
 			'start'           => $appointment['start'],
-			'client_id'       => $client['id'],
+			'client_id'       => $client_id,
 			'patient_id'      => $patient_id,
-			// Vetspire's own name when an existing pet was matched; the visitor's
+			// The PIMS's own name when an existing pet was matched; the visitor's
 			// typed name is only canonical for a brand-new patient we just created.
 			'patient_name'    => $matched_patient ? $matched_patient['name'] : $args['patient']['name'],
 			'existing_client' => $existing_client,
 			'type_name'       => isset( $type['name'] ) ? $type['name'] : '',
 			'provider_name'   => isset( $slot['provider']['name'] ) ? $slot['provider']['name'] : '',
+			// true = the clinic still has to confirm it (request-based platforms).
+			'request'         => 'request' === VSPS_Pims_Registry::booking_mode( $api->platform() ),
 		);
-	}
-
-	/** createClient input: the core fields plus whichever optional ones the visitor filled. */
-	private static function client_input( array $args ) {
-		$c      = $args['client'];
-		$phones = array( array( 'value' => $c['phone'], 'preferred' => true ) );
-		if ( ! empty( $c['phone_alt'] ) ) {
-			$phones[] = array( 'value' => $c['phone_alt'], 'name' => 'Alternate' );
-		}
-		$notes = 'Created via website online scheduler.';
-		if ( ! empty( $c['notes'] ) ) {
-			$notes .= "
-Notes from the client: " . $c['notes'];
-		}
-		$input = array(
-			'givenName'         => $c['given_name'],
-			'familyName'        => $c['family_name'],
-			'email'             => $c['email'],
-			'phoneNumbers'      => $phones,
-			'primaryLocationId' => (string) $args['location_id'],
-			'notes'             => $notes,
-		);
-		$a = isset( $c['address'] ) ? $c['address'] : array();
-		// Only a complete address (an optional one can be half filled in).
-		if ( ! empty( $a['line1'] ) && ! empty( $a['city'] ) && ! empty( $a['state'] ) && ! empty( $a['postal'] ) ) {
-			$input['addresses'] = array( array_filter( array(
-				'line1'      => $a['line1'],
-				'line2'      => $a['line2'],
-				'city'       => $a['city'],
-				'state'      => $a['state'],
-				'postalCode' => $a['postal'],
-				'isPrimary'  => true,
-				'use'        => 'HOME',
-			), function ( $v ) {
-				return '' !== $v;
-			} ) );
-		}
-		$map = array(
-			'email_secondary' => 'secondaryEmail',
-			'referral_id'     => 'clientReferralSourceId',
-			'title'           => 'title',
-			'pronouns'        => 'pronouns',
-			'owner_dob'       => 'dateOfBirth',
-			'business_name'   => 'businessName',
-		);
-		foreach ( $map as $from => $to ) {
-			if ( ! empty( $c[ $from ] ) ) {
-				$input[ $to ] = $c[ $from ];
-			}
-		}
-		return $input;
-	}
-
-	/** createPatient extras beyond name/species/breed/sex/age/neutered. */
-	private static function patient_extras( array $p ) {
-		$out = array();
-		if ( ! empty( $p['mixed'] ) ) {
-			$out['isMixed'] = 'yes' === $p['mixed'];
-		}
-		if ( ! empty( $p['birth_date'] ) ) {
-			// An exact birth date beats the "about N years" estimate from age.
-			$out['birthDate']      = $p['birth_date'];
-			$out['isEstimatedAge'] = false;
-		}
-		$map = array(
-			'color'           => 'color',
-			'microchip'       => 'microchip',
-			'notes'           => 'notes',
-		);
-		foreach ( $map as $from => $to ) {
-			if ( ! empty( $p[ $from ] ) ) {
-				$out[ $to ] = $p[ $from ];
-			}
-		}
-		return $out;
 	}
 
 	/** True when the client's phone(s) on file end with the given 4 digits. */
@@ -306,7 +201,7 @@ Notes from the client: " . $c['notes'];
 	}
 
 	/** Case-insensitive match of an active patient by name on an existing client. */
-	/** Returns the matched {id, name} (Vetspire's own casing) or null. */
+	/** Returns the matched {id, name, clientId} (the PIMS's own casing) or null. */
 	private static function match_patient( $client, $patient_name ) {
 		if ( empty( $client['patients'] ) || ! is_array( $client['patients'] ) ) {
 			return null;
@@ -322,7 +217,11 @@ Notes from the client: " . $c['notes'];
 			$active   = ! isset( $patient['isActive'] ) || $patient['isActive'];
 			$deceased = ! empty( $patient['isDeceased'] );
 			if ( $active && ! $deceased && 0 === strcasecmp( trim( (string) $patient['name'] ), $needle ) ) {
-				return array( 'id' => $patient['id'], 'name' => $patient['name'] );
+				return array(
+					'id'       => $patient['id'],
+					'name'     => $patient['name'],
+					'clientId' => isset( $patient['clientId'] ) ? $patient['clientId'] : '',
+				);
 			}
 		}
 		return null;

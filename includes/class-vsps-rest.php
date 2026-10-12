@@ -1,7 +1,7 @@
 <?php
 /**
- * Public REST endpoints. These proxy the Vetspire API server-side so the
- * admin token never reaches the browser. Read endpoints are cached;
+ * Public REST endpoints. These proxy the clinic's practice system (Vetspire or
+ * Nectar, via VSPS_Pims) server-side so its credentials never reach the browser. Read endpoints are cached;
  * the booking endpoint is rate-limited per IP.
  */
 
@@ -20,11 +20,12 @@ class VSPS_Rest {
 	}
 
 	public static function register_routes() {
-		$numeric = array(
+		// Record ids: numbers on Vetspire, hex strings on Nectar.
+		$id_arg = array(
 			'required'          => true,
-			'sanitize_callback' => 'absint',
+			'sanitize_callback' => array( 'VSPS_Pims_Registry', 'sanitize_id' ),
 			'validate_callback' => function ( $value ) {
-				return is_numeric( $value ) && (int) $value > 0;
+				return '' !== VSPS_Pims_Registry::sanitize_id( $value );
 			},
 		);
 
@@ -33,7 +34,7 @@ class VSPS_Rest {
 			'callback'            => array( __CLASS__, 'get_types' ),
 			'permission_callback' => '__return_true',
 			'args'                => array(
-				'location_id' => $numeric,
+				'location_id' => $id_arg,
 			),
 		) );
 
@@ -42,8 +43,8 @@ class VSPS_Rest {
 			'callback'            => array( __CLASS__, 'get_availability' ),
 			'permission_callback' => '__return_true',
 			'args'                => array(
-				'location_id'         => $numeric,
-				'appointment_type_id' => $numeric,
+				'location_id'         => $id_arg,
+				'appointment_type_id' => $id_arg,
 				'start_date'          => array( 'required' => false, 'sanitize_callback' => 'sanitize_text_field' ),
 				'days'                => array( 'required' => false, 'sanitize_callback' => 'absint', 'default' => 7 ),
 			),
@@ -54,7 +55,7 @@ class VSPS_Rest {
 			'callback'            => array( __CLASS__, 'get_location_info' ),
 			'permission_callback' => '__return_true',
 			'args'                => array(
-				'location_id' => $numeric,
+				'location_id' => $id_arg,
 			),
 		) );
 
@@ -75,7 +76,7 @@ class VSPS_Rest {
 	private static function api_or_error() {
 		$api = vsps_api();
 		if ( null === $api ) {
-			return new WP_Error( 'vsps_no_token', 'Vetspire API token is not configured.', array( 'status' => 503 ) );
+			return new WP_Error( 'vsps_no_token', 'The practice system connection is not configured.', array( 'status' => 503 ) );
 		}
 		return $api;
 	}
@@ -83,6 +84,7 @@ class VSPS_Rest {
 	/**
 	 * When the admin configured location(s), only those may be queried/booked
 	 * (prevents exposing sibling locations of the same Vetspire org).
+	 * Ids are compared as strings (Nectar's are not numbers).
 	 */
 	private static function location_allowed( $location_id ) {
 		// Admins may preview any org location from the settings page
@@ -92,19 +94,20 @@ class VSPS_Rest {
 		}
 		$settings = vsps_get_settings();
 		$allowed  = array();
-		if ( '' !== (string) $settings['default_location'] ) {
-			$allowed[] = absint( $settings['default_location'] );
+		$default  = VSPS_Pims_Registry::sanitize_id( $settings['default_location'] );
+		if ( '' !== $default ) {
+			$allowed[] = $default;
 		}
 		if ( ! empty( $settings['allowed_locations'] ) ) {
 			foreach ( explode( ',', (string) $settings['allowed_locations'] ) as $id ) {
-				$id = absint( trim( $id ) );
-				if ( $id ) {
+				$id = VSPS_Pims_Registry::sanitize_id( $id );
+				if ( '' !== $id ) {
 					$allowed[] = $id;
 				}
 			}
 		}
 		// Nothing configured yet → no restriction (fresh install).
-		return empty( $allowed ) || in_array( absint( $location_id ), $allowed, true );
+		return empty( $allowed ) || in_array( VSPS_Pims_Registry::sanitize_id( $location_id ), $allowed, true );
 	}
 
 	public static function get_types( WP_REST_Request $request ) {
@@ -116,6 +119,7 @@ class VSPS_Rest {
 		if ( ! self::location_allowed( $location_id ) ) {
 			return new WP_Error( 'vsps_location', 'This location is not enabled for online booking.', array( 'status' => 403 ) );
 		}
+		$location_id = (string) $location_id;
 		$types       = VSPS_Cache::remember( array( 'types', $location_id ), function () use ( $api, $location_id ) {
 			return $api->get_bookable_types( $location_id );
 		}, 3600 );
@@ -134,8 +138,9 @@ class VSPS_Rest {
 		if ( ! self::location_allowed( $location_id ) ) {
 			return new WP_Error( 'vsps_location', 'This location is not enabled for online booking.', array( 'status' => 403 ) );
 		}
-		$type_id = $request['appointment_type_id'];
-		$days    = min( 14, max( 1, (int) $request['days'] ) );
+		$location_id = (string) $location_id;
+		$type_id     = (string) $request['appointment_type_id'];
+		$days        = min( 14, max( 1, (int) $request['days'] ) );
 
 		$start = self::valid_date( $request['start_date'] );
 		if ( null === $start ) {
@@ -179,7 +184,7 @@ class VSPS_Rest {
 		if ( ! self::location_allowed( $location_id ) ) {
 			return new WP_Error( 'vsps_location', 'This location is not enabled for online booking.', array( 'status' => 403 ) );
 		}
-		$info = VSPS_Cache::remember( array( 'locinfo', (int) $location_id ), function () use ( $api, $location_id ) {
+		$info = VSPS_Cache::remember( array( 'locinfo', (string) $location_id ), function () use ( $api, $location_id ) {
 			return $api->get_location_info( $location_id );
 		}, 300 );
 		if ( is_wp_error( $info ) || null === $info ) {
@@ -187,17 +192,20 @@ class VSPS_Rest {
 		}
 
 		$hours  = isset( $info['locationHours'] ) ? $info['locationHours'] : null;
-		$status = self::open_status( $hours, $info['timezone'] );
+		$status = self::open_status( $hours, isset( $info['timezone'] ) ? $info['timezone'] : '' );
 
 		// Only public-safe fields leave the server.
+		$field = function ( $key ) use ( $info ) {
+			return isset( $info[ $key ] ) ? $info[ $key ] : null;
+		};
 		return rest_ensure_response( array(
-			'name'       => $info['displayName'] ? $info['displayName'] : $info['name'],
-			'address'    => (string) $info['addressString'],
-			'phone'      => (string) $info['phoneNumber'],
-			'googleLink' => (string) $info['googleLink'],
-			'website'    => (string) $info['url'],
-			'latitude'   => $info['latitude'],
-			'longitude'  => $info['longitude'],
+			'name'       => (string) ( $field( 'displayName' ) ? $field( 'displayName' ) : $field( 'name' ) ),
+			'address'    => (string) $field( 'addressString' ),
+			'phone'      => (string) $field( 'phoneNumber' ),
+			'googleLink' => (string) $field( 'googleLink' ),
+			'website'    => (string) $field( 'url' ),
+			'latitude'   => $field( 'latitude' ),
+			'longitude'  => $field( 'longitude' ),
 			'status'     => $status,
 			'weekly'     => self::weekly_hours( $hours ),
 		) );
@@ -297,8 +305,8 @@ class VSPS_Rest {
 		if ( '' !== (string) $request->get_param( 'vsps_hp' ) ) {
 			return new WP_Error( 'vsps_spam', 'Lookup rejected.', array( 'status' => 400 ) );
 		}
-		$location_id = absint( $request->get_param( 'location_id' ) );
-		if ( ! $location_id || ! self::location_allowed( $location_id ) ) {
+		$location_id = VSPS_Pims_Registry::sanitize_id( $request->get_param( 'location_id' ) );
+		if ( '' === $location_id || ! self::location_allowed( $location_id ) ) {
 			return new WP_Error( 'vsps_location', 'This location is not enabled for online booking.', array( 'status' => 403 ) );
 		}
 		$email = sanitize_email( (string) $request->get_param( 'email' ) );
@@ -374,12 +382,12 @@ class VSPS_Rest {
 		}
 
 		// The just-booked slot is gone: refresh this day's cached availability.
-		VSPS_Cache::forget( array( 'avail', (int) $args['location_id'], (int) $args['appointment_type_id'], $args['date'] ) );
+		VSPS_Cache::forget( array( 'avail', (string) $args['location_id'], (string) $args['appointment_type_id'], $args['date'] ) );
 
 		// Booked during vs after office hours (computed server-side, clinic timezone).
 		$after_hours = null;
 		$booked_at   = null;
-		$info        = VSPS_Cache::remember( array( 'locinfo', (int) $args['location_id'] ), function () use ( $api, $args ) {
+		$info        = VSPS_Cache::remember( array( 'locinfo', (string) $args['location_id'] ), function () use ( $api, $args ) {
 			return $api->get_location_info( $args['location_id'] );
 		}, 300 );
 		if ( ! is_wp_error( $info ) && null !== $info && ! empty( $info['timezone'] ) ) {
@@ -398,6 +406,8 @@ class VSPS_Rest {
 
 		return rest_ensure_response( array(
 			'success'        => true,
+			// true = the clinic still has to confirm it (Nectar online requests).
+			'request'        => ! empty( $result['request'] ),
 			'appointment_id' => $result['appointment_id'],
 			'start'          => $result['start'],
 			'after_hours'    => $after_hours,
@@ -405,7 +415,7 @@ class VSPS_Rest {
 		) );
 	}
 
-	/** Where the booking came from (for the log only; never sent to Vetspire). */
+	/** Where the booking came from (for the log only; never sent to the PIMS). */
 	private static function booking_source( WP_REST_Request $request ) {
 		$layout  = sanitize_key( (string) $request->get_param( 'layout' ) );
 		$variant = strtolower( sanitize_key( (string) $request->get_param( 'variant' ) ) );
@@ -436,12 +446,12 @@ class VSPS_Rest {
 			// Returning clients may add a pet ONLY after proving ownership with
 			// the last 4 digits of the phone on file (verified server-side).
 			'phone_last4'         => preg_match( '/^\d{4}$/', (string) $request->get_param( 'phone_last4' ) ) ? (string) $request->get_param( 'phone_last4' ) : '',
-			'location_id'         => absint( $request->get_param( 'location_id' ) ),
-			'appointment_type_id' => absint( $request->get_param( 'appointment_type_id' ) ),
+			'location_id'         => VSPS_Pims_Registry::sanitize_id( $request->get_param( 'location_id' ) ),
+			'appointment_type_id' => VSPS_Pims_Registry::sanitize_id( $request->get_param( 'appointment_type_id' ) ),
 			'date'                => sanitize_text_field( (string) $request->get_param( 'date' ) ),
 			'time'                => sanitize_text_field( (string) $request->get_param( 'time' ) ),
-			'provider_id'         => sanitize_text_field( (string) $request->get_param( 'provider_id' ) ),
-			'schedule_id'         => sanitize_text_field( (string) $request->get_param( 'schedule_id' ) ),
+			'provider_id'         => VSPS_Pims_Registry::sanitize_id( $request->get_param( 'provider_id' ) ),
+			'schedule_id'         => VSPS_Pims_Registry::sanitize_id( $request->get_param( 'schedule_id' ) ),
 			'notes'               => sanitize_textarea_field( (string) $request->get_param( 'notes' ) ),
 			'client'              => array(
 				'given_name'  => sanitize_text_field( isset( $client['given_name'] ) ? $client['given_name'] : '' ),
@@ -465,7 +475,7 @@ class VSPS_Rest {
 		$args['client']  = array_merge( $args['client'], $extras['client'] );
 		$args['patient'] = array_merge( $args['patient'], $extras['patient'] );
 
-		if ( ! $args['location_id'] || ! $args['appointment_type_id'] ) {
+		if ( '' === $args['location_id'] || '' === $args['appointment_type_id'] ) {
 			return new WP_Error( 'vsps_invalid', 'Missing location or appointment type.', array( 'status' => 400 ) );
 		}
 		$booking_date = self::valid_date( $args['date'] );
@@ -482,7 +492,7 @@ class VSPS_Rest {
 			return new WP_Error( 'vsps_invalid', 'A valid email is required.', array( 'status' => 400 ) );
 		}
 		if ( 'existing' === $client_type ) {
-			// Returning clients only need email + pet; name/phone live in Vetspire.
+			// Returning clients only need email + pet; name/phone are on file.
 			if ( '' === $args['patient']['name'] ) {
 				return new WP_Error( 'vsps_invalid', 'Pet name is required.', array( 'status' => 400 ) );
 			}
@@ -515,7 +525,7 @@ class VSPS_Rest {
 	}
 
 	/**
-	 * Hidden / out-of-scope fields are blanked (they never reach Vetspire, even
+	 * Hidden / out-of-scope fields are blanked (they never reach the PIMS, even
 	 * from forged requests) and required ones must be filled. Uses the same
 	 * variant ("a"/"b") the widget rendered with.
 	 */

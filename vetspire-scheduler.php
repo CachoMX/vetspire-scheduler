@@ -1,9 +1,9 @@
 <?php
 /**
- * Plugin Name: Vetspire Scheduler
+ * Plugin Name: Vetcelerator Scheduler
  * Plugin URI:  https://vetcelerator.com
- * Description: Embeddable appointment scheduler powered by the Vetspire API. Shows live available times and books appointments on-site so analytics attribution is preserved.
- * Version:     1.24.0
+ * Description: Embeddable appointment scheduler for Vetspire and Nectar clinics. Shows live available times and books appointments on-site so analytics attribution is preserved.
+ * Version:     1.25.0
  * Author:      Vetcelerator
  * License:     GPL-2.0+
  * Text Domain: vetspire-scheduler
@@ -13,7 +13,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-define( 'VSPS_VERSION', '1.24.0' );
+define( 'VSPS_VERSION', '1.25.0' );
 define( 'VSPS_PLUGIN_DIR', plugin_dir_path( __FILE__ ) );
 define( 'VSPS_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
 define( 'VSPS_OPTION_KEY', 'vsps_settings' );
@@ -22,7 +22,9 @@ if ( ! defined( 'VSPS_HUB_URL' ) ) {
 	define( 'VSPS_HUB_URL', 'https://hub.vetcelerator.com' );
 }
 
+require_once VSPS_PLUGIN_DIR . 'includes/class-vsps-pims.php';
 require_once VSPS_PLUGIN_DIR . 'includes/class-vsps-api.php';
+require_once VSPS_PLUGIN_DIR . 'includes/class-vsps-nectar.php';
 require_once VSPS_PLUGIN_DIR . 'includes/class-vsps-cache.php';
 require_once VSPS_PLUGIN_DIR . 'includes/class-vsps-booking.php';
 require_once VSPS_PLUGIN_DIR . 'includes/class-vsps-fields.php';
@@ -39,6 +41,7 @@ register_deactivation_hook( __FILE__, array( 'VSPS_Hub', 'deactivate' ) );
  */
 function vsps_get_settings() {
 	$defaults = array(
+		'pims'              => VSPS_Pims_Registry::DEFAULT_PLATFORM, // vetspire | nectar
 		'api_token'         => '',
 		'api_endpoint'      => 'https://api.vetspire.com/graphql',
 		'cache_ttl'         => 300,
@@ -54,6 +57,12 @@ function vsps_get_settings() {
 		'ask_age'           => 0,
 		'ask_neutered'      => 0,
 		'hub_key'           => '', // Vetcelerator hub connection key (vss_...)
+		// Nectar connection (pims = nectar).
+		'nectar_client_id'     => '',
+		'nectar_client_secret' => '',
+		'nectar_env'           => 'sandbox', // sandbox | production
+		'nectar_meta_location' => '', // only for multi-location Nectar clinics
+		'clinic_timezone'      => '', // used when Nectar does not report one
 	);
 	$saved = get_option( VSPS_OPTION_KEY, array() );
 	if ( ! is_array( $saved ) ) {
@@ -68,20 +77,47 @@ function vsps_get_settings() {
 		$settings['ask_breed'] = $settings['ask_sex'] = $settings['ask_age'] = $settings['ask_neutered'] = 1;
 	}
 
-	// Allow wp-config.php override so the key never has to live in the DB.
+	$settings['pims'] = VSPS_Pims_Registry::normalize( $settings['pims'] );
+
+	// Allow wp-config.php overrides so the keys never have to live in the DB.
 	if ( defined( 'VSPS_API_TOKEN' ) && VSPS_API_TOKEN ) {
 		$settings['api_token'] = VSPS_API_TOKEN;
+	}
+	if ( defined( 'VSPS_NECTAR_CLIENT_ID' ) && VSPS_NECTAR_CLIENT_ID ) {
+		$settings['nectar_client_id'] = VSPS_NECTAR_CLIENT_ID;
+	}
+	if ( defined( 'VSPS_NECTAR_CLIENT_SECRET' ) && VSPS_NECTAR_CLIENT_SECRET ) {
+		$settings['nectar_client_secret'] = VSPS_NECTAR_CLIENT_SECRET;
 	}
 	return $settings;
 }
 
+/** True when the selected platform has its credentials filled in. */
+function vsps_has_credentials( $settings = null ) {
+	$settings = null === $settings ? vsps_get_settings() : $settings;
+	if ( 'nectar' === $settings['pims'] ) {
+		return '' !== $settings['nectar_client_id'] && '' !== $settings['nectar_client_secret'];
+	}
+	return '' !== $settings['api_token'];
+}
+
 /**
- * Returns a configured API client, or null when no token is set.
+ * Returns the adapter for the selected platform (VSPS_Pims), or null when its
+ * credentials are not set.
  */
 function vsps_api() {
 	$settings = vsps_get_settings();
-	if ( '' === $settings['api_token'] ) {
+	if ( ! vsps_has_credentials( $settings ) ) {
 		return null;
+	}
+	if ( 'nectar' === $settings['pims'] ) {
+		return new VSPS_Nectar(
+			$settings['nectar_client_id'],
+			$settings['nectar_client_secret'],
+			$settings['nectar_meta_location'],
+			$settings['clinic_timezone'],
+			$settings['nectar_env']
+		);
 	}
 	return new VSPS_Api( $settings['api_token'], $settings['api_endpoint'] );
 }

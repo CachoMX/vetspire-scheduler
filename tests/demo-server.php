@@ -59,6 +59,7 @@ function apply_filters( $tag, $value ) { return $value; }
 function __( $text, $domain = null ) { return $text; }
 function vsps_get_settings() { return array( 'cache_ttl' => 60 ); }
 
+require __DIR__ . '/../includes/class-vsps-pims.php';
 require __DIR__ . '/../includes/class-vsps-api.php';
 require __DIR__ . '/../includes/class-vsps-cache.php';
 require __DIR__ . '/../includes/class-vsps-booking.php';

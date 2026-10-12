@@ -58,6 +58,8 @@
 		confirm: 'Confirm Booking',
 		booking: 'Booking…',
 		booked: "✅ You're booked!",
+		requested: '✅ Request sent!',
+		requestedNote: 'The clinic will confirm your appointment by email or phone.',
 		confirmationTo: 'A confirmation will be sent to your email. See you soon!',
 		close: 'Close',
 		bookingFailed: 'Booking failed. Please try another time or call the clinic.',
@@ -444,7 +446,7 @@
 				var types = data.types || [];
 				if (self.config.typeIds && self.config.typeIds.length) {
 					types = types.filter(function (t) {
-						return self.config.typeIds.indexOf(parseInt(t.id, 10)) !== -1;
+						return self.config.typeIds.map(String).indexOf(String(t.id)) !== -1;
 					});
 				}
 				if (!types.length) {
@@ -455,7 +457,7 @@
 				// leads the dropdown in full/calendar).
 				if (self.config.defaultTypeId) {
 					var primary = types.filter(function (t) {
-						return parseInt(t.id, 10) === parseInt(self.config.defaultTypeId, 10);
+						return String(t.id) === String(self.config.defaultTypeId);
 					})[0];
 					if (primary) {
 						types = [primary].concat(types.filter(function (t) { return t !== primary; }));
@@ -1943,7 +1945,7 @@
 		bk.step.querySelectorAll('.vsps-back').forEach(function (b) { b.disabled = true; b.style.opacity = '0.4'; });
 
 		payload.location_id = this.config.locationId;
-		payload.appointment_type_id = parseInt(this.state.typeId, 10);
+		payload.appointment_type_id = String(this.state.typeId);
 		payload.date = bk.date;
 		payload.time = bk.slot.time;
 		payload.provider_id = bk.slot.providerId || '';
@@ -1983,9 +1985,11 @@
 			var done = el('div', 'vsps-booked');
 			done.setAttribute('role', 'status');
 			bk.modal.appendChild(done);
-			done.appendChild(el('h4', 'vsps-modal-title', I18N.booked));
+			// Request-based platforms (Nectar): the clinic still has to confirm it.
+			var isRequest = !!data.request;
+			done.appendChild(el('h4', 'vsps-modal-title', isRequest ? I18N.requested : I18N.booked));
 			done.appendChild(el('p', 'vsps-modal-sub', bk.type.name + ' \u2014 ' + formatDateLabel(bk.date) + ' ' + I18N.at + ' ' + formatTime(bk.slot.time)));
-			done.appendChild(el('p', 'vsps-message', I18N.confirmationTo));
+			done.appendChild(el('p', 'vsps-message', isRequest ? I18N.requestedNote : I18N.confirmationTo));
 			var closeBtn = el('button', 'vsps-btn-primary', I18N.close);
 			closeBtn.type = 'button';
 			closeBtn.addEventListener('click', bk.close);

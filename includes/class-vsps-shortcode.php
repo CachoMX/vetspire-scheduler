@@ -45,7 +45,7 @@ class VSPS_Shortcode {
 		// after this wp_enqueue_scripts hook) fully REPLACES this one; render()
 		// includes the same defaultWidget shape too so that doesn't matter.
 		$settings    = vsps_get_settings();
-		$location_id = absint( $settings['default_location'] );
+		$location_id = VSPS_Pims_Registry::id_for_js( $settings['default_location'] );
 		if ( $location_id ) {
 			wp_enqueue_style( 'vsps-scheduler' );
 			wp_enqueue_script( 'vsps-scheduler' );
@@ -68,6 +68,8 @@ class VSPS_Shortcode {
 		return array(
 			'restUrl'   => esc_url_raw( rest_url( 'vetspire/v1' ) ),
 			'analytics' => (int) $settings['analytics_enabled'],
+			// 'request' = the clinic confirms each booking (Nectar); changes the success message.
+			'booking'   => VSPS_Pims_Registry::booking_mode( $settings['pims'] ),
 			'choices'   => array(
 				'referral' => $referral,
 				'titles'   => VSPS_Fields::TITLES,
@@ -118,6 +120,8 @@ class VSPS_Shortcode {
 				'cancel'         => __( 'Cancel', 'vetspire-scheduler' ),
 				'confirm'        => __( 'Confirm Booking', 'vetspire-scheduler' ),
 				'booking'        => __( 'Booking…', 'vetspire-scheduler' ),
+				'requested'      => __( '✅ Request sent!', 'vetspire-scheduler' ),
+				'requestedNote'  => __( 'The clinic will confirm your appointment by email or phone.', 'vetspire-scheduler' ),
 				'booked'         => __( "✅ You're booked!", 'vetspire-scheduler' ),
 				'confirmationTo' => __( 'A confirmation will be sent to your email. See you soon!', 'vetspire-scheduler' ),
 				'close'          => __( 'Close', 'vetspire-scheduler' ),
@@ -189,7 +193,7 @@ class VSPS_Shortcode {
 			'mode'          => 'book',
 			'linkUrl'       => '',
 			'layout'        => 'full',
-			'defaultTypeId' => absint( $settings['default_type'] ),
+			'defaultTypeId' => VSPS_Pims_Registry::id_for_js( $settings['default_type'] ),
 			'fields'        => VSPS_Fields::for_widget( VSPS_Fields::resolve( $settings ) ),
 			'variant'      => '',
 			'primaryColor' => $settings['primary_color'],
@@ -212,14 +216,14 @@ class VSPS_Shortcode {
 			'primary'              => '',       // "1" = the #vsps-book external trigger targets THIS instance
 		), $atts, 'vetspire_scheduler' );
 
-		$location_id = absint( $atts['location_id'] );
+		$location_id = VSPS_Pims_Registry::id_for_js( $atts['location_id'] );
 		if ( ! $location_id ) {
 			return current_user_can( 'manage_options' )
 				? '<p><em>[vetspire_scheduler] needs a location_id (or set a default in Settings → Vetspire Scheduler).</em></p>'
 				: '';
 		}
 
-		$type_ids = array_values( array_filter( array_map( 'absint', explode( ',', $atts['appointment_type_ids'] ) ) ) );
+		$type_ids = array_values( array_filter( array_map( array( 'VSPS_Pims_Registry', 'id_for_js' ), explode( ',', $atts['appointment_type_ids'] ) ) ) );
 		$mode     = 'link' === $atts['mode'] ? 'link' : 'book';
 
 		wp_enqueue_style( 'vsps-scheduler' );
@@ -255,7 +259,7 @@ class VSPS_Shortcode {
 			'mode'          => $mode,
 			'linkUrl'       => esc_url_raw( $atts['link_url'] ),
 			'layout'        => $layout,
-			'defaultTypeId' => absint( $settings['default_type'] ),
+			'defaultTypeId' => VSPS_Pims_Registry::id_for_js( $settings['default_type'] ),
 			'fields'        => $fields,
 			'variant'       => $variant,
 		);

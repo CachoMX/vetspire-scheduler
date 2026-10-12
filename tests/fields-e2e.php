@@ -49,6 +49,7 @@ function sanitize_email( $s ) { return filter_var( trim( (string) $s ), FILTER_V
 function wp_list_pluck( $list, $field ) { return array_map( function ( $r ) use ( $field ) { return $r[ $field ]; }, $list ); }
 function vsps_get_settings() { return array( 'cache_ttl' => 60 ); }
 
+require __DIR__ . '/../includes/class-vsps-pims.php';
 require __DIR__ . '/../includes/class-vsps-api.php';
 require __DIR__ . '/../includes/class-vsps-cache.php';
 require __DIR__ . '/../includes/class-vsps-booking.php';

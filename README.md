@@ -1,10 +1,39 @@
-# Vetspire Scheduler — WordPress Plugin
+# Vetcelerator Scheduler (vetspire-scheduler) — WordPress Plugin
 
-Embeddable appointment scheduler powered by the [Vetspire API](https://developer.vetspire.com).
+Embeddable appointment scheduler for clinics on [Vetspire](https://developer.vetspire.com) or
+[Nectar](https://docs.nectarvet.com/). The folder, slug and shortcode keep the original
+`vetspire-scheduler` name so installed sites keep receiving updates.
 Shows live available times and completes the booking **on-site**, so analytics attribution
 (Hyros / GTM / GA4) is preserved instead of losing the visitor to an external booking page.
 
-Built to be reused across multiple clinics: each site configures its own Vetspire API key.
+Built to be reused across multiple clinics: each site picks its practice system (PIMS) and
+configures its own credentials.
+
+## Practice systems (PIMS)
+
+Each platform is an adapter implementing `VSPS_Pims` (`includes/class-vsps-pims.php`):
+`VSPS_Api` for Vetspire, `VSPS_Nectar` for Nectar. The REST layer, the booking flow
+(`VSPS_Booking`) and the widget only see the normalized shapes, so they don't know which
+platform is behind them. `VSPS_Pims_Registry` holds the static facts per platform: label,
+booking mode, minimum lead time and which optional booking-form fields it can store.
+
+| | Vetspire | Nectar |
+|---|---|---|
+| Credentials | API key (`VSPS_API_TOKEN`) | OAuth client id + secret (`VSPS_NECTAR_CLIENT_ID` / `_SECRET`) |
+| Locations | the org's locations | one per credentials (`clinic`); multi-location clinics set a location code |
+| Ids | numbers | 24-hex strings |
+| Booking | confirmed on the spot | a **request** (`ONLINE_REQUESTED`) the clinic confirms |
+| Earliest time | now | 24 h ahead (Nectar's booking window) |
+| Types offered | `canBookOnline` | `directOnlineEnabled` and no deposit |
+
+Sites saved before 1.25.0 have no platform stored and stay on Vetspire. Switching platform in
+Settings remembers each platform's location and primary type, so switching back restores them.
+
+Nectar status (2026-10-12): token, appointment types, client lookup and pets work with a
+server token. `getAvailableAppointmentSlots`, `addOnlineAppointment` and
+`scheduleAndRequestAppointment` are being opened to server tokens by Nectar; until then the
+widget shows no Nectar times. The production GraphQL address is not published yet: production
+needs `VSPS_NECTAR_API_URL` in `wp-config.php` (the sandbox works out of the box).
 
 ## How it works
 
@@ -113,11 +142,13 @@ org's TESTING LOCATION that is deleted afterwards:
 
 ```
 php tests/harness.php            # 22 checks: connectivity, types, slots, cache, dedupe, guardrails, booking, cleanup
+php tests/nectar-e2e.php         # 37 checks: Nectar sandbox reads, slot logic, booking flow (mocked writes), fields
 php -S 127.0.0.1:8737 tests/demo-server.php   # visual demo at http://127.0.0.1:8737
 node <scratchpad>/visual-test.js # puppeteer: renders, books, checks dataLayer events
 ```
 
-Requires PHP with `openssl` (and `curl` for WP parity). `.env` must contain `VETSPIRE_API_TOKEN`.
+Requires PHP with `openssl` (and `curl` for WP parity). `.env` must contain `VETSPIRE_API_TOKEN`;
+`.env.local` must contain `NECTAR_CLIENT_ID` / `NECTAR_CLIENT_SECRET` (sandbox) for the Nectar test.
 
 ## Vetspire API notes (learned during development)
 

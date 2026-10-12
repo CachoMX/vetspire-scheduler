@@ -680,8 +680,10 @@ class VSPS_Hub {
 			'created_at'          => $row->created_at,
 			'outcome'             => (string) $row->outcome,
 			'appointment_id'      => null === $row->appointment_id ? null : (string) $row->appointment_id,
-			'location_id'         => (int) $row->location_id,
-			'appointment_type_id' => (int) $row->appointment_type_id,
+			// Numbers on Vetspire (the hub's contract), hex strings on Nectar.
+			'pims'                => isset( $row->pims ) && '' !== (string) $row->pims ? (string) $row->pims : 'vetspire',
+			'location_id'         => VSPS_Pims_Registry::id_for_js( $row->location_id ),
+			'appointment_type_id' => VSPS_Pims_Registry::id_for_js( $row->appointment_type_id ),
 			'type_name'           => (string) $row->type_name,
 			'vetspire_client_id'  => (string) $row->client_id,
 			'client_name'         => (string) $row->client_name,
@@ -726,12 +728,12 @@ class VSPS_Hub {
 	 * the field and the hub keeps what it has.
 	 */
 	public static function clinic_timezone( $allow_api = false ) {
-		$location_id = absint( vsps_get_settings()['default_location'] );
-		if ( ! $location_id ) {
+		$location_id = VSPS_Pims_Registry::sanitize_id( vsps_get_settings()['default_location'] );
+		if ( '' === $location_id ) {
 			return '';
 		}
 		$saved = get_option( self::TZ_OPTION, array() );
-		if ( is_array( $saved ) && isset( $saved['loc'], $saved['tz'] ) && (int) $saved['loc'] === $location_id && self::valid_tz( $saved['tz'] ) ) {
+		if ( is_array( $saved ) && isset( $saved['loc'], $saved['tz'] ) && (string) $saved['loc'] === $location_id && self::valid_tz( $saved['tz'] ) ) {
 			return $saved['tz'];
 		}
 		$tz = '';

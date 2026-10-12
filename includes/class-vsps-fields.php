@@ -1,14 +1,15 @@
 <?php
 /**
- * Booking-form fields: the registry of every visitor-fillable Vetspire field
- * the widget can ask for, and each clinic's "show" / "required" choices.
+ * Booking-form fields: the registry of every visitor-fillable field the widget
+ * can ask for, and each clinic's "show" / "required" choices. Each platform
+ * stores a subset of them (VSPS_Pims_Registry::supports_field).
  *
  * Scopes decide when a field applies:
- *  - client: only on the new-client form (returning clients already have it in Vetspire);
+ *  - client: only on the new-client form (returning clients already have it on file);
  *  - pet:    only when a new pet is being created (new client, or returning client adding a pet);
  *  - visit:  every booking.
  * "Locked" fields cannot be hidden (and the core ones cannot be made optional):
- * Vetspire needs them to create a client, a patient and an appointment.
+ * the practice system needs them to create a client, a patient and an appointment.
  */
 
 if ( ! defined( 'ABSPATH' ) ) {
@@ -67,8 +68,9 @@ class VSPS_Fields {
 	 * full list existed keep their four old pet questions (shown, optional).
 	 */
 	public static function resolve( array $settings, $variant = '' ) {
-		$saved = isset( $settings['fields'] ) && is_array( $settings['fields'] ) ? $settings['fields'] : null;
-		$out   = array();
+		$saved    = isset( $settings['fields'] ) && is_array( $settings['fields'] ) ? $settings['fields'] : null;
+		$platform = VSPS_Pims_Registry::normalize( isset( $settings['pims'] ) ? $settings['pims'] : '' );
+		$out      = array();
 		foreach ( self::REGISTRY as $key => $def ) {
 			if ( null !== $saved ) {
 				$show = ! empty( $saved[ $key ]['show'] );
@@ -76,6 +78,10 @@ class VSPS_Fields {
 			} else {
 				$show = in_array( $key, self::LEGACY, true ) && ! empty( $settings[ 'ask_' . $key ] );
 				$req  = false;
+			}
+			// A field the clinic's platform can't store is never asked.
+			if ( ! self::locked_show( $key ) && ! VSPS_Pims_Registry::supports_field( $key, $platform ) ) {
+				$show = false;
 			}
 			$show = self::locked_show( $key ) || $show;
 			$req  = self::locked_required( $key ) || ( $show && $req );
@@ -107,11 +113,18 @@ class VSPS_Fields {
 		return false;
 	}
 
-	/** Settings sanitize: posted [key => [show, req]] → stored map (locked flags forced). */
-	public static function sanitize( $input ) {
+	/**
+	 * Settings sanitize: posted [key => [show, req]] → stored map (locked flags forced).
+	 * Fields $platform can't store were not in the table: their stored choice is kept.
+	 */
+	public static function sanitize( $input, array $stored = array(), $platform = 'vetspire' ) {
 		$input = is_array( $input ) ? $input : array();
 		$out   = array();
 		foreach ( self::REGISTRY as $key => $def ) {
+			if ( ! self::locked_show( $key ) && ! VSPS_Pims_Registry::supports_field( $key, $platform ) && isset( $stored[ $key ] ) && is_array( $stored[ $key ] ) ) {
+				$out[ $key ] = array( 'show' => empty( $stored[ $key ]['show'] ) ? 0 : 1, 'req' => empty( $stored[ $key ]['req'] ) ? 0 : 1 );
+				continue;
+			}
 			$row  = isset( $input[ $key ] ) && is_array( $input[ $key ] ) ? $input[ $key ] : array();
 			$show = self::locked_show( $key ) || ! empty( $row['show'] );
 			$req  = self::locked_required( $key ) || ( $show && ! empty( $row['req'] ) );
@@ -253,7 +266,7 @@ class VSPS_Fields {
 	/**
 	 * Data governance + required check, server-side (the form's own checks can
 	 * be bypassed). Hidden fields, and fields outside this booking's scope, are
-	 * blanked so they never reach Vetspire; a shown + required field that is
+	 * blanked so they never reach the PIMS; a shown + required field that is
 	 * empty fails the booking before anything is created.
 	 *
 	 * @return WP_Error|null
@@ -272,8 +285,8 @@ class VSPS_Fields {
 				self::blank( $args, $key );
 				continue;
 			}
-			// The widget hides "How did you hear about us?" when Vetspire returns no
-			// list (none configured, or Vetspire unreachable): it can't be demanded then.
+			// The widget hides "How did you hear about us?" when the PIMS returns no
+			// list (none configured, or unreachable): it can't be demanded then.
 			if ( 'referral' === $key && $resolved[ $key ]['req'] && ! self::referral_sources() ) {
 				continue;
 			}
@@ -288,7 +301,7 @@ class VSPS_Fields {
 	}
 
 	/**
-	 * The clinic's own "how did you hear about us" list from Vetspire (cached
+	 * The clinic's own "how did you hear about us" list from the PIMS (cached
 	 * 12 h). Empty on failure: the widget then hides the question instead of
 	 * offering choices it can't save.
 	 */
@@ -305,7 +318,7 @@ class VSPS_Fields {
 		}, 12 * HOUR_IN_SECONDS );
 		if ( ! is_array( $list ) ) {
 			// Errors are never cached by VSPS_Cache; remember this one briefly so
-			// every page view doesn't retry a slow or failing Vetspire.
+			// every page view doesn't retry a slow or failing PIMS.
 			set_transient( VSPS_Cache::PREFIX . 'refsrc_fail', 1, 5 * MINUTE_IN_SECONDS );
 			return array();
 		}

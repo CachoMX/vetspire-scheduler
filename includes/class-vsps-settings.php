@@ -1,7 +1,8 @@
 <?php
 /**
- * Settings screen (Vetspire Scheduler → Settings).
- * First run: a single centered "Connect" card asking for the API key.
+ * Settings screen (Vetcelerator Scheduler → Settings).
+ * First run: a single centered "Connect" card: pick the practice system
+ * (Vetspire or Nectar), then its credentials.
  * Connected: two-column layout — controls left, sticky live preview right
  * (Customizer-style split; preview reacts instantly to every control).
  */
@@ -23,8 +24,8 @@ class VSPS_Settings {
 	/** Top-level menu; Settings is the plugin's only screen (bookings live in the hub). */
 	public static function add_menu() {
 		add_menu_page(
-			'Vetspire Scheduler',
-			'Vetspire Scheduler',
+			'Vetcelerator Scheduler',
+			'Vetcelerator Scheduler',
 			'manage_options',
 			'vsps-settings',
 			array( __CLASS__, 'render_page' ),
@@ -33,7 +34,7 @@ class VSPS_Settings {
 		);
 		add_submenu_page(
 			'vsps-settings',
-			'Vetspire Scheduler — Settings',
+			'Vetcelerator Scheduler — Settings',
 			'Settings',
 			'manage_options',
 			'vsps-settings',
@@ -70,46 +71,97 @@ class VSPS_Settings {
 			return $current;
 		}
 
-		// Connect-card saves post ONLY the token (+ endpoint). Merge them into the
-		// stored settings instead of rebuilding everything — otherwise re-entering
-		// the key on a live site would silently wipe layout/analytics/toggles.
+		// Which practice system: posted by the connect card and the "Change
+		// connection" panel; any other save keeps the stored one. Old installs
+		// have none stored and are Vetspire.
+		$was_platform = VSPS_Pims_Registry::normalize( isset( $current['pims'] ) ? $current['pims'] : '' );
+		$platform     = isset( $input['pims'] ) ? VSPS_Pims_Registry::normalize( $input['pims'] ) : $was_platform;
+		// Location and type ids belong to one platform: a switch must not carry them over.
+		$switched    = $platform !== $was_platform;
+		$credentials = self::sanitize_credentials( $input, $current );
+		$timezone    = array_key_exists( 'clinic_timezone', $input )
+			? self::sanitize_timezone( $input['clinic_timezone'] )
+			: ( isset( $current['clinic_timezone'] ) ? (string) $current['clinic_timezone'] : '' );
+		$meta        = array_key_exists( 'nectar_meta_location', $input )
+			? substr( sanitize_text_field( (string) $input['nectar_meta_location'] ), 0, 64 )
+			: ( isset( $current['nectar_meta_location'] ) ? (string) $current['nectar_meta_location'] : '' );
+		$nectar_env  = isset( $input['nectar_env'] )
+			? ( 'production' === $input['nectar_env'] ? 'production' : 'sandbox' )
+			: ( isset( $current['nectar_env'] ) && 'production' === $current['nectar_env'] ? 'production' : 'sandbox' );
+		// Each platform remembers its own location / primary type, so a switch
+		// (even an accidental one) is undone by switching back.
+		$memory = isset( $current['pims_memory'] ) && is_array( $current['pims_memory'] ) ? $current['pims_memory'] : array();
+		if ( $switched ) {
+			$memory[ $was_platform ] = array(
+				'default_location'  => isset( $current['default_location'] ) ? (string) $current['default_location'] : '',
+				'allowed_locations' => isset( $current['allowed_locations'] ) ? (string) $current['allowed_locations'] : '',
+				'default_type'      => isset( $current['default_type'] ) ? (string) $current['default_type'] : '',
+			);
+		}
+		$restored = $switched && isset( $memory[ $platform ] ) && is_array( $memory[ $platform ] ) ? $memory[ $platform ] : array();
+
+		// Connect-card saves post ONLY the platform + credentials. Merge them into
+		// the stored settings instead of rebuilding everything — otherwise
+		// re-entering a key on a live site would silently wipe layout/analytics/toggles.
 		if ( ! empty( $input['connect_only'] ) ) {
-			$merged                 = array_merge( vsps_get_settings(), $current );
+			$merged                        = array_merge( vsps_get_settings(), $current, $credentials );
 			$merged['extended_pet_fields'] = 0; // legacy key, superseded by ask_*
-			$merged['api_endpoint'] = esc_url_raw( isset( $input['api_endpoint'] ) ? $input['api_endpoint'] : 'https://api.vetspire.com/graphql' );
-			$token                  = isset( $input['api_token'] ) ? trim( $input['api_token'] ) : '';
-			if ( '' !== $token && false === strpos( $token, '•' ) ) {
-				$merged['api_token'] = sanitize_text_field( $token );
+			$merged['pims']                = $platform;
+			$merged['api_endpoint']        = esc_url_raw( isset( $input['api_endpoint'] ) ? $input['api_endpoint'] : 'https://api.vetspire.com/graphql' );
+			$merged['clinic_timezone']     = $timezone;
+			$merged['nectar_meta_location'] = $meta;
+			$merged['nectar_env']          = $nectar_env;
+			$merged['pims_memory']         = $memory;
+			if ( $switched ) {
+				foreach ( array( 'default_location', 'allowed_locations', 'default_type' ) as $key ) {
+					$merged[ $key ] = isset( $restored[ $key ] ) ? VSPS_Pims_Registry::sanitize_id( $restored[ $key ] ) : '';
+				}
+			}
+			if ( 'nectar' === $platform ) {
+				// One set of Nectar credentials = one clinic: its only "location".
+				$merged['default_location']  = VSPS_Nectar::LOCATION_ID;
+				$merged['allowed_locations'] = VSPS_Nectar::LOCATION_ID;
 			}
 			VSPS_Cache::flush();
 			return $merged;
 		}
 
-		$default_location = absint( isset( $input['default_location'] ) ? $input['default_location'] : 0 );
-		$default_location = $default_location ? (string) $default_location : '';
+		$default_location = VSPS_Pims_Registry::sanitize_id( isset( $input['default_location'] ) ? $input['default_location'] : '' );
+		$default_type     = VSPS_Pims_Registry::sanitize_id( isset( $input['default_type'] ) ? $input['default_type'] : '' );
+		if ( $switched ) {
+			$default_location = isset( $restored['default_location'] ) ? VSPS_Pims_Registry::sanitize_id( $restored['default_location'] ) : '';
+			$default_type     = isset( $restored['default_type'] ) ? VSPS_Pims_Registry::sanitize_id( $restored['default_type'] ) : '';
+		}
+		if ( 'nectar' === $platform ) {
+			$default_location = VSPS_Nectar::LOCATION_ID;
+		}
 
-		$clean = array(
+		$clean = array_merge( array(
+			'pims'              => $platform,
 			'api_endpoint'      => esc_url_raw( isset( $input['api_endpoint'] ) ? $input['api_endpoint'] : 'https://api.vetspire.com/graphql' ),
 			'cache_ttl'         => isset( $current['cache_ttl'] ) ? (int) $current['cache_ttl'] : 300,
 			'analytics_enabled' => empty( $input['analytics_enabled'] ) ? 0 : 1,
 			'extended_pet_fields' => 0,
-			// Every booking-form field's show / required choice (VSPS_Fields).
-			'fields'            => VSPS_Fields::sanitize( isset( $input['fields'] ) ? $input['fields'] : array() ),
+			// Every booking-form field's show / required choice (VSPS_Fields). The
+			// table only listed the fields the (previous) platform stores; the
+			// others keep their saved choice for when the clinic switches back.
+			'fields'            => VSPS_Fields::sanitize(
+				isset( $input['fields'] ) ? $input['fields'] : array(),
+				isset( $current['fields'] ) && is_array( $current['fields'] ) ? $current['fields'] : array(),
+				$was_platform
+			),
 			'primary_color'     => sanitize_hex_color( isset( $input['primary_color'] ) ? $input['primary_color'] : '#2f6f4f' ),
 			'layout'            => self::valid_layout( isset( $input['layout'] ) ? $input['layout'] : 'full' ),
-			'default_type'      => absint( isset( $input['default_type'] ) ? $input['default_type'] : 0 ) ? (string) absint( $input['default_type'] ) : '',
+			'default_type'      => $default_type,
 			'default_location'  => $default_location,
 			// One site = one location: the REST layer only allows the selected one.
 			'allowed_locations' => $default_location,
-		);
+			'clinic_timezone'   => $timezone,
+			'nectar_meta_location' => $meta,
+			'nectar_env'        => $nectar_env,
+			'pims_memory'       => $memory,
+		), $credentials );
 
-		// Keep the stored token unless a new (non-placeholder) one was entered.
-		$token = isset( $input['api_token'] ) ? trim( $input['api_token'] ) : '';
-		if ( '' !== $token && false === strpos( $token, '•' ) ) {
-			$clean['api_token'] = sanitize_text_field( $token );
-		} else {
-			$clean['api_token'] = isset( $current['api_token'] ) ? $current['api_token'] : '';
-		}
 		$clean['hub_key'] = self::sanitize_hub_key(
 			array_key_exists( 'hub_key', $input ) ? $input['hub_key'] : null,
 			isset( $current['hub_key'] ) ? (string) $current['hub_key'] : ''
@@ -185,6 +237,9 @@ class VSPS_Settings {
 				if ( $scope !== $def[0] ) {
 					continue;
 				}
+				if ( ! VSPS_Fields::locked_show( $key ) && ! VSPS_Pims_Registry::supports_field( $key, $settings['pims'] ) ) {
+					continue; // the clinic's platform can't store it
+				}
 				$f           = $resolved[ $key ];
 				$lock_show   = VSPS_Fields::locked_show( $key );
 				$lock_req    = VSPS_Fields::locked_required( $key );
@@ -222,8 +277,8 @@ class VSPS_Settings {
 		if ( null === $api ) {
 			return null;
 		}
-		$data = VSPS_Cache::remember( array( 'admin-locations' ), function () use ( $api ) {
-			return $api->get_org_and_locations();
+		$data = VSPS_Cache::remember( array( 'admin-locations', $api->platform() ), function () use ( $api ) {
+			return $api->connection();
 		}, 600 );
 		if ( is_wp_error( $data ) ) {
 			return null;
@@ -234,7 +289,7 @@ class VSPS_Settings {
 			return strcasecmp( $a['name'], $b['name'] );
 		} );
 		return array(
-			'org'       => isset( $data['org']['name'] ) ? $data['org']['name'] : '',
+			'org'       => isset( $data['org'] ) ? (string) $data['org'] : '',
 			'locations' => $locations,
 		);
 	}
@@ -246,38 +301,34 @@ class VSPS_Settings {
 			return;
 		}
 		$settings  = vsps_get_settings();
-		$has_token = '' !== $settings['api_token'];
+		$has_token = vsps_has_credentials( $settings );
 		$org       = $has_token ? self::fetch_locations() : null;
 
 		if ( null === $org ) {
-			self::render_connect_card( $has_token );
+			self::render_connect_card( $has_token, $settings );
 			return;
 		}
 		self::render_settings( $settings, $org );
 	}
 
-	/** First-run: a single centered card asking only for the API key. */
-	private static function render_connect_card( $has_token ) {
+	/** First-run: a single centered card: the practice system, then its credentials. */
+	private static function render_connect_card( $has_token, array $settings ) {
 		?>
 		<div class="wrap">
-			<h1>Vetspire Scheduler</h1>
+			<h1>Vetcelerator Scheduler</h1>
 			<div class="card" style="max-width:520px;margin-top:24px;padding:24px 28px;">
-				<h2 style="margin-top:0;"><span class="dashicons dashicons-calendar-alt" style="color:#2271b1;"></span> Connect to Vetspire</h2>
-				<p>Paste your practice's API key to start showing live appointment times on your website. Everything else is configured after connecting.</p>
+				<h2 style="margin-top:0;"><span class="dashicons dashicons-calendar-alt" style="color:#2271b1;"></span> Connect your practice system</h2>
+				<p>Choose the clinic's practice management system and paste its credentials to start showing live appointment times on your website. Everything else is configured after connecting.</p>
 				<?php if ( $has_token ) : ?>
-					<div class="notice notice-error inline"><p>That key wasn't accepted by Vetspire. Double-check it and try again.</p></div>
+					<div class="notice notice-error inline"><p>Those credentials weren't accepted by <?php echo esc_html( VSPS_Pims_Registry::label( $settings['pims'] ) ); ?>. Double-check them and try again.</p></div>
 				<?php endif; ?>
 				<form method="post" action="options.php">
 					<?php settings_fields( 'vsps_settings_group' ); ?>
 					<input type="hidden" name="<?php echo esc_attr( VSPS_OPTION_KEY ); ?>[api_endpoint]" value="https://api.vetspire.com/graphql" />
 					<input type="hidden" name="<?php echo esc_attr( VSPS_OPTION_KEY ); ?>[connect_only]" value="1" />
-					<p>
-						<input type="password" name="<?php echo esc_attr( VSPS_OPTION_KEY ); ?>[api_token]"
-							class="regular-text" style="width:100%;" placeholder="Vetspire API Key" autocomplete="off" required />
-					</p>
-					<p class="description">Found in Vetspire → Admin → API Keys. Treat it like an admin password.</p>
+					<?php self::render_credential_fields( $settings, true ); ?>
 					<p style="margin-bottom:0;">
-						<button type="submit" class="button button-primary button-hero" style="width:100%;">Connect to Vetspire</button>
+						<button type="submit" class="button button-primary button-hero" style="width:100%;">Connect</button>
 					</p>
 				</form>
 			</div>
@@ -285,11 +336,90 @@ class VSPS_Settings {
 		<?php
 	}
 
+	/**
+	 * Platform dropdown + each platform's credential fields; only the selected
+	 * platform's fields are shown and posted (the others are disabled, so the
+	 * stored values are kept). Secrets show masked: a masked value keeps the
+	 * stored one on save.
+	 */
+	private static function render_credential_fields( array $settings, $first_run ) {
+		$opt      = VSPS_OPTION_KEY;
+		$platform = $settings['pims'];
+		$mask     = function ( $value ) {
+			return '' === (string) $value ? '' : str_repeat( '•', 12 ) . substr( (string) $value, -4 );
+		};
+		?>
+		<p>
+			<label for="vsps_pims"><strong>Practice management system</strong></label><br />
+			<select id="vsps_pims" name="<?php echo esc_attr( $opt ); ?>[pims]" data-saved="<?php echo esc_attr( $platform ); ?>" style="margin-top:6px;min-width:280px;">
+				<?php foreach ( VSPS_Pims_Registry::platforms() as $key ) : ?>
+					<option value="<?php echo esc_attr( $key ); ?>" <?php selected( $platform, $key ); ?>><?php echo esc_html( VSPS_Pims_Registry::label( $key ) ); ?></option>
+				<?php endforeach; ?>
+			</select>
+		</p>
+		<?php if ( ! $first_run ) : ?>
+			<div class="notice notice-warning inline" id="vsps-pims-warning" hidden><p>Switching the practice system clears the selected location and primary appointment type. The booking-form fields are limited to what the new system can store.</p></div>
+		<?php endif; ?>
+		<div class="vsps-pims-fields" data-vsps-pims="vetspire">
+			<p>
+				<label for="vsps_api_token"><strong>Vetspire API key</strong></label><br />
+				<input type="password" id="vsps_api_token" name="<?php echo esc_attr( $opt ); ?>[api_token]"
+					value="<?php echo esc_attr( $mask( $settings['api_token'] ) ); ?>" class="regular-text" style="width:100%;margin-top:6px;"
+					placeholder="Vetspire API Key" autocomplete="new-password" spellcheck="false" data-vsps-required="1" />
+			</p>
+			<p class="description">Found in Vetspire → Admin → API Keys. Treat it like an admin password.</p>
+		</div>
+		<div class="vsps-pims-fields" data-vsps-pims="nectar">
+			<p>
+				<label for="vsps_nectar_id"><strong>Nectar client ID</strong></label><br />
+				<input type="text" id="vsps_nectar_id" name="<?php echo esc_attr( $opt ); ?>[nectar_client_id]"
+					value="<?php echo esc_attr( $settings['nectar_client_id'] ); ?>" class="regular-text" style="width:100%;margin-top:6px;"
+					autocomplete="off" spellcheck="false" data-vsps-required="1" />
+			</p>
+			<p>
+				<label for="vsps_nectar_secret"><strong>Nectar client secret</strong></label><br />
+				<input type="password" id="vsps_nectar_secret" name="<?php echo esc_attr( $opt ); ?>[nectar_client_secret]"
+					value="<?php echo esc_attr( $mask( $settings['nectar_client_secret'] ) ); ?>" class="regular-text" style="width:100%;margin-top:6px;"
+					autocomplete="new-password" spellcheck="false" data-vsps-required="1" />
+			</p>
+			<p>
+				<label for="vsps_nectar_env"><strong>Nectar environment</strong></label><br />
+				<select id="vsps_nectar_env" name="<?php echo esc_attr( $opt ); ?>[nectar_env]" style="margin-top:6px;min-width:280px;">
+					<option value="sandbox" <?php selected( $settings['nectar_env'], 'sandbox' ); ?>>Sandbox (Nectar's test clinic)</option>
+					<option value="production" <?php selected( $settings['nectar_env'], 'production' ); ?>>Production (the real clinic)</option>
+				</select>
+			</p>
+			<p class="description">Provided by Nectar for the Vetcelerator integration; sandbox and production credentials are different. Treat the secret like an admin password. Online bookings arrive in Nectar as requests the clinic confirms.</p>
+		</div>
+		<script>
+		(function () {
+			var select = document.getElementById('vsps_pims');
+			var warning = document.getElementById('vsps-pims-warning');
+			var firstRun = <?php echo $first_run ? 'true' : 'false'; ?>;
+			function sync() {
+				document.querySelectorAll('.vsps-pims-fields').forEach(function (box) {
+					var on = box.getAttribute('data-vsps-pims') === select.value;
+					box.hidden = !on;
+					box.querySelectorAll('input').forEach(function (input) {
+						input.disabled = !on; // disabled = not posted = stored value kept
+						input.required = on && firstRun && input.hasAttribute('data-vsps-required');
+					});
+				});
+				if (warning) { warning.hidden = select.value === select.getAttribute('data-saved'); }
+			}
+			select.addEventListener('change', sync);
+			sync();
+		})();
+		</script>
+		<?php
+	}
+
 	/** Connected: two-column settings with sticky live preview. */
 	private static function render_settings( $settings, $org ) {
-		$default_id = absint( $settings['default_location'] );
+		$default_id = VSPS_Pims_Registry::sanitize_id( $settings['default_location'] );
+		$platform   = $settings['pims'];
+		$pims_label = VSPS_Pims_Registry::label( $platform );
 		$color      = $settings['primary_color'] && preg_match( '/^#[0-9a-f]{3,6}$/i', $settings['primary_color'] ) ? $settings['primary_color'] : '#2f6f4f';
-		$masked     = str_repeat( '•', 12 ) . substr( $settings['api_token'], -4 );
 		$opt        = VSPS_OPTION_KEY;
 		$layouts    = array(
 			'full'     => 'Full',
@@ -299,7 +429,7 @@ class VSPS_Settings {
 		);
 		?>
 		<div class="wrap">
-			<h1 class="wp-heading-inline">Vetspire Scheduler — Settings</h1>
+			<h1 class="wp-heading-inline">Vetcelerator Scheduler — Settings</h1>
 			<a href="<?php echo esc_url( self::hub_bookings_url() ); ?>" class="page-title-action" target="_blank" rel="noopener">View bookings in the hub</a>
 			<hr class="wp-header-end" />
 			<?php settings_errors( VSPS_OPTION_KEY ); ?>
@@ -349,29 +479,28 @@ class VSPS_Settings {
 							<div class="inside">
 								<p class="vsps-connected" style="margin-top:0;">
 									<span class="dashicons dashicons-yes-alt"></span>
-									Connected to <strong><?php echo esc_html( $org['org'] ); ?></strong> · <?php echo count( $org['locations'] ); ?> locations
-									<a href="#" id="vsps-change-key" style="margin-left:10px;font-weight:normal;">Change API key</a>
+									Connected to <strong><?php echo esc_html( $org['org'] ); ?></strong> via <?php echo esc_html( $pims_label ); ?> · <?php echo count( $org['locations'] ); ?> <?php echo 1 === count( $org['locations'] ) ? 'location' : 'locations'; ?>
+									<a href="#" id="vsps-change-connection" style="margin-left:10px;font-weight:normal;">Change connection</a>
 								</p>
-								<input type="hidden" id="vsps-token-masked" name="<?php echo esc_attr( $opt ); ?>[api_token]" value="<?php echo esc_attr( $masked ); ?>" />
-								<p id="vsps-key-wrap" style="display:none;">
-									<input type="password" id="vsps-token-new" class="regular-text" placeholder="New Vetspire API Key" autocomplete="off" disabled />
-									<span class="description">Save Changes to apply the new key.</span>
-								</p>
+								<div id="vsps-connection-edit" hidden>
+									<?php self::render_credential_fields( $settings, false ); ?>
+									<p class="description">Save Changes to apply.</p>
+								</div>
 								<?php if ( empty( $org['locations'] ) ) : ?>
-									<div class="notice notice-warning inline"><p>Connected, but this Vetspire account has no locations configured yet. Add a location in Vetspire, then reload this page.</p></div>
+									<div class="notice notice-warning inline"><p>Connected, but this <?php echo esc_html( $pims_label ); ?> account has no locations configured yet. Add a location there, then reload this page.</p></div>
 								<?php endif; ?>
 								<label for="vsps_location"><strong>Clinic location shown by the widget</strong></label><br />
 								<select id="vsps_location" name="<?php echo esc_attr( $opt ); ?>[default_location]" style="margin-top:6px;min-width:280px;">
 									<option value="">— Select the clinic location —</option>
 									<?php foreach ( $org['locations'] as $loc ) : ?>
-										<option value="<?php echo esc_attr( absint( $loc['id'] ) ); ?>" <?php selected( $default_id, absint( $loc['id'] ) ); ?>>
+										<option value="<?php echo esc_attr( VSPS_Pims_Registry::sanitize_id( $loc['id'] ) ); ?>" <?php selected( $default_id, VSPS_Pims_Registry::sanitize_id( $loc['id'] ) ); ?>>
 											<?php echo esc_html( $loc['name'] ); ?>
 										</option>
 									<?php endforeach; ?>
 								</select>
 								<?php
 								$types = array();
-								if ( $default_id ) {
+								if ( '' !== $default_id ) {
 									$vsps_api_ref = vsps_api();
 									$types        = VSPS_Cache::remember( array( 'admin-types', $default_id ), function () use ( $vsps_api_ref, $default_id ) {
 										return $vsps_api_ref->get_bookable_types( $default_id );
@@ -386,13 +515,16 @@ class VSPS_Settings {
 									<select id="vsps_default_type" name="<?php echo esc_attr( $opt ); ?>[default_type]" style="margin-top:6px;min-width:280px;" <?php disabled( empty( $types ) ); ?>>
 										<option value="">Auto (first available type)</option>
 										<?php foreach ( $types as $type ) : ?>
-											<option value="<?php echo esc_attr( absint( $type['id'] ) ); ?>" <?php selected( absint( $settings['default_type'] ), absint( $type['id'] ) ); ?>>
+											<option value="<?php echo esc_attr( VSPS_Pims_Registry::sanitize_id( $type['id'] ) ); ?>" <?php selected( VSPS_Pims_Registry::sanitize_id( $settings['default_type'] ), VSPS_Pims_Registry::sanitize_id( $type['id'] ) ); ?>>
 												<?php echo esc_html( $type['name'] ); ?> (<?php echo esc_html( $type['duration'] ); ?> min)
 											</option>
 										<?php endforeach; ?>
 									</select>
 								</p>
-								<p class="description">The Bar and Floating designs book this type; Full and Calendar preselect it in their dropdown.<?php echo $default_id ? '' : ' Select and save a location first.'; ?></p>
+								<p class="description">The Bar and Floating designs book this type; Full and Calendar preselect it in their dropdown.<?php echo '' !== $default_id ? '' : ' Select and save a location first.'; ?></p>
+								<?php if ( 'nectar' === $platform ) : ?>
+									<?php self::render_nectar_options( $settings ); ?>
+								<?php endif; ?>
 							</div>
 						</div>
 
@@ -421,9 +553,9 @@ class VSPS_Settings {
 						<div class="vsps-box">
 							<h2>Booking Form</h2>
 							<div class="inside">
-								<p style="margin-top:0;">Choose which fields the booking form shows and which ones the pet owner must fill in. Grayed-out fields are always on: Vetspire needs them to book. Owner fields are only asked of new clients; pet fields only when a new pet is added. Fewer fields convert better.</p>
+								<p style="margin-top:0;">Choose which fields the booking form shows and which ones the pet owner must fill in. Grayed-out fields are always on: <?php echo esc_html( $pims_label ); ?> needs them to book. Owner fields are only asked of new clients; pet fields only when a new pet is added. Fewer fields convert better.</p>
 								<?php self::render_fields_table( $settings ); ?>
-								<p class="description" style="margin-bottom:0;">Every field is saved to its own place in Vetspire. A/B test: add <code>variant="a"</code> (only the always-on fields) or <code>variant="b"</code> (the fields checked here) to two copies of the shortcode.</p>
+								<p class="description" style="margin-bottom:0;">Every field is saved to its own place in <?php echo esc_html( $pims_label ); ?>; only the fields <?php echo esc_html( $pims_label ); ?> can store are listed. A/B test: add <code>variant="a"</code> (only the always-on fields) or <code>variant="b"</code> (the fields checked here) to two copies of the shortcode.</p>
 							</div>
 						</div>
 
@@ -469,19 +601,19 @@ class VSPS_Settings {
 									<span class="vsps-preview-chip" id="vsps-preview-chip" aria-live="polite"></span>
 								</h2>
 								<div class="inside">
-									<p id="vsps-preview-hint" class="description" <?php echo $default_id ? 'style="display:none;"' : ''; ?>><em>Select a clinic location to see the preview.</em></p>
-									<div class="vsps-preview-frame" id="vsps-preview-frame" <?php echo $default_id ? '' : 'style="display:none;"'; ?>>
+									<p id="vsps-preview-hint" class="description" <?php echo '' !== $default_id ? 'style="display:none;"' : ''; ?>><em>Select a clinic location to see the preview.</em></p>
+									<div class="vsps-preview-frame" id="vsps-preview-frame" <?php echo '' !== $default_id ? '' : 'style="display:none;"'; ?>>
 										<link rel="stylesheet" href="<?php echo esc_url( VSPS_PLUGIN_URL . 'assets/css/scheduler.css?ver=' . VSPS_VERSION ); ?>" />
 										<div class="vsps-widget" id="vsps-preview" style="--vsps-primary:<?php echo esc_attr( $color ); ?>;margin:0 auto;"
 											data-vsps-config="<?php echo esc_attr( wp_json_encode( array(
-												'locationId' => $default_id,
+												'locationId' => VSPS_Pims_Registry::id_for_js( $default_id ),
 												'typeIds'    => array(),
 												'days'       => 7,
 												'mode'          => 'link',
 												'linkUrl'       => '#vsps-preview',
 												'layout'        => $settings['layout'],
-												'defaultTypeId' => absint( $settings['default_type'] ),
-											) ) ); ?>"<?php echo $default_id ? '' : ' data-vsps-noinit="1"'; ?>>
+												'defaultTypeId' => VSPS_Pims_Registry::id_for_js( $settings['default_type'] ),
+											) ) ); ?>"<?php echo '' !== $default_id ? '' : ' data-vsps-noinit="1"'; ?>>
 											<h3 class="vsps-title">Book an Appointment</h3>
 											<div class="vsps-body"><p class="vsps-loading">Loading available times…</p></div>
 										</div>
@@ -540,7 +672,7 @@ class VSPS_Settings {
 					chip.textContent = 'Previewing: ' + layoutName(currentLayout()) + (name ? ' · ' + name.trim() : '');
 				}
 				function reinit() {
-					var locationId = locSel ? parseInt(locSel.value, 10) : 0;
+					var locationId = locSel ? locSel.value : '';
 					updateChip();
 					if (!locationId) {
 						frame.style.display = 'none';
@@ -559,7 +691,7 @@ class VSPS_Settings {
 							cfg.fields[cb.getAttribute('data-field')] = cb.checked ? (req && req.checked ? 2 : 1) : 0;
 						});
 						var typeSel = document.getElementById('vsps_default_type');
-						cfg.defaultTypeId = ( typeSel && ! typeSel.disabled ) ? parseInt(typeSel.value, 10) || 0 : 0;
+						cfg.defaultTypeId = ( typeSel && ! typeSel.disabled ) ? typeSel.value : '';
 						preview.setAttribute('data-vsps-config', JSON.stringify(cfg));
 						preview.className = 'vsps-widget';
 						if (picker) { preview.style.setProperty('--vsps-primary', picker.value); }
@@ -639,25 +771,76 @@ class VSPS_Settings {
 					});
 				}
 
-				// "Change API key": swap the masked hidden token for a fresh input.
-				var changeKey = document.getElementById('vsps-change-key');
-				if (changeKey) {
-					changeKey.addEventListener('click', function (e) {
+				// "Change connection": reveal the platform dropdown + credentials.
+				var changeConn = document.getElementById('vsps-change-connection');
+				if (changeConn) {
+					changeConn.addEventListener('click', function (e) {
 						e.preventDefault();
-						var masked = document.getElementById('vsps-token-masked');
-						var wrap = document.getElementById('vsps-key-wrap');
-						var input = document.getElementById('vsps-token-new');
-						if (masked) { masked.remove(); }
-						wrap.style.display = '';
-						input.disabled = false;
-						input.name = <?php echo wp_json_encode( VSPS_OPTION_KEY . '[api_token]' ); ?>;
-						input.focus();
-						changeKey.remove();
+						var box = document.getElementById('vsps-connection-edit');
+						if (box) {
+							box.hidden = false;
+							var first = box.querySelector('select');
+							if (first) { first.focus(); }
+						}
+						changeConn.remove();
 					});
 				}
 			})();
 			</script>
 		</div>
+		<?php
+	}
+
+	/** Credentials posted by the connect card / "Change connection"; masked or missing values keep the stored ones. */
+	private static function sanitize_credentials( array $input, array $current ) {
+		$out = array();
+		foreach ( array( 'api_token', 'nectar_client_id', 'nectar_client_secret' ) as $key ) {
+			$value       = isset( $input[ $key ] ) && is_string( $input[ $key ] ) ? trim( $input[ $key ] ) : '';
+			$out[ $key ] = ( '' !== $value && false === strpos( $value, '•' ) )
+				? sanitize_text_field( $value )
+				: ( isset( $current[ $key ] ) ? (string) $current[ $key ] : '' );
+		}
+		return $out;
+	}
+
+	private static function sanitize_timezone( $tz ) {
+		$tz = is_string( $tz ) ? trim( $tz ) : '';
+		return in_array( $tz, timezone_identifiers_list(), true ) ? $tz : '';
+	}
+
+	/** Nectar-only options under the location: clinic timezone, multi-location code, how bookings arrive. */
+	private static function render_nectar_options( array $settings ) {
+		$opt   = VSPS_OPTION_KEY;
+		$tz    = (string) $settings['clinic_timezone'];
+		$zones = array_merge(
+			DateTimeZone::listIdentifiers( DateTimeZone::PER_COUNTRY, 'US' ),
+			DateTimeZone::listIdentifiers( DateTimeZone::PER_COUNTRY, 'CA' )
+		);
+		if ( '' !== $tz && ! in_array( $tz, $zones, true ) ) {
+			$zones[] = $tz;
+		}
+		sort( $zones );
+		?>
+		<p style="margin-top:14px;margin-bottom:0;">
+			<label for="vsps_clinic_tz"><strong>Clinic timezone</strong></label><br />
+			<select id="vsps_clinic_tz" name="<?php echo esc_attr( $opt ); ?>[clinic_timezone]" style="margin-top:6px;min-width:280px;">
+				<option value="">— Select the clinic's timezone —</option>
+				<?php foreach ( $zones as $zone ) : ?>
+					<option value="<?php echo esc_attr( $zone ); ?>" <?php selected( $tz, $zone ); ?>><?php echo esc_html( str_replace( '_', ' ', $zone ) ); ?></option>
+				<?php endforeach; ?>
+			</select>
+		</p>
+		<p class="description">Appointment times are shown in the clinic's local time. Used when Nectar doesn't report the timezone itself.</p>
+		<?php if ( '' === $tz ) : ?>
+			<div class="notice notice-error inline"><p>Select the clinic's timezone and save. Until then no time can be booked.</p></div>
+		<?php endif; ?>
+		<p style="margin-top:12px;margin-bottom:0;">
+			<label for="vsps_nectar_meta"><strong>Nectar location code</strong> (multi-location clinics only)</label><br />
+			<input type="text" id="vsps_nectar_meta" name="<?php echo esc_attr( $opt ); ?>[nectar_meta_location]"
+				value="<?php echo esc_attr( $settings['nectar_meta_location'] ); ?>" class="regular-text" style="margin-top:6px;" spellcheck="false" />
+		</p>
+		<p class="description">Leave empty unless Nectar gave this clinic a location code.</p>
+		<div class="notice notice-info inline" style="margin-top:12px;"><p>With Nectar, online bookings arrive as <strong>requests</strong> the clinic confirms in Nectar, and times start 24 hours from now (Nectar's booking window). Only appointment types enabled for online booking without a deposit are offered.</p></div>
 		<?php
 	}
 

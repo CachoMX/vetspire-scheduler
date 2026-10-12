@@ -17,7 +17,9 @@ class VSPS_Log {
 
 	// v5 (1.22.0): the table became an outbox; the upgrade deletes the
 	// history the hub already holds.
-	const DB_VERSION = '5';
+	// v6 (1.25.0): location / type ids become text (Nectar ids are hex strings)
+	// and each row records its platform.
+	const DB_VERSION = '6';
 
 	public static function table() {
 		global $wpdb;
@@ -42,8 +44,9 @@ class VSPS_Log {
 			created_at datetime NOT NULL,
 			outcome varchar(10) NOT NULL DEFAULT 'booked',
 			appointment_id varchar(32) DEFAULT NULL,
-			location_id bigint(20) unsigned NOT NULL DEFAULT 0,
-			appointment_type_id bigint(20) unsigned NOT NULL DEFAULT 0,
+			pims varchar(10) NOT NULL DEFAULT 'vetspire',
+			location_id varchar(64) NOT NULL DEFAULT '',
+			appointment_type_id varchar(64) NOT NULL DEFAULT '',
 			type_name varchar(120) NOT NULL DEFAULT '',
 			client_id varchar(32) NOT NULL DEFAULT '',
 			client_name varchar(160) NOT NULL DEFAULT '',
@@ -87,7 +90,7 @@ class VSPS_Log {
 			// dbDelta can fail to add a column (permissions, lock timeout) without
 			// saying so: confirm the hub columns before anything relies on them.
 			$missing = array();
-			foreach ( array( 'event_id', 'hub_synced_at', 'hub_refused_at' ) as $column ) {
+			foreach ( array( 'event_id', 'hub_synced_at', 'hub_refused_at', 'pims' ) as $column ) {
 				if ( ! $wpdb->get_var( $wpdb->prepare( "SHOW COLUMNS FROM {$table} LIKE %s", $column ) ) ) { // phpcs:ignore WordPress.DB.DirectDatabaseQuery
 					$missing[] = $column;
 				}
@@ -141,7 +144,14 @@ class VSPS_Log {
 	private static function insert( array $row ) {
 		global $wpdb;
 		$row['event_id'] = wp_generate_uuid4();
-		if ( false === $wpdb->insert( self::table(), $row ) ) {
+		$ok              = $wpdb->insert( self::table(), $row );
+		if ( false === $ok && false !== stripos( (string) $wpdb->last_error, 'pims' ) ) {
+			// The v6 upgrade (pims column) didn't apply on this host yet: never lose
+			// the booking over it. The upgrade is retried on the next request.
+			unset( $row['pims'] );
+			$ok = $wpdb->insert( self::table(), $row );
+		}
+		if ( false === $ok ) {
 			error_log( '[vetspire-scheduler] bookings log insert failed: ' . $wpdb->last_error );
 			return 0;
 		}
@@ -171,22 +181,23 @@ class VSPS_Log {
 			'client_id'      => isset( $result['client_id'] ) ? (string) $result['client_id'] : '',
 			'patient_id'     => isset( $result['patient_id'] ) ? (string) $result['patient_id'] : '',
 			'client_type'    => ! empty( $result['existing_client'] ) ? 'existing' : 'new',
-			// Vetspire's own name for the pet when an existing one was matched (the
+			// The PIMS's own name for the pet when an existing one was matched (the
 			// visitor's typed spelling/casing would otherwise look "edited" on the
-			// very first sync even though nobody touched Vetspire).
+			// very first sync even though nobody touched the PIMS).
 			'patient_name'   => isset( $result['patient_name'] ) && '' !== $result['patient_name']
 				? substr( (string) $result['patient_name'], 0, 120 )
 				: substr( isset( $args['patient']['name'] ) ? (string) $args['patient']['name'] : '', 0, 120 ),
 			'type_name'      => isset( $result['type_name'] ) ? substr( (string) $result['type_name'], 0, 120 ) : '',
 			'provider_name'  => isset( $result['provider_name'] ) ? substr( (string) $result['provider_name'], 0, 120 ) : '',
 			'start_utc'      => $start_utc,
-			'status'         => 'PLANNED',
+			// Nectar online bookings wait for the clinic: ONLINE_REQUESTED, its own status.
+			'status'         => ! empty( $result['request'] ) ? 'ONLINE_REQUESTED' : 'PLANNED',
 			'after_hours'    => isset( $extra['after_hours'] ) && null !== $extra['after_hours'] ? (int) (bool) $extra['after_hours'] : null,
 		) );
 		return self::insert( $row );
 	}
 
-	/** A booking attempt Vetspire (or our own guards) refused. Honeypot/rate-limit noise is not logged. */
+	/** A booking attempt the PIMS (or our own guards) refused. Honeypot/rate-limit noise is not logged. */
 	public static function record_failure( array $args, $code, $message, array $extra = array() ) {
 		$row = array_merge( self::common_fields( $args, $extra ), array(
 			'outcome'       => 'failed',
@@ -202,8 +213,9 @@ class VSPS_Log {
 		$name   = trim( ( isset( $client['given_name'] ) ? $client['given_name'] : '' ) . ' ' . ( isset( $client['family_name'] ) ? $client['family_name'] : '' ) );
 		return array(
 			'created_at'          => current_time( 'mysql', true ),
-			'location_id'         => isset( $args['location_id'] ) ? (int) $args['location_id'] : 0,
-			'appointment_type_id' => isset( $args['appointment_type_id'] ) ? (int) $args['appointment_type_id'] : 0,
+			'pims'                => VSPS_Pims_Registry::current(),
+			'location_id'         => isset( $args['location_id'] ) ? VSPS_Pims_Registry::sanitize_id( $args['location_id'] ) : '',
+			'appointment_type_id' => isset( $args['appointment_type_id'] ) ? VSPS_Pims_Registry::sanitize_id( $args['appointment_type_id'] ) : '',
 			'client_name'         => substr( $name, 0, 160 ),
 			'client_email'        => substr( isset( $client['email'] ) ? (string) $client['email'] : '', 0, 190 ),
 			'client_type'         => isset( $args['client_type'] ) && 'existing' === $args['client_type'] ? 'existing' : 'new',
