@@ -14,9 +14,43 @@ class VSPS_Rest {
 	const NS              = 'vetspire/v1';
 	const BOOK_RATE_LIMIT = 5;      // bookings per IP...
 	const BOOK_RATE_TTL   = 3600;   // ...per hour.
+	// Today's times change the fastest (phone bookings, check-ins), so the
+	// plugin keeps them for a minute instead of the usual cache_ttl.
+	const TODAY_CACHE_TTL = 60;
 
 	public static function init() {
 		add_action( 'rest_api_init', array( __CLASS__, 'register_routes' ) );
+		add_filter( 'rest_pre_dispatch', array( __CLASS__, 'mark_uncacheable' ), 10, 3 );
+		add_filter( 'rest_post_dispatch', array( __CLASS__, 'no_store_headers' ), 10, 3 );
+	}
+
+	/** True for requests to this plugin's own routes. */
+	private static function is_own_route( WP_REST_Request $request ) {
+		return 0 === strpos( ltrim( $request->get_route(), '/' ), self::NS . '/' );
+	}
+
+	/**
+	 * Page caches must never store these answers: availability and opening
+	 * status are live data. LiteSpeed Cache was serving hours-old availability,
+	 * so visitors picked times that were already taken (2026-10-12).
+	 */
+	public static function mark_uncacheable( $result, $server, $request ) {
+		if ( $request instanceof WP_REST_Request && self::is_own_route( $request ) ) {
+			do_action( 'litespeed_control_set_nocache', 'vetspire-scheduler: live availability' );
+			if ( ! defined( 'DONOTCACHEPAGE' ) ) {
+				define( 'DONOTCACHEPAGE', true );
+			}
+		}
+		return $result;
+	}
+
+	public static function no_store_headers( $response, $server, $request ) {
+		if ( $response instanceof WP_HTTP_Response && $request instanceof WP_REST_Request && self::is_own_route( $request ) ) {
+			$response->header( 'Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0' );
+			$response->header( 'X-LiteSpeed-Cache-Control', 'no-cache' );
+			$response->header( 'CDN-Cache-Control', 'no-store' );
+		}
+		return $response;
 	}
 
 	public static function register_routes() {
@@ -151,14 +185,16 @@ class VSPS_Rest {
 			$start = $today;
 		}
 
-		$result = array();
+		$result    = array();
+		$today_ymd = $today->format( 'Y-m-d' );
 		for ( $i = 0; $i < $days; $i++ ) {
 			$date  = $start->modify( "+{$i} days" )->format( 'Y-m-d' );
 			$slots = VSPS_Cache::remember(
 				array( 'avail', $location_id, $type_id, $date ),
 				function () use ( $api, $location_id, $type_id, $date ) {
 					return $api->get_available_times( $location_id, $type_id, $date );
-				}
+				},
+				$date === $today_ymd ? self::TODAY_CACHE_TTL : null
 			);
 			if ( is_wp_error( $slots ) ) {
 				$slots = array();
@@ -375,6 +411,11 @@ class VSPS_Rest {
 			$code = $result->get_error_code();
 			error_log( '[vetspire-scheduler] booking failed (' . $code . '): ' . self::redact( $result->get_error_message() ) );
 			VSPS_Log::record_failure( $args, $code, $result->get_error_message(), $source );
+			if ( 'vsps_slot' === $code ) {
+				// The visitor goes straight back to the picker: it must show this
+				// day's live times, not the cached list that offered a taken slot.
+				VSPS_Cache::forget( array( 'avail', (string) $args['location_id'], (string) $args['appointment_type_id'], $args['date'] ) );
+			}
 			if ( in_array( $code, array( 'vsps_slot', 'vsps_type', 'vsps_datetime', 'vsps_client_missing', 'vsps_pet_missing', 'vsps_verify' ), true ) ) {
 				return new WP_Error( $code, $result->get_error_message(), array( 'status' => 409 ) );
 			}
@@ -383,6 +424,17 @@ class VSPS_Rest {
 
 		// The just-booked slot is gone: refresh this day's cached availability.
 		VSPS_Cache::forget( array( 'avail', (string) $args['location_id'], (string) $args['appointment_type_id'], $args['date'] ) );
+
+		// A retry of a booking that already went through: confirm it, but don't
+		// log it again (the hub would count the same appointment twice).
+		if ( ! empty( $result['already_booked'] ) ) {
+			return rest_ensure_response( array(
+				'success'        => true,
+				'already_booked' => true,
+				'request'        => false,
+				'start'          => $result['start'],
+			) );
+		}
 
 		// Booked during vs after office hours (computed server-side, clinic timezone).
 		$after_hours = null;

@@ -225,6 +225,31 @@ if ( $booked ) {
 		check( 'read appointment back', false, detail( $read ) );
 	}
 
+	echo "== 7d. A retry of a booking that already went through ==\n";
+	// TESTING LOCATION has no availableTimes, so the live re-check fails and
+	// book() must recognise the appointment this client already holds.
+	$found = $api->find_client_appointment_at( TEST_LOCATION, $result['start'], strtoupper( TEST_EMAIL ), TEST_TYPE, 'testpet' );
+	check( 'lookup finds the held appointment (email + pet case-insensitive)', (string) $appt_id === (string) $found, detail( $found ) );
+	$retry = $booking_args;
+	unset( $retry['skip_slot_check'] );
+	$res = VSPS_Booking::book( $api, $retry );
+	check( 'retry returns already_booked with the same id',
+		! is_wp_error( $res ) && ! empty( $res['already_booked'] ) && (string) $res['appointment_id'] === (string) $appt_id, detail( $res ) );
+	$other = $retry;
+	$other['client']['email'] = 'zz-someone-else@example.com';
+	$res = VSPS_Booking::book( $api, $other );
+	check( 'another client still gets vsps_slot', is_wp_error( $res ) && 'vsps_slot' === $res->get_error_code(), detail( $res ) );
+	$later = $retry;
+	$later['time'] = '10:45';
+	$res = VSPS_Booking::book( $api, $later );
+	check( 'same client, different time still gets vsps_slot', is_wp_error( $res ) && 'vsps_slot' === $res->get_error_code(), detail( $res ) );
+	$second_pet = $retry;
+	$second_pet['patient']['name'] = 'OtherTestPet';
+	$res = VSPS_Booking::book( $api, $second_pet );
+	check( 'same client + time, another pet still gets vsps_slot', is_wp_error( $res ) && 'vsps_slot' === $res->get_error_code(), detail( $res ) );
+	$found_type = $api->find_client_appointment_at( TEST_LOCATION, $result['start'], TEST_EMAIL, '5536', 'TestPet' );
+	check( 'lookup ignores a different appointment type', null === $found_type, detail( $found_type ) );
+
 	echo "== 8. Dedupe on second booking (same email) ==\n";
 	$booking_args['time'] = '11:30';
 	$result2 = VSPS_Booking::book( $api, $booking_args );

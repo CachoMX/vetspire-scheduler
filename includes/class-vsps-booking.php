@@ -73,6 +73,13 @@ class VSPS_Booking {
 				}
 			}
 			if ( null === $slot ) {
+				// The slot can be "gone" because this same client already holds it:
+				// a retry after a slow response, or a second tab. Confirm that
+				// booking instead of showing an error to someone who is booked.
+				$held = self::held_by_client( $api, $args, $location['timezone'] );
+				if ( null !== $held ) {
+					return $held;
+				}
 				return new WP_Error( 'vsps_slot', 'That time is no longer available. Please pick another slot.' );
 			}
 			$provider_id = isset( $slot['providerId'] ) ? (string) $slot['providerId'] : '';
@@ -225,6 +232,36 @@ class VSPS_Booking {
 			}
 		}
 		return null;
+	}
+
+	/**
+	 * The result of a booking this client already holds at the requested start,
+	 * or null. Only for platforms that can look it up (Vetspire today).
+	 */
+	private static function held_by_client( VSPS_Pims $api, $args, $timezone ) {
+		if ( ! method_exists( $api, 'find_client_appointment_at' ) || empty( $args['client']['email'] ) || empty( $args['patient']['name'] ) ) {
+			return null;
+		}
+		$start = self::to_iso8601( $args['date'], $args['time'], $timezone );
+		if ( is_wp_error( $start ) ) {
+			return null;
+		}
+		$id = $api->find_client_appointment_at(
+			$args['location_id'],
+			$start,
+			$args['client']['email'],
+			$args['appointment_type_id'],
+			$args['patient']['name']
+		);
+		if ( null === $id ) {
+			return null;
+		}
+		return array(
+			'appointment_id' => $id,
+			'start'          => $start,
+			'already_booked' => true,
+			'request'        => false,
+		);
 	}
 
 	/** Picks the slot matching the requested time, preferring the requested provider. */

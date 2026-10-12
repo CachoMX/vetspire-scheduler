@@ -1971,16 +1971,20 @@
 			body: JSON.stringify(payload)
 		}).then(function (data) {
 			if (reqToken !== bk.reqToken) { return; }
-			self.track('booking_completed', {
-				location_id: self.config.locationId,
-				appointment_type_id: self.state.typeId,
-				appointment_id: data.appointment_id,
-				date: bk.date,
-				time: bk.slot.time,
-				client_type: payload.client_type,
-				after_hours: data.after_hours,
-				booked_at: data.booked_at
-			});
+			// already_booked: a retry of a booking that went through earlier. Show
+			// the confirmation, but it was already counted the first time.
+			if (!data.already_booked) {
+				self.track('booking_completed', {
+					location_id: self.config.locationId,
+					appointment_type_id: self.state.typeId,
+					appointment_id: data.appointment_id,
+					date: bk.date,
+					time: bk.slot.time,
+					client_type: payload.client_type,
+					after_hours: data.after_hours,
+					booked_at: data.booked_at
+				});
+			}
 			bk.modal.innerHTML = '';
 			var done = el('div', 'vsps-booked');
 			done.setAttribute('role', 'status');

@@ -274,6 +274,51 @@ Notes from the client: " . $c['notes'];
 		return is_wp_error( $data ) ? $data : ( isset( $data['availableTimes'] ) ? $data['availableTimes'] : array() );
 	}
 
+	/**
+	 * The id of a live appointment this client (by email) already holds for this
+	 * pet and appointment type at this location and exact start, or null. Lets a
+	 * retry of a booking that already went through (slow response, second tab)
+	 * confirm it instead of failing. Pet and type must match too: the same
+	 * client booking a second pet at the same time is a different booking.
+	 */
+	public function find_client_appointment_at( $location_id, $start_iso, $email, $type_id, $pet_name ) {
+		$start = strtotime( $start_iso );
+		if ( false === $start || '' === trim( (string) $email ) || '' === (string) $type_id || '' === trim( (string) $pet_name ) ) {
+			return null;
+		}
+		$data = $this->request(
+			'query ($loc: ID!, $from: DateTime, $to: DateTime) {
+				appointments(locationId: $loc, start: $from, end: $to, limit: 50) {
+					id start deleted status type { id } patient { name client { email } }
+				}
+			}',
+			array(
+				'loc'  => (string) $location_id,
+				'from' => gmdate( 'Y-m-d\TH:i:s\Z', $start - 60 ),
+				'to'   => gmdate( 'Y-m-d\TH:i:s\Z', $start + 60 ),
+			)
+		);
+		if ( is_wp_error( $data ) || empty( $data['appointments'] ) ) {
+			return null;
+		}
+		foreach ( $data['appointments'] as $appt ) {
+			$mail = isset( $appt['patient']['client']['email'] ) ? (string) $appt['patient']['client']['email'] : '';
+			$live = empty( $appt['deleted'] ) && ! in_array( isset( $appt['status'] ) ? $appt['status'] : '', array( 'CANCELLED', 'NOSHOW' ), true );
+			$same = 0 === strcasecmp( trim( $mail ), trim( $email ) )
+				&& isset( $appt['type']['id'] ) && (string) $appt['type']['id'] === (string) $type_id
+				&& isset( $appt['patient']['name'] ) && 0 === strcasecmp( trim( $appt['patient']['name'] ), trim( $pet_name ) );
+			if ( $live && $same && strtotime( self::utc( $appt['start'] ) ) === $start ) {
+				return (string) $appt['id'];
+			}
+		}
+		return null;
+	}
+
+	/** Vetspire DateTime values may come without a zone suffix; they are UTC. */
+	private static function utc( $value ) {
+		return preg_match( '/(Z|[+-]\d\d:?\d\d)$/', (string) $value ) ? (string) $value : $value . 'Z';
+	}
+
 	/** Finds an existing client by exact email. Returns first match or null. */
 	public function find_client_by_email( $email ) {
 		$data = $this->request(
