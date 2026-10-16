@@ -25,7 +25,10 @@ class VSPS_Events {
 	const LAYOUTS        = array( 'full', 'bar', 'calendar', 'float' );
 	const MAX_PER_CALL   = 50;   // events accepted in one browser request
 	const MAX_FIELDS     = 40;   // field keys on one form_abandoned
-	const RATE_LIMIT     = 120;  // browser requests per IP...
+	// Browser requests per IP... REMOTE_ADDR only (spoofable headers are not
+	// trusted), so a site behind a proxy that hides the visitor's IP puts every
+	// visitor in one bucket: the limit is generous, storage is bounded by MAX_ROWS.
+	const RATE_LIMIT     = 600;
 	const RATE_TTL       = 3600; // ...per hour (fixed window)
 	const RETENTION_DAYS = 14;   // unacknowledged rows older than this are dropped
 	const ID_PATTERN     = '/^[A-Za-z0-9_-]{8,64}$/';
@@ -33,6 +36,11 @@ class VSPS_Events {
 	// (the hourly cron catches everything else).
 	const PUSH_EVERY     = 300;
 	const PUSH_OPTION    = 'vsps_events_push_after';
+	// The outbox never grows past this many rows (hub down, abuse): new events are
+	// silently dropped until the hub catches up. Counted at most once a minute.
+	const MAX_ROWS       = 20000;
+	const COUNT_CACHE    = 'vsps_events_count';
+	const COUNT_TTL      = 60;
 
 	public static function table() {
 		global $wpdb;
@@ -296,6 +304,9 @@ class VSPS_Events {
 			if ( ! $rate_limit_ok() ) {
 				return new WP_REST_Response( array( 'code' => 'vsps_rate' ), 429 );
 			}
+			if ( self::outbox_full() ) {
+				return new WP_REST_Response( null, 204 );
+			}
 			if ( self::store( $rows ) ) {
 				self::maybe_push();
 			}
@@ -303,6 +314,16 @@ class VSPS_Events {
 			error_log( '[vetspire-scheduler] events ingest failed: ' . $e->getMessage() );
 		}
 		return new WP_REST_Response( null, 204 );
+	}
+
+	/** True when the outbox holds more than MAX_ROWS rows (row count cached COUNT_TTL seconds). */
+	public static function outbox_full() {
+		$count = get_transient( self::COUNT_CACHE );
+		if ( false === $count ) {
+			$count = self::pending_count();
+			set_transient( self::COUNT_CACHE, $count, self::COUNT_TTL );
+		}
+		return (int) $count > self::MAX_ROWS;
 	}
 
 	/** Asks VSPS_Hub for a deferred push (after this response), at most every PUSH_EVERY seconds. */

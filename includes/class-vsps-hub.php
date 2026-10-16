@@ -57,12 +57,18 @@ class VSPS_Hub {
 	const EVENTS_BACKOFF_SECS = 300;
 	// The hub has no events endpoint (yet): ask again in an hour, not every 5 minutes.
 	const EVENTS_MISSING_BACKOFF_SECS = HOUR_IN_SECONDS;
+	// Event batches stop once a push has run this long (LOCK_TTL is 60 s); the
+	// rest waits for the next push. Bookings always go first and are never cut.
+	const EVENTS_TIME_BUDGET  = 40;
 
 	/** Set once per request when a deferred push has been registered. */
 	private static $scheduled = false;
 
 	/** Result of the inline push done on an admin screen load (for the notice). */
 	private static $admin_result = null;
+
+	/** microtime() when the current push started (for the events time budget). */
+	private static $push_started = null;
 
 	public static function init() {
 		add_action( 'init', array( __CLASS__, 'ensure_cron' ) );
@@ -368,6 +374,7 @@ class VSPS_Hub {
 	 * Vetspire location call — only from admin/cron, never from a visitor request.
 	 */
 	public static function push_pending( $limit = self::BATCH_SIZE, $allow_api = false, $verify = false ) {
+		self::$push_started = microtime( true );
 		$summary = array(
 			'attempted'        => false,
 			'delivered'        => 0,
@@ -709,6 +716,9 @@ class VSPS_Hub {
 
 	/** Sends waiting events (inside push_pending's lock). Returns the number of rows removed from the outbox. */
 	private static function push_events( $key ) {
+		if ( null === self::$push_started ) {
+			self::$push_started = microtime( true );
+		}
 		VSPS_Events::prune();
 		$status = self::status();
 		if ( ! empty( $status['events_backoff_until'] ) && (int) $status['events_backoff_until'] > time() ) {
@@ -721,6 +731,9 @@ class VSPS_Hub {
 		);
 		$delivered = 0;
 		for ( $batch = 0; $batch < self::EVENTS_MAX_BATCHES; $batch++ ) {
+			if ( self::events_time_up() ) {
+				break; // the next push carries on (no backoff)
+			}
 			$rows = VSPS_Events::pending( self::EVENTS_BATCH );
 			if ( ! $rows ) {
 				break;
@@ -755,8 +768,16 @@ class VSPS_Hub {
 		return $delivered;
 	}
 
+	/** True once the current push has used EVENTS_TIME_BUDGET seconds. */
+	private static function events_time_up() {
+		return null !== self::$push_started && microtime( true ) - self::$push_started >= self::EVENTS_TIME_BUDGET;
+	}
+
 	/** Like send_chunked(): a whole-request 400/413 is split in halves down to single events. */
 	private static function send_events_chunked( $key, array $rows, array &$ctx ) {
+		if ( self::events_time_up() ) {
+			return array( 'delivered' => 0, 'error' => 'time budget used' );
+		}
 		if ( $ctx['requests'] >= self::MAX_REQUESTS ) {
 			return self::events_fail( 0, 'The hub refused some events.', self::EVENTS_BACKOFF_SECS );
 		}

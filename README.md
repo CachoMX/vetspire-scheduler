@@ -113,8 +113,8 @@ the booking steps, otherwise at most every 15 s). Each event carries a random ev
 per-tab session id (sessionStorage, no cookies), the device (mobile / tablet / desktop), layout,
 variant, location and type ids and the page path. `form_abandoned` (a booking form closed or
 the page hidden without a booking) lists only the KEYS of the fields that held a value, in form
-order, never the values. WordPress stamps the time, rate-limits per IP (120 requests/hour) and
-keeps the rows in `wp_vsps_events` until the hub acknowledges them (rows the hub never takes are
+order, never the values. WordPress stamps the time, rate-limits per IP (600 requests/hour) and
+keeps the rows in `wp_vsps_events` (at most 20,000) until the hub acknowledges them (rows the hub never takes are
 dropped after 14 days). Without a key nothing is sent or stored. Every booking also records the
 device. Pages where no widget renders send nothing, and an events failure never touches a
 booking.

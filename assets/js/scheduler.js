@@ -143,7 +143,7 @@
 	 * The funnel events (widget_view → booking_completed, plus form_abandoned)
 	 * are also queued for the hub and posted in batches to the plugin's own
 	 * REST route, which keeps them until the hub has them. One request per
-	 * batch: on page hide (sendBeacon), right away for the booking steps, else
+	 * batch: on page hide (sendBeacon), right away for a booking's outcome, else
 	 * at most every 15 s while events wait. Ids, page path and field KEYS only:
 	 * never a value, name, email or phone; sessionStorage only, no cookies.
 	 * Nothing here may ever get in the way of a booking, so every step is
@@ -151,7 +151,9 @@
 	 * (nothing is queued, no listener is added).
 	 */
 	var HUB_EVENT_NAMES = ['widget_view', 'slot_selected', 'form_started', 'booking_submitted', 'booking_completed', 'booking_failed', 'form_abandoned'];
-	var HUB_FLUSH_NOW = ['booking_submitted', 'booking_completed', 'booking_failed'];
+	// booking_submitted waits in the queue and goes with its outcome: no extra
+	// request next to /book.
+	var HUB_FLUSH_NOW = ['booking_completed', 'booking_failed'];
 	var HUB_FLUSH_MS = 15000;
 	var HUB_MAX_PER_CALL = 50;
 	var HUB_EVENTS = { queue: [], timer: null, listening: false, sid: '' };
