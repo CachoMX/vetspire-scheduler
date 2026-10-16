@@ -1,6 +1,6 @@
 <?php
 /**
- * Cleanup on uninstall: remove settings, the hub outbox table and cached transients.
+ * Cleanup on uninstall: remove settings, the hub outbox tables (bookings, events) and cached transients.
  * Rows still in the outbox were never received by the hub and are lost.
  */
 
@@ -15,10 +15,12 @@ delete_option( 'vsps_hub_status' );
 delete_option( 'vsps_hub_pending' );
 delete_option( 'vsps_hub_lock' );
 delete_option( 'vsps_clinic_tz' );
+delete_option( 'vsps_events_push_after' );
 wp_clear_scheduled_hook( 'vsps_hub_push' );
 
 global $wpdb;
 $wpdb->query( 'DROP TABLE IF EXISTS ' . $wpdb->prefix . 'vsps_bookings' ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+$wpdb->query( 'DROP TABLE IF EXISTS ' . $wpdb->prefix . 'vsps_events' ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery
 foreach ( array( '_transient_vsps_', '_transient_timeout_vsps_', '_transient_vsps_rl_', '_transient_timeout_vsps_rl_' ) as $prefix ) {
 	$like = $wpdb->esc_like( $prefix ) . '%';
 	$wpdb->query( $wpdb->prepare( "DELETE FROM {$wpdb->options} WHERE option_name LIKE %s", $like ) );

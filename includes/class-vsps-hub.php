@@ -7,6 +7,12 @@
  * has answered for it (accepted, or listed in its own `rejected`). A row the
  * hub refuses as a whole request (400/413) is kept and retried a day later.
  *
+ * Funnel events (VSPS_Events, table wp_vsps_events) ride the same push: after
+ * the bookings, waiting events go to POST {VSPS_HUB_URL}/api/wp/v1/scheduler/events
+ * in batches of EVENTS_BATCH and are deleted once acknowledged. Their own
+ * failures back off only the events (a bookings delivery is never held back by
+ * them); a rejected key stops both, exactly like bookings.
+ *
  * Triggers (belt and braces — WP-Cron alone may never run on a multisite
  * subsite whose server runner uses DISABLE_WP_CRON):
  *  - right after a row is written (deferred to `shutdown`, after the visitor's
@@ -44,6 +50,13 @@ class VSPS_Hub {
 	const REFUSED_RETRY_SECS = DAY_IN_SECONDS;
 	// Rows older than this that still haven't reached the hub raise an admin notice.
 	const STUCK_SECS = DAY_IN_SECONDS;
+
+	const EVENTS_PATH         = '/api/wp/v1/scheduler/events';
+	const EVENTS_BATCH        = 500;
+	const EVENTS_MAX_BATCHES  = 4;
+	const EVENTS_BACKOFF_SECS = 300;
+	// The hub has no events endpoint (yet): ask again in an hour, not every 5 minutes.
+	const EVENTS_MISSING_BACKOFF_SECS = HOUR_IN_SECONDS;
 
 	/** Set once per request when a deferred push has been registered. */
 	private static $scheduled = false;
@@ -91,6 +104,9 @@ class VSPS_Hub {
 			// A new key is a new connection: earlier success says nothing about it.
 			'last_verified' => 0,
 			'last_success'  => 0,
+			// Events: a new key gets its chance right away.
+			'events_backoff_until' => 0,
+			'events_last_error'    => '',
 		) );
 	}
 
@@ -320,6 +336,12 @@ class VSPS_Hub {
 	/** Hourly: send anything waiting, or check in, so the hub's "Last synced with WordPress" stays current. */
 	public static function cron_push() {
 		try {
+			// Old unacknowledged events go even while delivery is stopped or backing off.
+			VSPS_Events::prune();
+		} catch ( Throwable $e ) {
+			error_log( '[vetspire-scheduler] events prune failed: ' . $e->getMessage() );
+		}
+		try {
 			self::push_pending( self::BATCH_SIZE, true, true );
 		} catch ( Throwable $e ) {
 			error_log( '[vetspire-scheduler] hub cron push failed: ' . $e->getMessage() );
@@ -347,11 +369,12 @@ class VSPS_Hub {
 	 */
 	public static function push_pending( $limit = self::BATCH_SIZE, $allow_api = false, $verify = false ) {
 		$summary = array(
-			'attempted' => false,
-			'delivered' => 0,
-			'pending'   => 0,
-			'error'     => '',
-			'skipped'   => '',
+			'attempted'        => false,
+			'delivered'        => 0,
+			'pending'          => 0,
+			'error'            => '',
+			'skipped'          => '',
+			'events_delivered' => 0,
 		);
 		$key = self::key();
 		if ( '' === $key ) {
@@ -419,6 +442,14 @@ class VSPS_Hub {
 			if ( $verify && ! $summary['attempted'] ) {
 				$summary['attempted'] = true;
 				$summary['error']     = self::heartbeat( $key, $site );
+			}
+			// Events only after the bookings went through (never in their way).
+			if ( '' === $summary['error'] && empty( self::status()['stopped'] ) ) {
+				try {
+					$summary['events_delivered'] = self::push_events( $key );
+				} catch ( Throwable $e ) {
+					error_log( '[vetspire-scheduler] events push failed: ' . $e->getMessage() );
+				}
 			}
 		} finally {
 			$summary['pending'] = self::pending_count();
@@ -670,6 +701,157 @@ class VSPS_Hub {
 		return array( 'delivered' => 0, 'error' => $message );
 	}
 
+	/* ---------- funnel events ---------- */
+
+	public static function events_url() {
+		return untrailingslashit( (string) VSPS_HUB_URL ) . self::EVENTS_PATH;
+	}
+
+	/** Sends waiting events (inside push_pending's lock). Returns the number of rows removed from the outbox. */
+	private static function push_events( $key ) {
+		VSPS_Events::prune();
+		$status = self::status();
+		if ( ! empty( $status['events_backoff_until'] ) && (int) $status['events_backoff_until'] > time() ) {
+			return 0;
+		}
+		$ctx       = array(
+			'requests' => 0,
+			'ok'       => false,
+			'suspects' => array(),
+		);
+		$delivered = 0;
+		for ( $batch = 0; $batch < self::EVENTS_MAX_BATCHES; $batch++ ) {
+			$rows = VSPS_Events::pending( self::EVENTS_BATCH );
+			if ( ! $rows ) {
+				break;
+			}
+			$ctx['suspects'] = array();
+			$r               = self::send_events_chunked( $key, $rows, $ctx );
+			$delivered      += $r['delivered'];
+			if ( '' !== $r['error'] ) {
+				break;
+			}
+			$dropped = 0;
+			if ( $ctx['suspects'] ) {
+				if ( ! $ctx['ok'] ) {
+					// Nothing at all got through: a hub-side problem, not bad events.
+					self::events_fail( $ctx['suspects'][0]['code'], 'The hub refused the events.', self::EVENTS_BACKOFF_SECS );
+					break;
+				}
+				// An event the hub refuses on its own while others go through:
+				// analytics, not a booking, so it is dropped instead of blocking the queue.
+				$ids = array();
+				foreach ( $ctx['suspects'] as $suspect ) {
+					$ids[] = (string) $suspect['row']->event_id;
+					error_log( '[vetspire-scheduler] hub refused event ' . self::clean_text( $suspect['row']->event_id ) . ' on its own (HTTP ' . (int) $suspect['code'] . '); dropped' );
+				}
+				VSPS_Events::delete_ids( $ids );
+				$dropped = count( $ids );
+			}
+			if ( count( $rows ) < self::EVENTS_BATCH || $r['delivered'] + $dropped < count( $rows ) ) {
+				break;
+			}
+		}
+		return $delivered;
+	}
+
+	/** Like send_chunked(): a whole-request 400/413 is split in halves down to single events. */
+	private static function send_events_chunked( $key, array $rows, array &$ctx ) {
+		if ( $ctx['requests'] >= self::MAX_REQUESTS ) {
+			return self::events_fail( 0, 'The hub refused some events.', self::EVENTS_BACKOFF_SECS );
+		}
+		$ctx['requests']++;
+		$r = self::send_events( $key, $rows );
+		if ( empty( $r['retry_smaller'] ) ) {
+			if ( '' === $r['error'] ) {
+				$ctx['ok'] = true;
+			}
+			return $r;
+		}
+		if ( count( $rows ) > 1 ) {
+			$half  = (int) ceil( count( $rows ) / 2 );
+			$first = self::send_events_chunked( $key, array_slice( $rows, 0, $half ), $ctx );
+			if ( '' !== $first['error'] ) {
+				return $first;
+			}
+			$second = self::send_events_chunked( $key, array_slice( $rows, $half ), $ctx );
+			return array(
+				'delivered' => $first['delivered'] + $second['delivered'],
+				'error'     => $second['error'],
+			);
+		}
+		$ctx['suspects'][] = array( 'row' => $rows[0], 'code' => $r['code'] );
+		return array( 'delivered' => 0, 'error' => '' );
+	}
+
+	/** One HTTP round-trip to the events ingest (same auth and answer as the bookings one). */
+	private static function send_events( $key, array $rows ) {
+		$events = array();
+		$ids    = array();
+		foreach ( $rows as $row ) {
+			$events[] = VSPS_Events::record( $row );
+			$ids[]    = (string) $row->event_id;
+		}
+		$body = wp_json_encode( array( 'events' => $events ), JSON_INVALID_UTF8_SUBSTITUTE );
+		if ( false === $body ) {
+			return self::events_fail( 0, 'Could not encode the events.', self::EVENTS_BACKOFF_SECS );
+		}
+		$response = wp_remote_post( self::events_url(), array(
+			'timeout' => self::TIMEOUT,
+			'headers' => array(
+				'Authorization' => 'Bearer ' . $key,
+				'Content-Type'  => 'application/json',
+				'Accept'        => 'application/json',
+			),
+			'body'    => $body,
+		) );
+		if ( is_wp_error( $response ) ) {
+			return self::events_fail( 0, 'Could not reach the hub (' . $response->get_error_message() . ').', self::EVENTS_BACKOFF_SECS );
+		}
+		$code = (int) wp_remote_retrieve_response_code( $response );
+		$json = json_decode( (string) wp_remote_retrieve_body( $response ), true );
+		if ( self::is_key_rejection( $code, $json ) ) {
+			return array( 'delivered' => 0, 'error' => self::stop_for_key( $code ) );
+		}
+		if ( 400 === $code || 413 === $code ) {
+			return array( 'delivered' => 0, 'error' => 'refused', 'retry_smaller' => true, 'code' => $code );
+		}
+		if ( 404 === $code ) {
+			return self::events_fail( $code, 'The hub has no events endpoint yet (HTTP 404).', self::EVENTS_MISSING_BACKOFF_SECS );
+		}
+		if ( 200 !== $code || ! is_array( $json ) ) {
+			return self::events_fail( $code, 'The hub is unavailable for events (HTTP ' . $code . ').', self::EVENTS_BACKOFF_SECS );
+		}
+		$done = VSPS_Events::acked_ids( $json, $ids );
+		foreach ( isset( $json['rejected'] ) && is_array( $json['rejected'] ) ? $json['rejected'] : array() as $rej ) {
+			if ( is_array( $rej ) && isset( $rej['event_id'] ) && is_string( $rej['event_id'] ) ) {
+				$why = isset( $rej['error'] ) && is_string( $rej['error'] ) ? $rej['error'] : 'unknown';
+				error_log( '[vetspire-scheduler] hub rejected event ' . self::clean_text( $rej['event_id'] ) . ': ' . self::clean_text( $why ) );
+			}
+		}
+		if ( false === VSPS_Events::delete_ids( $done ) ) {
+			return self::events_fail( $code, 'The hub received the events but this site could not remove them (database error).', self::EVENTS_BACKOFF_SECS );
+		}
+		if ( ! $done ) {
+			return self::events_fail( $code, 'The hub did not acknowledge any event.', self::EVENTS_BACKOFF_SECS );
+		}
+		self::save_status( array(
+			'events_last_success' => time(),
+			'events_last_error'   => '',
+		) );
+		return array( 'delivered' => count( $done ), 'error' => '' );
+	}
+
+	/** An events failure backs off the events only (bookings keep going). */
+	private static function events_fail( $code, $message, $backoff_secs ) {
+		self::save_status( array(
+			'events_last_error'    => $message,
+			'events_backoff_until' => time() + (int) $backoff_secs,
+		) );
+		error_log( '[vetspire-scheduler] hub events push failed (HTTP ' . (int) $code . '): ' . $message );
+		return array( 'delivered' => 0, 'error' => $message );
+	}
+
 	/** One local row → one contract record (client_id travels as vetspire_client_id). */
 	private static function record( $row ) {
 		$int_or_null = function ( $v ) {
@@ -704,6 +886,7 @@ class VSPS_Hub {
 			'layout'              => (string) $row->layout,
 			'variant'             => (string) $row->variant,
 			'page_url'            => (string) $row->page_url,
+			'device'              => isset( $row->device ) ? (string) $row->device : '',
 			'after_hours'         => $int_or_null( $row->after_hours ),
 			'synced_at'           => $row->synced_at,
 			'edited_at'           => $row->edited_at,
@@ -823,6 +1006,8 @@ class VSPS_Hub {
 		} else {
 			$sent = 'not verified yet';
 		}
-		return array( 'state' => 'ok', 'text' => 'Connected — ' . $sent . ' · ' . $pending . ' waiting' . $refused_text );
+		$events      = VSPS_Events::pending_count();
+		$events_text = $events ? ' · ' . $events . ' funnel ' . ( 1 === $events ? 'event' : 'events' ) . ' waiting' : '';
+		return array( 'state' => 'ok', 'text' => 'Connected — ' . $sent . ' · ' . $pending . ' waiting' . $refused_text . $events_text );
 	}
 }

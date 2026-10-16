@@ -68,6 +68,8 @@ class VSPS_Shortcode {
 		return array(
 			'restUrl'   => esc_url_raw( rest_url( 'vetspire/v1' ) ),
 			'analytics' => (int) $settings['analytics_enabled'],
+			// Funnel events for the hub: only sent when there is a hub to deliver them to.
+			'events'    => '' !== VSPS_Hub::key() ? 1 : 0,
 			// 'request' = the clinic confirms each booking (Nectar); changes the success message.
 			'booking'   => VSPS_Pims_Registry::booking_mode( $settings['pims'] ),
 			'choices'   => array(

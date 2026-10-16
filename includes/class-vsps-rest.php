@@ -105,6 +105,13 @@ class VSPS_Rest {
 			'permission_callback' => '__return_true',
 		) );
 
+		// Funnel events for the Vetcelerator hub (batched by the widget, sendBeacon).
+		register_rest_route( self::NS, '/events', array(
+			'methods'             => 'POST',
+			'callback'            => array( __CLASS__, 'events' ),
+			'permission_callback' => '__return_true',
+		) );
+
 	}
 
 	private static function api_or_error() {
@@ -467,11 +474,19 @@ class VSPS_Rest {
 		) );
 	}
 
+	/** POST /events: see VSPS_Events::rest_ingest (answers 204, never fails loudly). */
+	public static function events( WP_REST_Request $request ) {
+		return VSPS_Events::rest_ingest( $request, function () {
+			return self::rate_limit_ok( 'ev_' . md5( self::client_ip() ), VSPS_Events::RATE_LIMIT, VSPS_Events::RATE_TTL );
+		} );
+	}
+
 	/** Where the booking came from (for the log only; never sent to the PIMS). */
 	private static function booking_source( WP_REST_Request $request ) {
 		$layout  = sanitize_key( (string) $request->get_param( 'layout' ) );
 		$variant = strtolower( sanitize_key( (string) $request->get_param( 'variant' ) ) );
 		$url     = esc_url_raw( (string) $request->get_param( 'page_url' ) );
+		$device  = (string) $request->get_param( 'device' );
 		// Keep only scheme + host + path: query strings can carry campaign or
 		// personal data that has no business living in this table.
 		$parts = wp_parse_url( $url );
@@ -482,6 +497,7 @@ class VSPS_Rest {
 			'layout'   => in_array( $layout, array( 'full', 'bar', 'calendar', 'float' ), true ) ? $layout : '',
 			'variant'  => in_array( $variant, array( 'a', 'b' ), true ) ? $variant : '',
 			'page_url' => substr( $url, 0, 255 ),
+			'device'   => in_array( $device, VSPS_Events::DEVICES, true ) ? $device : '',
 		);
 	}
 

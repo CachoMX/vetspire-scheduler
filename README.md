@@ -103,6 +103,22 @@ and also fires DOM `CustomEvent`s (`vetspire:*`) for custom listeners:
 Because booking happens on-domain, the Hyros universal script also captures the email/phone
 typed into the form → full ad-to-appointment attribution.
 
+### Funnel events for the Vetcelerator hub (1.26.0+)
+
+When a hub connection key is saved, the same steps (`widget_view`, `slot_selected`,
+`form_started`, `booking_submitted`, `booking_completed`, `booking_failed`) plus
+`form_abandoned` are also queued in the browser and posted in batches to
+`POST /wp-json/vetspire/v1/events` (one request on page hide via `sendBeacon`, right away for
+the booking steps, otherwise at most every 15 s). Each event carries a random event id, a
+per-tab session id (sessionStorage, no cookies), the device (mobile / tablet / desktop), layout,
+variant, location and type ids and the page path. `form_abandoned` (a booking form closed or
+the page hidden without a booking) lists only the KEYS of the fields that held a value, in form
+order, never the values. WordPress stamps the time, rate-limits per IP (120 requests/hour) and
+keeps the rows in `wp_vsps_events` until the hub acknowledges them (rows the hub never takes are
+dropped after 14 days). Without a key nothing is sent or stored. Every booking also records the
+device. Pages where no widget renders send nothing, and an events failure never touches a
+booking.
+
 ## Security
 
 - Admin token is only used server-side (`wp_remote_post`); REST responses expose no Vetspire IDs

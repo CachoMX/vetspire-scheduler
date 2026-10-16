@@ -3,7 +3,7 @@
  * Plugin Name: Vetcelerator Scheduler
  * Plugin URI:  https://vetcelerator.com
  * Description: Embeddable appointment scheduler for Vetspire and Nectar clinics. Shows live available times and books appointments on-site so analytics attribution is preserved.
- * Version:     1.25.1
+ * Version:     1.26.0
  * Author:      Vetcelerator
  * License:     GPL-2.0+
  * Text Domain: vetspire-scheduler
@@ -13,7 +13,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-define( 'VSPS_VERSION', '1.25.1' );
+define( 'VSPS_VERSION', '1.26.0' );
 define( 'VSPS_PLUGIN_DIR', plugin_dir_path( __FILE__ ) );
 define( 'VSPS_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
 define( 'VSPS_OPTION_KEY', 'vsps_settings' );
@@ -32,6 +32,7 @@ require_once VSPS_PLUGIN_DIR . 'includes/class-vsps-rest.php';
 require_once VSPS_PLUGIN_DIR . 'includes/class-vsps-settings.php';
 require_once VSPS_PLUGIN_DIR . 'includes/class-vsps-shortcode.php';
 require_once VSPS_PLUGIN_DIR . 'includes/class-vsps-log.php';
+require_once VSPS_PLUGIN_DIR . 'includes/class-vsps-events.php';
 require_once VSPS_PLUGIN_DIR . 'includes/class-vsps-hub.php';
 
 register_deactivation_hook( __FILE__, array( 'VSPS_Hub', 'deactivate' ) );

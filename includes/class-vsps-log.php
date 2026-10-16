@@ -19,7 +19,9 @@ class VSPS_Log {
 	// history the hub already holds.
 	// v6 (1.25.0): location / type ids become text (Nectar ids are hex strings)
 	// and each row records its platform.
-	const DB_VERSION = '6';
+	// v7 (1.26.0): bookings record the visitor's device; new table wp_vsps_events
+	// (funnel events outbox, see VSPS_Events).
+	const DB_VERSION = '7';
 
 	public static function table() {
 		global $wpdb;
@@ -67,6 +69,7 @@ class VSPS_Log {
 			layout varchar(20) NOT NULL DEFAULT '',
 			variant varchar(4) NOT NULL DEFAULT '',
 			page_url varchar(255) NOT NULL DEFAULT '',
+			device varchar(10) NOT NULL DEFAULT '',
 			after_hours tinyint(1) DEFAULT NULL,
 			synced_at datetime DEFAULT NULL,
 			edited_at datetime DEFAULT NULL,
@@ -82,7 +85,7 @@ class VSPS_Log {
 			KEY event_id (event_id),
 			KEY hub_synced_at (hub_synced_at)
 		) {$charset};";
-		dbDelta( $sql );
+		dbDelta( array( $sql, VSPS_Events::create_sql( $charset ) ) );
 		// Only remember the version when the table is really there; otherwise the
 		// next request tries again instead of silently losing every booking.
 		$exists = $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $table ) );
@@ -90,7 +93,7 @@ class VSPS_Log {
 			// dbDelta can fail to add a column (permissions, lock timeout) without
 			// saying so: confirm the hub columns before anything relies on them.
 			$missing = array();
-			foreach ( array( 'event_id', 'hub_synced_at', 'hub_refused_at', 'pims' ) as $column ) {
+			foreach ( array( 'event_id', 'hub_synced_at', 'hub_refused_at', 'pims', 'device' ) as $column ) {
 				if ( ! $wpdb->get_var( $wpdb->prepare( "SHOW COLUMNS FROM {$table} LIKE %s", $column ) ) ) { // phpcs:ignore WordPress.DB.DirectDatabaseQuery
 					$missing[] = $column;
 				}
@@ -98,6 +101,11 @@ class VSPS_Log {
 			if ( $missing ) {
 				error_log( '[vetspire-scheduler] could not add column(s) ' . implode( ', ', $missing ) . ' to ' . $table . ': ' . $wpdb->last_error );
 				return; // version not stored: the next request retries the upgrade
+			}
+			$events = VSPS_Events::table();
+			if ( $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $events ) ) !== $events ) {
+				error_log( '[vetspire-scheduler] could not create ' . $events . ': ' . $wpdb->last_error );
+				return; // the next request retries
 			}
 			// Rows that pre-date event_id get a deterministic one (safe to re-run),
 			// and every not-yet-delivered row is queued for the Vetcelerator hub.
@@ -145,11 +153,23 @@ class VSPS_Log {
 		global $wpdb;
 		$row['event_id'] = wp_generate_uuid4();
 		$ok              = $wpdb->insert( self::table(), $row );
-		if ( false === $ok && false !== stripos( (string) $wpdb->last_error, 'pims' ) ) {
-			// The v6 upgrade (pims column) didn't apply on this host yet: never lose
-			// the booking over it. The upgrade is retried on the next request.
-			unset( $row['pims'] );
-			$ok = $wpdb->insert( self::table(), $row );
+		if ( false === $ok ) {
+			// An upgrade (v6 pims, v7 device column) didn't apply on this host yet:
+			// never lose the booking over it. The upgrade is retried on the next request.
+			$dropped = false;
+			foreach ( array( 'pims', 'device' ) as $column ) {
+				if ( isset( $row[ $column ] ) && false !== stripos( (string) $wpdb->last_error, $column ) ) {
+					unset( $row[ $column ] );
+					$dropped = true;
+				}
+			}
+			if ( $dropped ) {
+				$ok = $wpdb->insert( self::table(), $row );
+				if ( false === $ok ) {
+					unset( $row['pims'], $row['device'] );
+					$ok = $wpdb->insert( self::table(), $row );
+				}
+			}
 		}
 		if ( false === $ok ) {
 			error_log( '[vetspire-scheduler] bookings log insert failed: ' . $wpdb->last_error );
@@ -226,6 +246,7 @@ class VSPS_Log {
 			'layout'              => substr( isset( $extra['layout'] ) ? (string) $extra['layout'] : '', 0, 20 ),
 			'variant'             => substr( isset( $extra['variant'] ) ? (string) $extra['variant'] : '', 0, 4 ),
 			'page_url'            => substr( isset( $extra['page_url'] ) ? (string) $extra['page_url'] : '', 0, 255 ),
+			'device'              => isset( $extra['device'] ) && in_array( $extra['device'], VSPS_Events::DEVICES, true ) ? $extra['device'] : '',
 		);
 	}
 }

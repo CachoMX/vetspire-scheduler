@@ -137,6 +137,197 @@
 		}
 	}
 
+	/* ---------- funnel events for the Vetcelerator hub ---------- */
+
+	/*
+	 * The funnel events (widget_view → booking_completed, plus form_abandoned)
+	 * are also queued for the hub and posted in batches to the plugin's own
+	 * REST route, which keeps them until the hub has them. One request per
+	 * batch: on page hide (sendBeacon), right away for the booking steps, else
+	 * at most every 15 s while events wait. Ids, page path and field KEYS only:
+	 * never a value, name, email or phone; sessionStorage only, no cookies.
+	 * Nothing here may ever get in the way of a booking, so every step is
+	 * wrapped and every failure ignored. Pages with no widget do no work at all
+	 * (nothing is queued, no listener is added).
+	 */
+	var HUB_EVENT_NAMES = ['widget_view', 'slot_selected', 'form_started', 'booking_submitted', 'booking_completed', 'booking_failed', 'form_abandoned'];
+	var HUB_FLUSH_NOW = ['booking_submitted', 'booking_completed', 'booking_failed'];
+	var HUB_FLUSH_MS = 15000;
+	var HUB_MAX_PER_CALL = 50;
+	var HUB_EVENTS = { queue: [], timer: null, listening: false, sid: '' };
+	// Bookings forms currently open (checked for form_abandoned when the page hides).
+	var OPEN_FORMS = [];
+
+	function randomId() {
+		var hex = '';
+		try {
+			var bytes = new Uint8Array(16);
+			window.crypto.getRandomValues(bytes);
+			for (var i = 0; i < bytes.length; i++) { hex += (bytes[i] < 16 ? '0' : '') + bytes[i].toString(16); }
+			return hex;
+		} catch (e) { /* no Web Crypto */ }
+		while (hex.length < 32) { hex += Math.floor(Math.random() * 0x100000000).toString(16); }
+		return hex.slice(0, 32);
+	}
+
+	/** One id per browser tab (sessionStorage), so the hub can count visitors, not clicks. */
+	function sessionId() {
+		if (HUB_EVENTS.sid) { return HUB_EVENTS.sid; }
+		var sid = '';
+		try {
+			sid = window.sessionStorage.getItem('vsps_sid') || '';
+			if (!/^[0-9a-f]{32}$/.test(sid)) {
+				sid = randomId();
+				window.sessionStorage.setItem('vsps_sid', sid);
+			}
+		} catch (e) {
+			sid = sid && /^[0-9a-f]{32}$/.test(sid) ? sid : randomId();
+		}
+		HUB_EVENTS.sid = sid;
+		return sid;
+	}
+
+	/** 'mobile' | 'tablet' | 'desktop' (also sent with every booking). */
+	var DEVICE = null;
+	function deviceType() {
+		if (null !== DEVICE) { return DEVICE; }
+		try {
+			var nav = window.navigator;
+			var ua = nav.userAgent || '';
+			if (/iPad/.test(ua) || (/Android/.test(ua) && !/Mobile/.test(ua)) ||
+				(/Macintosh/.test(ua) && nav.maxTouchPoints > 1)) {
+				DEVICE = 'tablet';
+			} else if (nav.userAgentData && 'boolean' === typeof nav.userAgentData.mobile) {
+				DEVICE = nav.userAgentData.mobile ? 'mobile' : 'desktop';
+			} else {
+				DEVICE = /Mobi|iPhone|Android/.test(ua) ? 'mobile' : 'desktop';
+			}
+		} catch (e) {
+			DEVICE = '';
+		}
+		return DEVICE;
+	}
+
+	function hubEventsOn() {
+		return !!(CFG.events && CFG.restUrl);
+	}
+
+	/** ctx: { layout, variant, location_id, appointment_type_id, fields? } */
+	function queueHubEvent(name, ctx) {
+		try {
+			if (!hubEventsOn() || -1 === HUB_EVENT_NAMES.indexOf(name)) { return; }
+			ctx = ctx || {};
+			var event = {
+				event_id: randomId(),
+				session_id: sessionId(),
+				name: name,
+				device: deviceType(),
+				layout: String(ctx.layout || ''),
+				variant: String(ctx.variant || ''),
+				location_id: null == ctx.location_id ? '' : String(ctx.location_id),
+				appointment_type_id: null == ctx.appointment_type_id ? '' : String(ctx.appointment_type_id),
+				page_path: String(window.location.pathname || '').slice(0, 255)
+			};
+			if ('form_abandoned' === name) { event.fields = ctx.fields || []; }
+			HUB_EVENTS.queue.push(event);
+			listenForPageHide();
+			if (-1 !== HUB_FLUSH_NOW.indexOf(name)) {
+				flushHubEvents();
+			} else if (!HUB_EVENTS.timer) {
+				HUB_EVENTS.timer = window.setTimeout(flushHubEvents, HUB_FLUSH_MS);
+			}
+		} catch (e) { /* never in the way of the widget */ }
+	}
+
+	function flushHubEvents() {
+		try {
+			if (HUB_EVENTS.timer) {
+				window.clearTimeout(HUB_EVENTS.timer);
+				HUB_EVENTS.timer = null;
+			}
+			var url = CFG.restUrl + '/events';
+			while (HUB_EVENTS.queue.length) {
+				// text/plain (sendBeacon's own type for a string): no CORS preflight anywhere.
+				var body = JSON.stringify({ events: HUB_EVENTS.queue.splice(0, HUB_MAX_PER_CALL) });
+				var sent = false;
+				try {
+					sent = !!(window.navigator.sendBeacon && window.navigator.sendBeacon(url, body));
+				} catch (e) { sent = false; }
+				if (!sent && window.fetch) {
+					window.fetch(url, {
+						method: 'POST',
+						body: body,
+						keepalive: true,
+						credentials: 'same-origin',
+						headers: { 'Content-Type': 'text/plain;charset=UTF-8' }
+					}).catch(function () { /* analytics only */ });
+				}
+			}
+		} catch (e) { /* analytics only */ }
+	}
+
+	function onPageHide() {
+		try {
+			OPEN_FORMS.slice().forEach(function (entry) { entry.widget.abandonForm(entry.bk, true); });
+		} catch (e) { /* analytics only */ }
+		flushHubEvents();
+	}
+
+	function listenForPageHide() {
+		if (HUB_EVENTS.listening) { return; }
+		HUB_EVENTS.listening = true;
+		window.addEventListener('pagehide', onPageHide);
+		document.addEventListener('visibilitychange', function () {
+			if ('hidden' === document.visibilityState) { onPageHide(); }
+		});
+	}
+
+	// Form input name → field registry key (VSPS_Fields::REGISTRY). Names not
+	// listed are already registry keys; SKIP_INPUTS are not visitor fields.
+	var FIELD_KEY_BY_INPUT = {
+		address_line1: 'address', address_line2: 'address', address_city: 'address',
+		address_state: 'address', address_postal: 'address',
+		referral_id: 'referral', notes: 'reason', lookup_email: 'email'
+	};
+	var SKIP_INPUTS = ['vsps_hp', 'weight_unit', 'phone_last4'];
+
+	function controlFilled(node) {
+		if ('checkbox' === node.type || 'radio' === node.type) { return !!node.checked; }
+		if ('SELECT' === node.tagName) {
+			if ('' === node.value) { return false; }
+			// A select with no "Select One" choice (pet type) always holds a value:
+			// it only counts once the visitor changed it from what the form showed.
+			var hasBlank = false;
+			var initial = 0;
+			for (var i = 0; i < node.options.length; i++) {
+				if ('' === node.options[i].value) { hasBlank = true; }
+				if (node.options[i].defaultSelected) { initial = i; }
+			}
+			return hasBlank || node.selectedIndex !== initial;
+		}
+		return '' !== String(node.value || '').trim();
+	}
+
+	/** Registry keys of the fields holding a value, in the form's DOM order (never the values). */
+	function filledFieldKeys(container, carriedEmail) {
+		var keys = [];
+		function add(key) {
+			if (-1 === keys.indexOf(key) && keys.length < 40) { keys.push(key); }
+		}
+		var nodes = container ? container.querySelectorAll('input[name], select[name], textarea[name]') : [];
+		var emailOnScreen = false;
+		Array.prototype.forEach.call(nodes, function (node) {
+			if ('email' === node.name || 'lookup_email' === node.name) { emailOnScreen = true; }
+		});
+		// A returning client's email was entered on an earlier step (no longer on screen).
+		if (carriedEmail && !emailOnScreen) { add('email'); }
+		Array.prototype.forEach.call(nodes, function (node) {
+			if (-1 !== SKIP_INPUTS.indexOf(node.name) || 'hidden' === node.type || !controlFilled(node)) { return; }
+			add(FIELD_KEY_BY_INPUT[node.name] || node.name);
+		});
+		return keys;
+	}
+
 	/* ---------- helpers ---------- */
 
 	function el(tag, className, text) {
@@ -434,7 +625,47 @@
 		data = data || {};
 		if (this.config.variant) { data.variant = this.config.variant; }
 		track(name, data);
+		if ('widget_view' === name) {
+			// Once per widget per page load (the admin preview re-inits the same root).
+			if (this.root.__vspsViewed) { return; }
+			this.root.__vspsViewed = true;
+		}
+		queueHubEvent(name, this.hubContext(data.appointment_type_id));
 	};
+
+	/** What every hub event says about this widget (a lightbox reports the layout of the widget that opened it). */
+	Widget.prototype.hubContext = function (typeId) {
+		var type = null == typeId || '' === typeId ? this.state.typeId : typeId;
+		return {
+			layout: this.host ? (this.host.layout || '') : this.layout,
+			variant: this.config.variant || '',
+			location_id: this.config.locationId,
+			appointment_type_id: null == type ? '' : type
+		};
+	};
+
+	/**
+	 * form_abandoned: once per booking form, when it closes (×, Back, Escape,
+	 * Cancel, outside click) or the page hides, unless the booking went
+	 * through. `onHide`: a page hide while a booking request is in flight is
+	 * not an abandon (the booking may well complete).
+	 */
+	Widget.prototype.abandonForm = function (bk, onHide) {
+		try {
+			if (!bk || bk.abandonSent || !bk.started || bk.completed) { return; }
+			if (onHide && bk.submitting) { return; }
+			bk.abandonSent = true;
+			var ctx = this.hubContext(bk.typeId);
+			ctx.fields = filledFieldKeys(bk.step, bk.email);
+			queueHubEvent('form_abandoned', ctx);
+		} catch (e) { /* analytics only */ }
+	};
+
+	function forgetOpenForm(bk) {
+		for (var i = OPEN_FORMS.length - 1; i >= 0; i--) {
+			if (OPEN_FORMS[i].bk === bk) { OPEN_FORMS.splice(i, 1); }
+		}
+	}
 
 	Widget.prototype.init = function () {
 		var self = this;
@@ -1505,8 +1736,14 @@
 		if (primary) { overlay.style.setProperty('--vsps-primary', primary.trim()); }
 
 		var restoreFocus;
+		var bk;
 		function onKeydown(e) { if (e.key === 'Escape' && OPEN_OVERLAYS[OPEN_OVERLAYS.length - 1] === overlay) { close(); } }
 		function close() {
+			// Every way out of the form (×, Back, Escape, Cancel, outside click).
+			if (bk) {
+				self.abandonForm(bk);
+				forgetOpenForm(bk);
+			}
 			document.removeEventListener('keydown', onKeydown);
 			if (restoreFocus) { restoreFocus(); }
 			overlay.remove();
@@ -1525,7 +1762,7 @@
 		var step = el('div', 'vsps-step');
 		modal.appendChild(step);
 
-		this._bk = { date: date, slot: slot, type: type, modal: modal, step: step, close: close, clientType: 'new' };
+		bk = this._bk = { date: date, slot: slot, type: type, modal: modal, step: step, close: close, clientType: 'new', typeId: this.state.typeId };
 		document.body.appendChild(overlay);
 		restoreFocus = makeAccessibleModal(overlay, modal, opener);
 		this.track('form_started', {
@@ -1535,6 +1772,8 @@
 			time: slot.time,
 			layout: this.layout
 		});
+		bk.started = true;
+		OPEN_FORMS.push({ widget: this, bk: bk });
 		this.renderChoiceStep();
 	};
 
@@ -1955,6 +2194,7 @@
 		payload.layout = (this.host || this).layout;
 		payload.variant = this.config.variant || '';
 		payload.page_url = (window.location.origin + window.location.pathname).slice(0, 255);
+		payload.device = deviceType();
 		if (!('vsps_hp' in payload)) { payload.vsps_hp = ''; }
 
 		this.track('booking_submitted', {
@@ -1965,12 +2205,17 @@
 			client_type: payload.client_type
 		});
 
+		bk.submitting = true;
 		fetchJson(CFG.restUrl + '/book', {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
 			body: JSON.stringify(payload)
 		}).then(function (data) {
 			if (reqToken !== bk.reqToken) { return; }
+			bk.submitting = false;
+			// Booked (or an already-booked retry confirmed): this form is not abandoned.
+			bk.completed = true;
+			forgetOpenForm(bk);
 			// already_booked: a retry of a booking that went through earlier. Show
 			// the confirmation, but it was already counted the first time.
 			if (!data.already_booked) {
@@ -2002,6 +2247,7 @@
 			self.loadAvailability();
 		}).catch(function (err) {
 			if (reqToken !== bk.reqToken) { return; }
+			bk.submitting = false;
 			self.track('booking_failed', {
 				location_id: self.config.locationId,
 				status: err.status || 0,
