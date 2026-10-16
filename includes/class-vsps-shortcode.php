@@ -10,6 +10,30 @@ if ( ! defined( 'ABSPATH' ) ) {
 
 class VSPS_Shortcode {
 
+	const LAYOUTS = array( 'full', 'bar', 'calendar', 'float' );
+
+	/** '' means "same layout as desktop"; anything unknown falls back to that. */
+	public static function valid_mobile_layout( $layout ) {
+		$layout = sanitize_key( (string) $layout );
+		return in_array( $layout, self::LAYOUTS, true ) ? $layout : '';
+	}
+
+	/**
+	 * The two layout keys of a widget's config. `layoutMobile` is only sent
+	 * when it differs from the desktop layout, so the widget's JS has nothing
+	 * to switch for a single-layout widget.
+	 */
+	public static function layout_config( $layout, $layout_mobile ) {
+		$layout = strtolower( (string) $layout );
+		$layout = in_array( $layout, self::LAYOUTS, true ) ? $layout : 'full';
+		$mobile = self::valid_mobile_layout( $layout_mobile );
+		$config = array( 'layout' => $layout );
+		if ( '' !== $mobile && $mobile !== $layout ) {
+			$config['layoutMobile'] = $mobile;
+		}
+		return $config;
+	}
+
 	public static function init() {
 		add_shortcode( 'vetspire_scheduler', array( __CLASS__, 'render' ) );
 		add_action( 'wp_enqueue_scripts', array( __CLASS__, 'register_assets' ) );
@@ -205,7 +229,14 @@ class VSPS_Shortcode {
 
 	public static function render( $atts ) {
 		$settings = vsps_get_settings();
-		$atts     = shortcode_atts( array(
+		// The Settings "On phones" layout belongs to the Settings layout: an
+		// instance that picks a different layout="..." (an inline full/calendar
+		// embed) keeps it on phones unless it also says layout_mobile="...".
+		// layout="..." equal to the Settings one still follows the setting.
+		$own_layout     = is_array( $atts ) && isset( $atts['layout'] )
+			&& strtolower( (string) $atts['layout'] ) !== $settings['layout'];
+		$default_mobile = $own_layout ? '' : $settings['layout_mobile'];
+		$atts           = shortcode_atts( array(
 			'location_id'          => $settings['default_location'],
 			'appointment_type_ids' => '',
 			'days'                 => 7,        // days per page of the date strip
@@ -214,6 +245,7 @@ class VSPS_Shortcode {
 			'link_url'             => '',
 			'title'                => __( 'Book an Appointment', 'vetspire-scheduler' ),
 			'layout'               => $settings['layout'], // full | bar | calendar | float
+			'layout_mobile'        => $default_mobile, // same set, shown at phone widths; '' = same as layout
 			'variant'              => '',       // a = minimal form, b = with optional questions
 			'primary'              => '',       // "1" = the #vsps-book external trigger targets THIS instance
 		), $atts, 'vetspire_scheduler' );
@@ -245,26 +277,23 @@ class VSPS_Shortcode {
 			array( 'defaultWidget' => self::default_widget_config( $settings, $location_id ) )
 		) );
 
-		$layout = in_array( $atts['layout'], array( 'full', 'bar', 'calendar', 'float' ), true ) ? $atts['layout'] : 'full';
-
 		$variant = in_array( strtolower( $atts['variant'] ), array( 'a', 'b' ), true ) ? strtolower( $atts['variant'] ) : '';
 		// Settings → Booking Form decides which fields show and which are
 		// required; variant "a"/"b" (A/B test) narrows or widens that set.
 		$fields = VSPS_Fields::for_widget( VSPS_Fields::resolve( $settings, $variant ) );
 
 		$days_per_page = min( 14, max( 1, absint( $atts['days'] ) ) );
-		$config = array(
+		$config = array_merge( array(
 			'locationId'    => $location_id,
 			'typeIds'       => $type_ids,
 			'days'          => $days_per_page,
 			'horizonDays'   => min( 60, max( $days_per_page, absint( $atts['max_days'] ) ) ),
 			'mode'          => $mode,
 			'linkUrl'       => esc_url_raw( $atts['link_url'] ),
-			'layout'        => $layout,
 			'defaultTypeId' => VSPS_Pims_Registry::id_for_js( $settings['default_type'] ),
 			'fields'        => $fields,
 			'variant'       => $variant,
-		);
+		), self::layout_config( $atts['layout'], $atts['layout_mobile'] ) );
 
 		$style = '--vsps-primary:' . esc_attr( $settings['primary_color'] ) . ';';
 

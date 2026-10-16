@@ -152,6 +152,7 @@ class VSPS_Settings {
 			),
 			'primary_color'     => sanitize_hex_color( isset( $input['primary_color'] ) ? $input['primary_color'] : '#2f6f4f' ),
 			'layout'            => self::valid_layout( isset( $input['layout'] ) ? $input['layout'] : 'full' ),
+			'layout_mobile'     => VSPS_Shortcode::valid_mobile_layout( isset( $input['layout_mobile'] ) ? $input['layout_mobile'] : '' ),
 			'default_type'      => $default_type,
 			'default_location'  => $default_location,
 			// One site = one location: the REST layer only allows the selected one.
@@ -542,6 +543,16 @@ class VSPS_Settings {
 									<?php endforeach; ?>
 								</div>
 								<p style="margin-bottom:0;margin-top:14px;">
+									<label for="vsps_layout_mobile"><strong>On phones</strong></label>
+									<select id="vsps_layout_mobile" name="<?php echo esc_attr( $opt ); ?>[layout_mobile]" style="margin-left:8px;">
+										<option value="" <?php selected( $settings['layout_mobile'], '' ); ?>>Same as above</option>
+										<?php foreach ( $layouts as $key => $name ) : ?>
+											<option value="<?php echo esc_attr( $key ); ?>" <?php selected( $settings['layout_mobile'], $key ); ?>><?php echo esc_html( $name ); ?></option>
+										<?php endforeach; ?>
+									</select>
+									<span class="description">The cards above set the desktop design; phones (640px wide or less) can show a different one, usually the Bar. Applies to every widget that uses this design (a shortcode with a different <code>layout="..."</code> needs its own <code>layout_mobile="..."</code>).</span>
+								</p>
+								<p style="margin-bottom:0;margin-top:14px;">
 									<label for="vsps_primary_color"><strong>Brand color</strong></label>
 									<input type="color" id="vsps_primary_color" name="<?php echo esc_attr( $opt ); ?>[primary_color]"
 										value="<?php echo esc_attr( $color ); ?>" style="width:56px;height:32px;padding:2px;cursor:pointer;vertical-align:middle;margin-left:8px;" />
@@ -630,7 +641,7 @@ class VSPS_Settings {
 										<button type="button" class="button button-small" id="vsps-copy">Copy</button>
 										<span class="vsps-copy-ok" id="vsps-copy-ok">✓ Copied</span>
 									</p>
-									<p class="description" style="margin-bottom:0;">Optional: <code>layout="bar"</code>, <code>days="7"</code>, <code>appointment_type_ids="5541"</code>, <code>title="..."</code>.</p>
+									<p class="description" style="margin-bottom:0;">Optional: <code>layout="float"</code>, <code>layout_mobile="bar"</code>, <code>days="7"</code>, <code>appointment_type_ids="5541"</code>, <code>title="..."</code>.</p>
 								</div>
 							</div>
 						</div>
@@ -662,6 +673,11 @@ class VSPS_Settings {
 					var checked = document.querySelector('.vsps-layout-radio:checked');
 					return checked ? checked.value : 'full';
 				}
+				var mobileSel = document.getElementById('vsps_layout_mobile');
+				function currentMobileLayout() {
+					var v = mobileSel ? mobileSel.value : '';
+					return v && v !== currentLayout() ? v : '';
+				}
 				function flash() {
 					frame.classList.remove('is-updated');
 					void frame.offsetWidth;
@@ -669,7 +685,8 @@ class VSPS_Settings {
 				}
 				function updateChip() {
 					var name = locSel && locSel.selectedIndex > 0 ? locSel.options[locSel.selectedIndex].text : '';
-					chip.textContent = 'Previewing: ' + layoutName(currentLayout()) + (name ? ' · ' + name.trim() : '');
+					var mobile = currentMobileLayout();
+					chip.textContent = 'Previewing: ' + layoutName(currentLayout()) + (mobile ? ' (phones: ' + layoutName(mobile) + ')' : '') + (name ? ' · ' + name.trim() : '');
 				}
 				function reinit() {
 					var locationId = locSel ? locSel.value : '';
@@ -685,6 +702,8 @@ class VSPS_Settings {
 						var cfg = JSON.parse(preview.getAttribute('data-vsps-config'));
 						cfg.locationId = locationId;
 						cfg.layout = currentLayout();
+						// The preview shows the desktop design; the chip names the phone one.
+						delete cfg.layoutMobile;
 						cfg.fields = {};
 						document.querySelectorAll('.vsps-fshow').forEach(function (cb) {
 							var req = document.querySelector('.vsps-freq[data-field="' + cb.getAttribute('data-field') + '"]');
@@ -737,6 +756,7 @@ class VSPS_Settings {
 				document.querySelectorAll('.vsps-freq').forEach(function (cb) {
 					cb.addEventListener('change', reinit);
 				});
+				if (mobileSel) { mobileSel.addEventListener('change', updateChip); }
 				document.querySelectorAll('.vsps-layout-radio').forEach(function (radio) {
 					radio.addEventListener('change', function () {
 						document.querySelectorAll('.vsps-card').forEach(function (c) { c.classList.remove('is-selected'); });

@@ -501,6 +501,9 @@
 			if (opener && 'function' === typeof opener.focus && document.body.contains(opener)) {
 				opener.focus();
 			}
+			// A layout switch that waited for this popup. Next tick: a form that
+			// replaces a lightbox registers its own overlay right after this one closes.
+			if (PENDING_RELAYOUT.length) { setTimeout(runPendingRelayouts, 0); }
 		};
 	}
 
@@ -605,6 +608,93 @@
 	// Registry of live widget instances, for the #vsps-book external trigger below.
 	var WIDGETS = [];
 
+	// Phones: the breakpoint scheduler.css already uses for its compact styles.
+	var PHONE_QUERY = '(max-width: 640px)';
+	var phoneMedia = null;
+	try { phoneMedia = window.matchMedia ? window.matchMedia(PHONE_QUERY) : null; } catch (e) { phoneMedia = null; }
+
+	/** The layout a widget shows right now: `layoutMobile` at phone widths, else `layout`. */
+	function layoutFor(config) {
+		var desktop = config.layout || 'full';
+		if (config.layoutMobile && !config._embedded && phoneMedia && phoneMedia.matches) {
+			return config.layoutMobile;
+		}
+		return desktop;
+	}
+
+	/**
+	 * A widget with a phone layout redraws when the width crosses the
+	 * breakpoint (rotation, resize). Never under an open popup: the booking
+	 * form and the picker lightbox hold a reference to the widget that opened
+	 * them, so the switch waits until the last popup closes.
+	 */
+	function watchPhoneLayout(root) {
+		if (!phoneMedia || root.__vspsWatching) { return; }
+		root.__vspsWatching = true;
+		var onChange = function () { relayoutWhenFree(root); };
+		if (phoneMedia.addEventListener) { phoneMedia.addEventListener('change', onChange); }
+		else if (phoneMedia.addListener) { phoneMedia.addListener(onChange); }
+	}
+
+	var PENDING_RELAYOUT = [];
+
+	/** A popup still on the page (one a theme removed without closing it doesn't count). */
+	function anyOverlayOpen() {
+		for (var i = 0; i < OPEN_OVERLAYS.length; i++) {
+			if (document.body.contains(OPEN_OVERLAYS[i])) { return true; }
+		}
+		return false;
+	}
+
+	function relayoutWhenFree(root) {
+		if (anyOverlayOpen()) {
+			if (-1 === PENDING_RELAYOUT.indexOf(root)) { PENDING_RELAYOUT.push(root); }
+			return;
+		}
+		// Rebuilding under the keyboard focus would drop it to <body>
+		// (WCAG 2.4.3): switch once focus leaves the widget.
+		var active = document.activeElement;
+		if (active && active !== document.body && root.contains(active)) {
+			if (!root.__vspsFocusWait) {
+				root.__vspsFocusWait = true;
+				root.addEventListener('focusout', function onOut() {
+					setTimeout(function () {
+						if (root.contains(document.activeElement)) { return; }
+						root.removeEventListener('focusout', onOut);
+						root.__vspsFocusWait = false;
+						relayoutWhenFree(root);
+					}, 0);
+				});
+			}
+			return;
+		}
+		relayout(root);
+	}
+
+	function runPendingRelayouts() {
+		if (anyOverlayOpen()) { return; }
+		var roots = PENDING_RELAYOUT.splice(0, PENDING_RELAYOUT.length);
+		roots.forEach(relayoutWhenFree);
+	}
+
+	function relayout(root) {
+		var widget = root.__vspsWidget;
+		if (!widget || !document.body.contains(root)) { return; }
+		if (layoutFor(widget.config) === widget.layout) { return; }
+		var idx = WIDGETS.indexOf(widget);
+		// Its in-flight requests land in detached nodes; stop the paging loops.
+		widget._retired = true;
+		root.classList.remove('vsps-layout-' + widget.layout);
+		root.innerHTML = root.__vspsMarkup;
+		var fresh = new Widget(root);
+		// Keep page order: the #vsps-book trigger opens the first widget.
+		var end = WIDGETS.indexOf(fresh);
+		if (-1 !== idx && -1 !== end) {
+			WIDGETS.splice(end, 1);
+			WIDGETS.splice(idx, 1, fresh);
+		}
+	}
+
 	function Widget(root) {
 		this.root = root;
 		this._createdAt = Date.now();
@@ -613,8 +703,15 @@
 		} catch (e) {
 			return;
 		}
-		this.layout = this.config.layout || 'full';
-		// The bar keeps its own layout on phones (compact strip via CSS).
+		this.layout = layoutFor(this.config);
+		// The bar keeps its own layout on phones (compact strip via CSS);
+		// `layoutMobile` swaps the whole layout there instead.
+		if (this.config.layoutMobile && !this.config._embedded) {
+			// The server markup, to redraw from when the layout switches.
+			if (null == root.__vspsMarkup) { root.__vspsMarkup = root.innerHTML; }
+			root.__vspsWidget = this;
+			watchPhoneLayout(root);
+		}
 		this.body = root.querySelector('.vsps-body');
 		this.state = { types: [], typeId: null, days: [], selectedDate: null, calMonth: null };
 		this.root.classList.add('vsps-layout-' + this.layout);
@@ -671,7 +768,9 @@
 
 	Widget.prototype.init = function () {
 		var self = this;
-		if (!this.config._embedded) {
+		// One view per widget per page load: a phone/desktop layout switch
+		// rebuilds the widget on the same root and is not a new view.
+		if (!this.config._embedded && !this.root.__vspsViewed) {
 			this.track('widget_view', { location_id: this.config.locationId, layout: this.layout });
 		}
 		fetchJson(CFG.restUrl + '/types?location_id=' + this.config.locationId)
@@ -1117,7 +1216,7 @@
 	/** Appends the next page of days (called by the date strip when it runs out). */
 	Widget.prototype.loadMoreDays = function () {
 		var self = this;
-		if (this.state.loadingMore || this.state.exhausted || this.horizonLeft() <= 0 || !this.state.days.length) {
+		if (this._retired || this.state.loadingMore || this.state.exhausted || this.horizonLeft() <= 0 || !this.state.days.length) {
 			return Promise.resolve(false);
 		}
 		var requestId = this.lastRequestId;
@@ -1147,7 +1246,8 @@
 	/** Calendar: keep paging quietly until the horizon is covered. */
 	Widget.prototype.fillHorizon = function () {
 		var self = this;
-		this.loadMoreDays().then(function (more) { if (more) { self.fillHorizon(); } });
+		if (this._retired) { return; }
+		this.loadMoreDays().then(function (more) { if (more && !self._retired) { self.fillHorizon(); } });
 	};
 
 	/**
@@ -1256,6 +1356,7 @@
 		var innerCfg = {};
 		Object.keys(cfg).forEach(function (k) { innerCfg[k] = cfg[k]; });
 		innerCfg.layout = 'full';
+		delete innerCfg.layoutMobile;
 		innerCfg._embedded = true;
 		innerCfg._initialDate = initialDate || null;
 		innerCfg._notice = notice || '';

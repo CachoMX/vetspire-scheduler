@@ -86,6 +86,15 @@ Visitor ──> Widget (JS) ──> WP REST proxy (PHP, cached) ──> Vetspire
 | `mode` | `book` | `book` = on-site booking modal; `link` = clicking a slot goes to `link_url` |
 | `link_url` | — | external booking URL for `mode="link"` (Option-2-lite / phased rollout) |
 | `title` | Book an Appointment | widget heading |
+| `layout` | Settings design | `full`, `bar`, `calendar` or `float` |
+| `layout_mobile` | Settings "On phones" | layout shown at 640px wide or less (same values); redraws when the width crosses it (not under an open popup or the keyboard focus). The Settings value applies to widgets without a `layout`, or with the same `layout` as Settings |
+| `primary` | — | `"1"` = the `#vsps-book` trigger opens this widget when the page has several |
+| `variant` | — | `a` / `b` A/B test of the booking form fields |
+
+Typical clinic setup: `[vetspire_scheduler layout="float" layout_mobile="bar"]` (or set both in
+Settings → Widget Design and use the bare shortcode). Analytics `layout` is the layout shown, which
+follows the window width; `device` follows the browser, so a narrowed desktop window reports
+`device=desktop, layout=bar`.
 
 ## Analytics events
 
