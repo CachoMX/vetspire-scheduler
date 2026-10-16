@@ -225,20 +225,42 @@ check( 'events: ...and a deferred hub push is asked for', in_array( 'shutdown', 
 $res = VSPS_Events::rest_ingest( new WP_REST_Request( $body( array( $ev() ) ) ), function () { throw new Exception( 'boom' ); } );
 check( 'events: an internal error is swallowed (still 204)', 204 === $res->status );
 
+// --- outbox cap (MAX_ROWS, count cached COUNT_TTL seconds) ---
+check( 'events: per-IP limit is 600/hour (storage is bounded by the cap)', 600 === VSPS_Events::RATE_LIMIT );
+$rows_now = VSPS_Events::pending_count();
+set_transient( VSPS_Events::COUNT_CACHE, VSPS_Events::MAX_ROWS + 1, 60 );
+$res = VSPS_Events::rest_ingest( new WP_REST_Request( $body( array( $ev(), $ev() ) ) ), function () { return true; } );
+check( 'events: outbox over 20,000 rows → nothing stored, still a silent 204', 204 === $res->status && $rows_now === VSPS_Events::pending_count() );
+set_transient( VSPS_Events::COUNT_CACHE, VSPS_Events::MAX_ROWS, 60 );
+VSPS_Events::rest_ingest( new WP_REST_Request( $body( array( $ev() ) ) ), function () { return true; } );
+check( 'events: at exactly the cap, still stored', $rows_now + 1 === VSPS_Events::pending_count() );
+delete_transient( VSPS_Events::COUNT_CACHE );
+check( 'events: count computed from the table when not cached', false === VSPS_Events::outbox_full() && $rows_now + 1 === (int) get_transient( VSPS_Events::COUNT_CACHE ) );
+$before = count( $wpdb->queries );
+VSPS_Events::outbox_full();
+VSPS_Events::outbox_full();
+$counted = count( array_filter( array_slice( $wpdb->queries, $before ), function ( $q ) { return false !== stripos( $q, 'COUNT(' ); } ) );
+check( 'events: cached count means no COUNT(*) per request', 0 === $counted, $counted );
+
 // --- hub delivery (mocked hub) ---
 $push  = new ReflectionMethod( 'VSPS_Hub', 'push_events' );
 $push->setAccessible( true );
+$started = new ReflectionProperty( 'VSPS_Hub', 'push_started' );
+$started->setAccessible( true );
 $key   = 'vss_' . str_repeat( 'ab', 24 );
-$reset = function () use ( $wpdb ) {
+$reset = function () use ( $wpdb, $started ) {
 	$wpdb->exec( 'DELETE FROM wp_vsps_events' );
 	$GLOBALS['vsps_options'] = array();
+	$started->setValue( null, microtime( true ) ); // a fresh push
 };
 $seed  = function ( $n ) use ( $ev, $body, $now ) {
 	$events = array();
 	for ( $i = 0; $i < $n; $i++ ) {
 		$events[] = $ev();
 	}
-	VSPS_Events::store( VSPS_Events::parse_body( $body( $events ), $now ) );
+	foreach ( array_chunk( $events, VSPS_Events::MAX_PER_CALL ) as $chunk ) {
+		VSPS_Events::store( VSPS_Events::parse_body( $body( $chunk ), $now ) );
+	}
 	return array_column( $events, 'event_id' );
 };
 $http = function ( $code, $json ) {
@@ -322,6 +344,40 @@ $GLOBALS['vsps_mock_http'] = function () use ( $http ) {
 $push->invoke( null, $key );
 check( 'hub events: 200 that acknowledges nothing → back off, rows kept',
 	2 === VSPS_Events::pending_count() && ! empty( VSPS_Hub::status()['events_backoff_until'] ) );
+
+// --- events time budget (LOCK_TTL 60 s): batches stop after ~40 s of push ---
+$reset();
+$seed( 3 );
+$calls = array();
+$GLOBALS['vsps_mock_http'] = function () use ( &$calls, $http ) {
+	$calls[] = 1;
+	return $http( 200, array( 'accepted' => array(), 'rejected' => array() ) );
+};
+$started->setValue( null, microtime( true ) - VSPS_Hub::EVENTS_TIME_BUDGET - 1 ); // bookings used it all
+$push->invoke( null, $key );
+check( 'hub events: no event request once the push has used 40 s, no backoff, rows kept',
+	0 === count( $calls ) && 3 === VSPS_Events::pending_count() && empty( VSPS_Hub::status()['events_backoff_until'] ) );
+
+$reset();
+$seed( VSPS_Hub::EVENTS_BATCH + 100 );
+$calls = array();
+$GLOBALS['vsps_mock_http'] = function ( $url, $args ) use ( &$calls, $http, $started ) {
+	$sent    = array_column( json_decode( $args['body'], true )['events'], 'event_id' );
+	$calls[] = count( $sent );
+	// The first batch "took" the rest of the budget.
+	$started->setValue( null, microtime( true ) - VSPS_Hub::EVENTS_TIME_BUDGET );
+	return $http( 200, array( 'accepted' => $sent, 'rejected' => array() ) );
+};
+$push->invoke( null, $key );
+check( 'hub events: budget used up mid-push → the next batch waits for the next push',
+	array( VSPS_Hub::EVENTS_BATCH ) === $calls && 100 === VSPS_Events::pending_count() && empty( VSPS_Hub::status()['events_backoff_until'] ), json_encode( $calls ) );
+$started->setValue( null, microtime( true ) );
+$push->invoke( null, $key );
+check( 'hub events: ...which sends the rest', 0 === VSPS_Events::pending_count() );
+
+$src = file_get_contents( __DIR__ . '/../includes/class-vsps-hub.php' );
+check( 'hub: events start only after the bookings loop and heartbeat',
+	strpos( $src, 'self::heartbeat( $key, $site )' ) < strpos( $src, "\$summary['events_delivered'] = self::push_events( \$key )" ) );
 
 // Back to the real network for the rest of the harness.
 unset( $GLOBALS['vsps_mock_http'], $GLOBALS['wpdb'] );
