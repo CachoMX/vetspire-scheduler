@@ -27,6 +27,10 @@ function is_wp_error( $thing ) { return $thing instanceof WP_Error; }
 function wp_json_encode( $data ) { return json_encode( $data ); }
 
 function wp_remote_post( $url, $args ) {
+	// Offline tests (section 0) answer HTTP calls themselves.
+	if ( isset( $GLOBALS['vsps_mock_http'] ) && is_callable( $GLOBALS['vsps_mock_http'] ) ) {
+		return call_user_func( $GLOBALS['vsps_mock_http'], $url, $args );
+	}
 	$header_lines = '';
 	foreach ( $args['headers'] as $k => $v ) { $header_lines .= "$k: $v\r\n"; }
 	$ctx = stream_context_create( array(
@@ -60,11 +64,16 @@ function get_transient( $key ) {
 }
 function set_transient( $key, $value, $ttl ) { $GLOBALS['vsps_transients'][ $key ] = $value; return true; }
 function delete_transient( $key ) { unset( $GLOBALS['vsps_transients'][ $key ] ); return true; }
-function get_option( $key, $default = false ) { return $default; }
+$GLOBALS['vsps_options'] = array();
+function get_option( $key, $default = false ) {
+	return array_key_exists( $key, $GLOBALS['vsps_options'] ) ? $GLOBALS['vsps_options'][ $key ] : $default;
+}
+function update_option( $key, $value, $autoload = null ) { $GLOBALS['vsps_options'][ $key ] = $value; return true; }
 function apply_filters( $tag, $value ) { return $value; }
 function __( $text, $domain = null ) { return $text; }
+$GLOBALS['vsps_test_settings'] = array();
 function vsps_get_settings() {
-	return array( 'cache_ttl' => 60 );
+	return array_merge( array( 'cache_ttl' => 60 ), $GLOBALS['vsps_test_settings'] );
 }
 
 require __DIR__ . '/../includes/class-vsps-pims.php';
@@ -99,6 +108,9 @@ function check( $label, $ok, $detail = '' ) {
 function detail( $thing ) {
 	return is_wp_error( $thing ) ? $thing->get_error_message() : json_encode( $thing );
 }
+
+// Funnel events: validation, rate limit and the outbox/hub delivery (offline).
+require __DIR__ . '/harness-events.php';
 
 echo "== 1. Connectivity ==\n";
 $data = $api->get_org_and_locations();
