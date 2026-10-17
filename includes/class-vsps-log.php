@@ -21,7 +21,8 @@ class VSPS_Log {
 	// and each row records its platform.
 	// v7 (1.26.0): bookings record the visitor's device; new table wp_vsps_events
 	// (funnel events outbox, see VSPS_Events).
-	const DB_VERSION = '7';
+	// v8 (1.27.1): events record the session's traffic channel and source.
+	const DB_VERSION = '8';
 
 	public static function table() {
 		global $wpdb;
@@ -106,6 +107,12 @@ class VSPS_Log {
 			if ( $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $events ) ) !== $events ) {
 				error_log( '[vetspire-scheduler] could not create ' . $events . ': ' . $wpdb->last_error );
 				return; // the next request retries
+			}
+			foreach ( array( 'channel', 'source' ) as $column ) {
+				if ( ! $wpdb->get_var( $wpdb->prepare( "SHOW COLUMNS FROM {$events} LIKE %s", $column ) ) ) { // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+					error_log( '[vetspire-scheduler] could not add column ' . $column . ' to ' . $events . ': ' . $wpdb->last_error );
+					return; // the next request retries
+				}
 			}
 			// Rows that pre-date event_id get a deterministic one (safe to re-run),
 			// and every not-yet-delivered row is queued for the Vetcelerator hub.

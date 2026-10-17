@@ -214,16 +214,131 @@
 		return !!(CFG.events && CFG.restUrl);
 	}
 
+	/* channel-classifier:start (pure: no window/document; tests/channel-unit.js loads this block) */
+	/**
+	 * GA4-style traffic channel + source of a session, from the landing page's
+	 * query string, its referrer and the site's own host. Returns
+	 * { channel, source }; source is the lowercase utm_source, else the referrer
+	 * host without "www.", else '' (never a path or a query).
+	 */
+	function classifyChannel(search, referrer, ownHost) {
+		var CHANNEL_AI_HOSTS = ['chatgpt.com', 'chat.openai.com', 'perplexity.ai', 'gemini.google.com', 'copilot.microsoft.com', 'claude.ai'];
+		var CHANNEL_SEARCH_HOSTS = ['bing.com', 'duckduckgo.com', 'ecosia.org', 'baidu.com', 'search.brave.com'];
+		var CHANNEL_SEARCH_PATTERNS = [/(^|\.)google\.[a-z]{2,3}(\.[a-z]{2})?$/, /(^|\.)yahoo\.[a-z]{2,3}(\.[a-z]{2})?$/, /(^|\.)yandex\.[a-z]{2,3}(\.[a-z]{2})?$/];
+		var CHANNEL_SOCIAL_HOSTS = ['facebook.com', 'instagram.com', 't.co', 'twitter.com', 'x.com', 'linkedin.com', 'lnkd.in', 'tiktok.com', 'youtube.com', 'reddit.com', 'nextdoor.com'];
+		var CHANNEL_SOCIAL_PATTERNS = [/(^|\.)pinterest\.[a-z]{2,3}(\.[a-z]{2})?$/];
+		// utm_source names (no dot) of social networks / search engines / AI assistants.
+		var SOCIAL_NAMES = /^(facebook|fb|meta|instagram|ig|twitter|x|linkedin|pinterest|tiktok|youtube|reddit|nextdoor|snapchat|threads)$/;
+		var SEARCH_NAMES = /^(google|bing|yahoo|duckduckgo|ecosia|baidu|yandex|brave)$/;
+		var AI_NAMES = /^(chatgpt|openai|perplexity|gemini|copilot|claude)$/;
+
+		function clean(value) {
+			return String(value || '').toLowerCase().replace(/[^a-z0-9.-]+/g, '-').replace(/^[-.]+|[-.]+$/g, '').slice(0, 64);
+		}
+		function hostOf(url) {
+			var m = /^[a-z][a-z0-9+.-]*:\/\/(?:[^@\/?#]*@)?([^\/?#:]+)/i.exec(String(url || ''));
+			return m ? m[1].toLowerCase().replace(/^www\./, '').replace(/\.$/, '') : '';
+		}
+		function onList(host, hosts, patterns) {
+			for (var i = 0; i < hosts.length; i++) {
+				if (host === hosts[i] || host.slice(-(hosts[i].length + 1)) === '.' + hosts[i]) { return true; }
+			}
+			for (var j = 0; j < (patterns || []).length; j++) {
+				if (patterns[j].test(host)) { return true; }
+			}
+			return false;
+		}
+		function byHost(host) {
+			if (onList(host, CHANNEL_AI_HOSTS)) { return 'AI Assistant'; }
+			if (onList(host, CHANNEL_SEARCH_HOSTS, CHANNEL_SEARCH_PATTERNS)) { return 'Organic Search'; }
+			if (onList(host, CHANNEL_SOCIAL_HOSTS, CHANNEL_SOCIAL_PATTERNS)) { return 'Organic Social'; }
+			return 'Referral';
+		}
+		function isSocial(src) {
+			return SOCIAL_NAMES.test(src) || onList(src, CHANNEL_SOCIAL_HOSTS, CHANNEL_SOCIAL_PATTERNS);
+		}
+		function param(name) {
+			var m = new RegExp('[?&]' + name + '=([^&#]*)', 'i').exec(String(search || ''));
+			if (!m) { return ''; }
+			try { return decodeURIComponent(m[1].replace(/\+/g, ' ')).trim(); } catch (e) { return m[1].trim(); }
+		}
+
+		var own = String(ownHost || '').toLowerCase().replace(/^www\./, '');
+		var refHost = hostOf(referrer);
+		if (refHost && own && refHost === own) { refHost = ''; } // internal navigation
+		var utmSource = clean(param('utm_source'));
+		var medium = param('utm_medium').toLowerCase();
+		var source = utmSource || clean(refHost);
+
+		if (medium) {
+			var channel = 'Unassigned';
+			if (/^(email|e-mail|newsletter)$/.test(medium)) { channel = 'Email'; }
+			else if (/^(cpc|ppc|paid|paidsearch|paid-search)$/.test(medium)) { channel = isSocial(utmSource) ? 'Paid Social' : 'Paid Search'; }
+			else if (/^(paid_social|paidsocial|social-paid|paid-social)$/.test(medium)) { channel = 'Paid Social'; }
+			else if (/^(social|social-network|sm|social-media)$/.test(medium)) { channel = 'Organic Social'; }
+			else if ('organic' === medium) { channel = 'Organic Search'; }
+			else if ('referral' === medium) { channel = 'Referral'; }
+			return { channel: channel, source: source };
+		}
+		if (param('gclid') || param('gbraid') || param('wbraid') || param('msclkid')) {
+			return { channel: 'Paid Search', source: source };
+		}
+		if (param('fbclid')) {
+			return { channel: 'Organic Social', source: source };
+		}
+		if (utmSource) {
+			// utm_source without utm_medium: GA4 groups it by the source alone.
+			if (AI_NAMES.test(utmSource) || onList(utmSource, CHANNEL_AI_HOSTS)) { return { channel: 'AI Assistant', source: source }; }
+			if (SEARCH_NAMES.test(utmSource) || onList(utmSource, CHANNEL_SEARCH_HOSTS, CHANNEL_SEARCH_PATTERNS)) { return { channel: 'Organic Search', source: source }; }
+			if (isSocial(utmSource)) { return { channel: 'Organic Social', source: source }; }
+			return { channel: 'Unassigned', source: source };
+		}
+		if (refHost) {
+			return { channel: byHost(refHost), source: source };
+		}
+		return { channel: 'Direct', source: '' };
+	}
+	/* channel-classifier:end */
+
+	/**
+	 * The session's channel, computed once per tab (sessionStorage, same
+	 * lifetime as the session id) from the first page the script runs on, and
+	 * reused for every event after that: a later page's own-site referrer never
+	 * overrides it.
+	 */
+	var CHANNEL = null;
+	function sessionChannel() {
+		if (CHANNEL) { return CHANNEL; }
+		var stored = null;
+		try {
+			stored = JSON.parse(window.sessionStorage.getItem('vsps_ch') || 'null');
+		} catch (e) { stored = null; }
+		if (stored && 'string' === typeof stored.channel && 'string' === typeof stored.source) {
+			CHANNEL = { channel: stored.channel, source: stored.source };
+			return CHANNEL;
+		}
+		try {
+			CHANNEL = classifyChannel(window.location.search, document.referrer, window.location.hostname);
+		} catch (e) {
+			CHANNEL = { channel: 'Unassigned', source: '' };
+		}
+		try { window.sessionStorage.setItem('vsps_ch', JSON.stringify(CHANNEL)); } catch (e) { /* private mode */ }
+		return CHANNEL;
+	}
+
 	/** ctx: { layout, variant, location_id, appointment_type_id, fields? } */
 	function queueHubEvent(name, ctx) {
 		try {
 			if (!hubEventsOn() || -1 === HUB_EVENT_NAMES.indexOf(name)) { return; }
 			ctx = ctx || {};
+			var ch = sessionChannel();
 			var event = {
 				event_id: randomId(),
 				session_id: sessionId(),
 				name: name,
 				device: deviceType(),
+				channel: ch.channel,
+				source: ch.source,
 				layout: String(ctx.layout || ''),
 				variant: String(ctx.variant || ''),
 				location_id: null == ctx.location_id ? '' : String(ctx.location_id),
@@ -2387,6 +2502,9 @@
 	/* ---------- boot ---------- */
 
 	function boot() {
+		// The session's channel comes from its FIRST page with this script (the
+		// landing page may have no widget): one sessionStorage read, no request.
+		if (hubEventsOn()) { sessionChannel(); }
 		var widgets = document.querySelectorAll('.vsps-widget[data-vsps-config]');
 		Array.prototype.forEach.call(widgets, function (root) {
 			if (root.getAttribute('data-vsps-noinit')) { return; }

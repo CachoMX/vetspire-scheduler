@@ -128,6 +128,16 @@ dropped after 14 days). Without a key nothing is sent or stored. Every booking a
 device. Pages where no widget renders send nothing, and an events failure never touches a
 booking.
 
+Since 1.27.1 every event also carries the session's **traffic channel** (Direct, Organic Search,
+Paid Search, Organic Social, Paid Social, Email, Referral, AI Assistant, Unassigned; GA4-style
+rules: `utm_medium` first, then click ids such as `gclid`/`fbclid`, then the referrer host, AI
+assistants before search engines) and its **source** (lowercase `utm_source`, else the referrer
+host without `www.`; never a path or query). Both are worked out once per tab from the first page
+the script runs on (the landing page may have no widget) and kept in sessionStorage, so an
+own-site referrer on later pages never overrides them. WordPress checks the channel against
+the nine values (anything else becomes Unassigned) and cleans the source. The classifier is the
+pure `classifyChannel()` in `assets/js/scheduler.js` (`node tests/channel-unit.js`).
+
 ## Security
 
 - Admin token is only used server-side (`wp_remote_post`); REST responses expose no Vetspire IDs

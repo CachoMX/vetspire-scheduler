@@ -23,6 +23,8 @@ class VSPS_Events {
 	const NAMES          = array( 'widget_view', 'slot_selected', 'form_started', 'booking_submitted', 'booking_completed', 'booking_failed', 'form_abandoned' );
 	const DEVICES        = array( 'mobile', 'tablet', 'desktop' );
 	const LAYOUTS        = array( 'full', 'bar', 'calendar', 'float' );
+	// GA4-style default channel groups (computed per session in the browser).
+	const CHANNELS       = array( 'Direct', 'Organic Search', 'Paid Search', 'Organic Social', 'Paid Social', 'Email', 'Referral', 'AI Assistant', 'Unassigned' );
 	const MAX_PER_CALL   = 50;   // events accepted in one browser request
 	const MAX_FIELDS     = 40;   // field keys on one form_abandoned
 	// Browser requests per IP... REMOTE_ADDR only (spoofable headers are not
@@ -62,6 +64,8 @@ class VSPS_Events {
 			location_id varchar(64) NOT NULL DEFAULT '',
 			appointment_type_id varchar(64) NOT NULL DEFAULT '',
 			page_path varchar(255) NOT NULL DEFAULT '',
+			channel varchar(20) NOT NULL DEFAULT '',
+			source varchar(64) NOT NULL DEFAULT '',
 			fields text NULL,
 			PRIMARY KEY  (id),
 			UNIQUE KEY event_id (event_id),
@@ -124,6 +128,9 @@ class VSPS_Events {
 			'location_id'         => VSPS_Pims_Registry::sanitize_id( isset( $event['location_id'] ) ? $event['location_id'] : '' ),
 			'appointment_type_id' => VSPS_Pims_Registry::sanitize_id( isset( $event['appointment_type_id'] ) ? $event['appointment_type_id'] : '' ),
 			'page_path'           => self::page_path( isset( $event['page_path'] ) ? $event['page_path'] : '' ),
+			// '' = not sent (an older widget); anything not on the list = Unassigned.
+			'channel'             => array_key_exists( 'channel', $event ) ? self::channel( $event['channel'] ) : '',
+			'source'              => self::source( isset( $event['source'] ) ? $event['source'] : '' ),
 			'fields'              => json_encode( $fields ),
 		);
 	}
@@ -142,6 +149,31 @@ class VSPS_Events {
 		}
 		$value = strtolower( $value );
 		return preg_match( '/^[a-z0-9_-]{1,10}$/', $value ) ? $value : '';
+	}
+
+	/** One of CHANNELS; anything else sent becomes Unassigned. */
+	public static function channel( $value ) {
+		return is_string( $value ) && in_array( $value, self::CHANNELS, true ) ? $value : 'Unassigned';
+	}
+
+	/**
+	 * utm_source or referrer host: lowercase [a-z0-9.-] only (other runs of
+	 * characters become "-"), at most 64. A URL is reduced to its host, so a
+	 * path or a query can never be stored.
+	 */
+	public static function source( $value ) {
+		if ( ! is_string( $value ) || '' === $value ) {
+			return '';
+		}
+		$value = strtolower( trim( $value ) );
+		if ( preg_match( '#^[a-z][a-z0-9+.-]*://(?:[^@/?\#]*@)?([^/?\#:]+)#', $value, $m ) ) {
+			$value = $m[1];
+		} else {
+			$value = preg_split( '#[/?\#]#', $value, 2 )[0];
+		}
+		$value = preg_replace( '/^www\./', '', $value );
+		$value = preg_replace( '/[^a-z0-9.-]+/', '-', $value );
+		return trim( substr( trim( $value, '-.' ), 0, 64 ), '-.' );
 	}
 
 	/** Path only (no host, query or hash), printable ASCII, ≤255 chars, always starting with "/". */
@@ -203,10 +235,11 @@ class VSPS_Events {
 		return array_values( array_unique( array_intersect( $done, array_map( 'strval', $sent_ids ) ) ) );
 	}
 
-	/** One stored row → one hub Event. */
+	/** One stored row → one hub Event (no `channel` when the widget sent none: the hub shows "Not captured"). */
 	public static function record( $row ) {
-		$fields = json_decode( isset( $row->fields ) ? (string) $row->fields : '', true );
-		return array(
+		$fields  = json_decode( isset( $row->fields ) ? (string) $row->fields : '', true );
+		$channel = isset( $row->channel ) ? (string) $row->channel : '';
+		$record  = array(
 			'event_id'            => (string) $row->event_id,
 			'session_id'          => (string) $row->session_id,
 			'name'                => (string) $row->name,
@@ -217,8 +250,13 @@ class VSPS_Events {
 			'location_id'         => (string) $row->location_id,
 			'appointment_type_id' => (string) $row->appointment_type_id,
 			'page_path'           => (string) $row->page_path,
+			'source'              => isset( $row->source ) ? (string) $row->source : '',
 			'fields'              => 'form_abandoned' === (string) $row->name && is_array( $fields ) ? array_values( $fields ) : array(),
 		);
+		if ( '' !== $channel ) {
+			$record['channel'] = $channel;
+		}
+		return $record;
 	}
 
 	/* ---------- storage ---------- */
@@ -241,6 +279,15 @@ class VSPS_Events {
 		}
 		$sql = 'INSERT IGNORE INTO ' . self::table() . ' (' . implode( ',', $columns ) . ') VALUES ' . implode( ',', $placeholders );
 		$ok  = $wpdb->query( $wpdb->prepare( $sql, $values ) ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery,WordPress.DB.PreparedSQL
+		if ( false === $ok && isset( $rows[0]['channel'] ) && preg_match( '/\b(channel|source)\b/i', (string) $wpdb->last_error ) ) {
+			// The v8 columns aren't there yet (upgrade retried on the next request): keep the events.
+			$without = array();
+			foreach ( $rows as $row ) {
+				unset( $row['channel'], $row['source'] );
+				$without[] = $row;
+			}
+			return self::store( $without );
+		}
 		if ( false === $ok ) {
 			error_log( '[vetspire-scheduler] events insert failed: ' . $wpdb->last_error );
 			return false;
