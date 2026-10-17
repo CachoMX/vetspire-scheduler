@@ -174,6 +174,16 @@ limitations: transient-based rate counter is not atomic under burst (soft brake 
 re-validation bounds the damage), and a CAPTCHA (e.g. Turnstile) is recommended before
 high-traffic rollout.
 
+## Accessibility (WCAG 2.2 A/AA)
+
+The widget targets WCAG 2.2 Level A and AA; the criterion-by-criterion record is
+`docs/wcag-2.2-checklist.md`. Since 1.28.0 every form field has a visible label wired with
+`for`/`id`, required fields carry a red asterisk plus `required` / `aria-required`, and each step
+with a required field starts with "* Indicates a required field". Errors are text under the field
+("Error: <how to fix it>", with an icon), linked through `aria-invalid` + `aria-describedby`; server
+errors that name a field (`data.fields` on `vsps_required` / `vsps_invalid` / `vsps_verify`) are shown
+at that field. Popups are named dialogs, and the page behind an open popup does not scroll.
+
 ## Development / tests
 
 Local PHP harness (no WordPress needed) runs the real API E2E, including a booking at the
@@ -182,6 +192,8 @@ org's TESTING LOCATION that is deleted afterwards:
 ```
 php tests/harness.php            # 22 checks: connectivity, types, slots, cache, dedupe, guardrails, booking, cleanup
 php tests/nectar-e2e.php         # 37 checks: Nectar sandbox reads, slot logic, booking flow (mocked writes), fields
+php tests/errors-unit.php        # offline: required-field errors name their fields
+NODE_PATH=… AXE_JS=…/axe.min.js VSPS_AUTOLOGIN=… node tests/wcag-forms-e2e.js   # local WP: labels, errors, axe, scroll lock
 php -S 127.0.0.1:8737 tests/demo-server.php   # visual demo at http://127.0.0.1:8737
 node <scratchpad>/visual-test.js # puppeteer: renders, books, checks dataLayer events
 ```
