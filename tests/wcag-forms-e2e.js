@@ -259,6 +259,17 @@ async function toChoice(page) {
   e = await fieldError(v, 'notes');
   expectError('confirm step, empty reason', e, /reason/i);
   check('confirm step: nothing is sent while a field is invalid', bookCalls === 0, bookCalls);
+  // A server error shows in the form box; the next failed check must hide it.
+  bookReply = { status: 502, body: { code: 'vsps_booking', message: 'We could not complete the booking. Please try another time or call the clinic.', data: { status: 502 } } };
+  await setVal(v, 'notes', 'Checkup');
+  await submit(v); await wait(800);
+  const formBox = () => v.evaluate(() => { const b = document.querySelector('.vsps-overlay:last-of-type .vsps-error'); return !!(b && b.offsetWidth); });
+  const boxShown = await formBox();
+  await setVal(v, 'notes', '');
+  await submit(v);
+  const boxAfter = await formBox();
+  check('a new failed check hides the previous form-level error', boxShown && !boxAfter, { boxShown, boxAfter });
+  bookReply = null;
 
   // ---- 4. Add-a-pet form + server errors mapped to fields ----
   await clickIn(v, '.vsps-modal', "e.tagName==='BUTTON' && /Back/.test(e.textContent)"); await wait(800);
@@ -276,6 +287,7 @@ async function toChoice(page) {
   await setVal(v, 'weight', '12');
   await setVal(v, 'phone_last4', '1234');
   await setVal(v, 'notes', 'Checkup');
+  bookCalls = 0;
   bookReply = { status: 409, body: { code: 'vsps_verify', message: 'We could not verify that this account is yours. Please use the phone number the clinic has on file, or call the clinic to add a new pet.', data: { status: 409, fields: ['phone_last4'] } } };
   await submit(v); await wait(800);
   check('add-a-pet: a valid form is sent', bookCalls === 1, bookCalls);
@@ -327,6 +339,10 @@ async function toChoice(page) {
   expectError('new-client, bad email', await fieldError(v, 'email'), /valid email/i);
   expectError('new-client, short phone', await fieldError(v, 'phone'), /phone/i);
   expectError('new-client, age out of range', await fieldError(v, 'age'), /0.*40/);
+  await setVal(v, 'phone_alt', 'ext 4');
+  await submit(v);
+  const alt = await fieldError(v, 'phone_alt');
+  check('optional alternate phone with an extension is not an error', !alt.invalid && !alt.text, alt);
   await axeScan(v, 'new-client form with errors');
 
   // ---- 5b. A/AA audit extras on the new-client form (T5) ----

@@ -547,7 +547,9 @@
 		// Next tick: a popup that replaces another (picker → booking form)
 		// registers right after the first one closes; keep the lock across it.
 		setTimeout(function () {
-			if (OPEN_OVERLAYS.length || !SCROLL_LOCK) { return; }
+			// anyOverlayOpen(): a popup a theme removed without closing it must
+			// not keep the page pinned forever.
+			if (anyOverlayOpen() || !SCROLL_LOCK) { return; }
 			var lock = SCROLL_LOCK;
 			SCROLL_LOCK = null;
 			var html = document.documentElement;
@@ -2265,7 +2267,9 @@
 	}
 
 	function fieldDate(name, text, flag, extra) {
-		var today = new Date().toISOString().slice(0, 10);
+		// The visitor's own calendar day (toISOString() would be the UTC day).
+		var now = new Date();
+		var today = now.getFullYear() + '-' + ('0' + (now.getMonth() + 1)).slice(-2) + '-' + ('0' + now.getDate()).slice(-2);
 		return fieldInput(name, text, flag, 'date', ' max="' + today + '"' + (extra || ''));
 	}
 
@@ -2360,7 +2364,9 @@
 			return fill(I18N.errRequired, { label: label });
 		}
 		if ('email' === control.type && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)) { return I18N.errEmail; }
-		if ('tel' === control.type && value.replace(/\D/g, '').length < 7) { return I18N.errPhone; }
+		// Only a required phone must be dialable; an optional one ("Alternate
+		// phone") may hold an extension or "N/A" without blocking the booking.
+		if ('tel' === control.type && control.required && value.replace(/\D/g, '').length < 7) { return I18N.errPhone; }
 		if ('number' === control.type) {
 			var num = Number(value);
 			var min = control.getAttribute('min');
@@ -2457,6 +2463,9 @@
 	/** Checks every control; marks the bad ones and focuses the first. True when the form can be sent. */
 	function validateForm(form) {
 		form.setAttribute('data-vsps-tried', '1');
+		// A previous attempt's form-level error no longer applies.
+		var formError = form.querySelector('.vsps-error');
+		if (formError) { formError.style.display = 'none'; }
 		var first = null;
 		Array.prototype.forEach.call(form.querySelectorAll('input, select, textarea'), function (control) {
 			var message = controlError(control);
