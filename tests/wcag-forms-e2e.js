@@ -275,7 +275,7 @@ async function toChoice(page) {
   await setVal(v, 'weight', '12');
   await setVal(v, 'phone_last4', '1234');
   await setVal(v, 'notes', 'Checkup');
-  bookReply = { status: 409, body: { code: 'vsps_verify', message: 'We could not verify that this account is yours. Please use the phone number the clinic has on file, or call the clinic to add a new pet.', data: { status: 409, field: 'phone_last4' } } };
+  bookReply = { status: 409, body: { code: 'vsps_verify', message: 'We could not verify that this account is yours. Please use the phone number the clinic has on file, or call the clinic to add a new pet.', data: { status: 409, fields: ['phone_last4'] } } };
   await submit(v); await wait(800);
   check('add-a-pet: a valid form is sent', bookCalls === 1, bookCalls);
   e = await fieldError(v, 'phone_last4');

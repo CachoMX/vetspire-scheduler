@@ -675,6 +675,7 @@
 					var err = new Error((json && json.message) || 'Request failed');
 					err.status = res.status;
 					err.code = (json && json.code) || '';
+					err.data = (json && json.data) || {};
 					throw err;
 				}
 				return json;
@@ -2096,10 +2097,10 @@
 					self.renderNewPetForm();
 				}
 			}).catch(function (err) {
-				errorEl.textContent = err.message || I18N.lookupFailed;
-				errorEl.style.display = 'block';
 				btn.disabled = false;
 				btn.textContent = I18N.continueBtn;
+				if (showServerFieldErrors(form, err)) { return; }
+				showFormError(errorEl, err.message || I18N.lookupFailed);
 			});
 		});
 		form.querySelector('[name="lookup_email"]').focus();
@@ -2345,6 +2346,49 @@
 		control.removeAttribute('aria-invalid');
 		var ids = (control.getAttribute('aria-describedby') || '').split(/\s+/).filter(function (id) { return id && id !== errId; });
 		if (ids.length) { control.setAttribute('aria-describedby', ids.join(' ')); } else { control.removeAttribute('aria-describedby'); }
+	}
+
+	/**
+	 * The form's controls for the server's field keys (registry keys such as
+	 * "address", "reason", "email"). When a key covers several inputs (address)
+	 * only the ones still wrong are returned.
+	 */
+	function controlsForKeys(form, keys) {
+		var out = [];
+		(keys || []).forEach(function (key) {
+			var matches = Array.prototype.filter.call(form.querySelectorAll('input[name], select[name], textarea[name]'), function (c) {
+				return c.name === key || FIELD_KEY_BY_INPUT[c.name] === key;
+			});
+			var wrong = matches.filter(function (c) { return !!controlError(c) || (c.required && !String(c.value || '').trim()); });
+			(wrong.length ? wrong : matches.slice(0, 1)).forEach(function (c) {
+				if (out.indexOf(c) === -1) { out.push(c); }
+			});
+		});
+		return out;
+	}
+
+	/**
+	 * A server error that names fields goes to those fields; a single field
+	 * gets the server's own sentence (e.g. the phone-on-file check). Returns
+	 * false when the error names no field on this form.
+	 */
+	function showServerFieldErrors(form, err) {
+		var controls = controlsForKeys(form, err.data && err.data.fields);
+		if (!controls.length) { return false; }
+		form.setAttribute('data-vsps-tried', '1');
+		controls.forEach(function (control) {
+			var own = controlError(control) || fill(I18N.errRequired, { label: labelText(control) });
+			showFieldError(control, 1 === controls.length && 'vsps_required' !== err.code && err.message ? err.message : own);
+		});
+		controls[0].focus();
+		return true;
+	}
+
+	/** The form-level error box (errors not tied to a field): icon + "Error:" text. */
+	function showFormError(errorEl, message) {
+		errorEl.innerHTML = '<span class="vsps-err-icon" aria-hidden="true">\u26a0</span> ';
+		errorEl.appendChild(document.createTextNode(I18N.errorPrefix + ' ' + message));
+		errorEl.style.display = 'block';
 	}
 
 	/** Checks every control; marks the bad ones and focuses the first. True when the form can be sent. */
@@ -2645,12 +2689,17 @@
 			// both on this form and on the notice atop the picker it reopens into.
 			var slotGone = 'vsps_slot' === err.code;
 			var message  = slotGone ? I18N.slotGoneMessage : ( err.message || I18N.bookingFailed );
-			errorEl.textContent = message;
-			errorEl.style.display = 'block';
+			bk.step.querySelectorAll('.vsps-back').forEach(function (b) { b.disabled = false; b.style.opacity = ''; });
+			// A field the server rejected (e.g. the phone-on-file check) is shown at that field.
+			if (!slotGone && showServerFieldErrors(form, err)) {
+				submitBtn.disabled = false;
+				submitBtn.textContent = I18N.confirm;
+				return;
+			}
+			showFormError(errorEl, message);
 			errorEl.removeAttribute('role');
 			errorEl.setAttribute('tabindex', '-1');
 			errorEl.focus();
-			bk.step.querySelectorAll('.vsps-back').forEach(function (b) { b.disabled = false; b.style.opacity = ''; });
 			if (slotGone) {
 				// Retrying the same time can never succeed, so the primary action
 				// becomes "Choose Another Time" (re-opens the picker on the same day).

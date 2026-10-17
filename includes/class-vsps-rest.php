@@ -354,7 +354,7 @@ class VSPS_Rest {
 		}
 		$email = sanitize_email( (string) $request->get_param( 'email' ) );
 		if ( ! is_email( $email ) ) {
-			return new WP_Error( 'vsps_invalid', 'A valid email is required.', array( 'status' => 400 ) );
+			return new WP_Error( 'vsps_invalid', 'A valid email is required.', array( 'status' => 400, 'fields' => array( 'email' ) ) );
 		}
 		if ( ! self::rate_limit_ok( 'lk_' . md5( self::client_ip() ), 10, HOUR_IN_SECONDS ) ) {
 			return new WP_Error( 'vsps_rate', 'Too many lookups. Please try again later or continue as a new client.', array( 'status' => 429 ) );
@@ -424,7 +424,11 @@ class VSPS_Rest {
 				VSPS_Cache::forget( array( 'avail', (string) $args['location_id'], (string) $args['appointment_type_id'], $args['date'] ) );
 			}
 			if ( in_array( $code, array( 'vsps_slot', 'vsps_type', 'vsps_datetime', 'vsps_client_missing', 'vsps_pet_missing', 'vsps_verify' ), true ) ) {
-				return new WP_Error( $code, $result->get_error_message(), array( 'status' => 409 ) );
+				$data = array( 'status' => 409 );
+				if ( 'vsps_verify' === $code ) {
+					$data['fields'] = array( 'phone_last4' ); // the widget shows it at that field
+				}
+				return new WP_Error( $code, $result->get_error_message(), $data );
 			}
 			return new WP_Error( 'vsps_booking', 'We could not complete the booking. Please try another time or call the clinic.', array( 'status' => 502 ) );
 		}
@@ -557,19 +561,19 @@ class VSPS_Rest {
 			return new WP_Error( 'vsps_invalid', 'Booking date out of range.', array( 'status' => 400 ) );
 		}
 		if ( ! is_email( $args['client']['email'] ) ) {
-			return new WP_Error( 'vsps_invalid', 'A valid email is required.', array( 'status' => 400 ) );
+			return new WP_Error( 'vsps_invalid', 'A valid email is required.', array( 'status' => 400, 'fields' => array( 'email' ) ) );
 		}
 		if ( 'existing' === $client_type ) {
 			// Returning clients only need email + pet; name/phone are on file.
 			if ( '' === $args['patient']['name'] ) {
-				return new WP_Error( 'vsps_invalid', 'Pet name is required.', array( 'status' => 400 ) );
+				return new WP_Error( 'vsps_invalid', 'Pet name is required.', array( 'status' => 400, 'fields' => array( 'pet_name' ) ) );
 			}
 			if ( $args['pet_is_new'] ) {
 				if ( '' === $args['patient']['species'] ) {
-					return new WP_Error( 'vsps_invalid', 'Pet species is required.', array( 'status' => 400 ) );
+					return new WP_Error( 'vsps_invalid', 'Pet species is required.', array( 'status' => 400, 'fields' => array( 'species' ) ) );
 				}
 				if ( '' === $args['phone_last4'] ) {
-					return new WP_Error( 'vsps_invalid', 'The last 4 digits of the phone on file are required to add a pet.', array( 'status' => 400 ) );
+					return new WP_Error( 'vsps_invalid', 'The last 4 digits of the phone on file are required to add a pet.', array( 'status' => 400, 'fields' => array( 'phone_last4' ) ) );
 				}
 			}
 			$required = self::enforce_fields( $request, $args );
@@ -581,13 +585,13 @@ class VSPS_Rest {
 			return $required;
 		}
 		if ( '' === $args['client']['given_name'] || '' === $args['client']['family_name'] ) {
-			return new WP_Error( 'vsps_invalid', 'First and last name are required.', array( 'status' => 400 ) );
+			return new WP_Error( 'vsps_invalid', 'First and last name are required.', array( 'status' => 400, 'fields' => array( 'given_name', 'family_name' ) ) );
 		}
 		if ( strlen( preg_replace( '/\D/', '', $args['client']['phone'] ) ) < 7 ) {
-			return new WP_Error( 'vsps_invalid', 'A valid phone number is required.', array( 'status' => 400 ) );
+			return new WP_Error( 'vsps_invalid', 'A valid phone number is required.', array( 'status' => 400, 'fields' => array( 'phone' ) ) );
 		}
 		if ( '' === $args['patient']['name'] || '' === $args['patient']['species'] ) {
-			return new WP_Error( 'vsps_invalid', 'Pet name and species are required.', array( 'status' => 400 ) );
+			return new WP_Error( 'vsps_invalid', 'Pet name and species are required.', array( 'status' => 400, 'fields' => array( 'pet_name', 'species' ) ) );
 		}
 		return $args;
 	}

@@ -273,6 +273,7 @@ class VSPS_Fields {
 	 */
 	public static function enforce( array &$args, array $resolved ) {
 		$missing = array();
+		$keys    = array();
 		foreach ( self::REGISTRY as $key => $def ) {
 			if ( null === self::path( $key ) ) {
 				continue; // core fields: validated by VSPS_Rest
@@ -292,10 +293,12 @@ class VSPS_Fields {
 			}
 			if ( $resolved[ $key ]['req'] && self::is_blank( $args, $key ) ) {
 				$missing[] = preg_replace( '/\s*\(.*\)$/', '', $def[1] );
+				$keys[]    = $key;
 			}
 		}
 		if ( $missing ) {
-			return new WP_Error( 'vsps_required', 'Please fill in: ' . implode( ', ', $missing ) . '.', array( 'status' => 400 ) );
+			// `fields` (registry keys) lets the widget show the error at each field.
+			return new WP_Error( 'vsps_required', 'Please fill in: ' . implode( ', ', $missing ) . '.', array( 'status' => 400, 'fields' => $keys ) );
 		}
 		return null;
 	}
