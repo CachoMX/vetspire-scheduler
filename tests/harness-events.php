@@ -49,7 +49,7 @@ class VSPS_Test_WPDB {
 		$this->pdo->setAttribute( PDO::ATTR_ERRMODE, PDO::ERRMODE_SILENT );
 		$this->pdo->exec( 'CREATE TABLE wp_vsps_events (id INTEGER PRIMARY KEY AUTOINCREMENT, event_id TEXT NOT NULL UNIQUE,
 			session_id TEXT, name TEXT, occurred_at TEXT, device TEXT, layout TEXT, variant TEXT, location_id TEXT,
-			appointment_type_id TEXT, page_path TEXT, fields TEXT)' );
+			appointment_type_id TEXT, page_path TEXT, channel TEXT, source TEXT, fields TEXT)' );
 	}
 	public function prepare( $sql, ...$args ) {
 		if ( 1 === count( $args ) && is_array( $args[0] ) ) {
@@ -200,6 +200,11 @@ $batch           = VSPS_Events::parse_body( $body( array( $ev(), $ev(), $ev() ) 
 $before          = count( $wpdb->queries );
 check( 'events: store() inserts 3 rows', 3 === VSPS_Events::store( $batch ) );
 check( 'events: ...in ONE query', 1 === count( $wpdb->queries ) - $before );
+$chrow = VSPS_Events::parse_body( $body( array( $ev( array( 'channel' => 'AI Assistant', 'source' => 'chatgpt.com' ) ) ) ), $now );
+VSPS_Events::store( $chrow );
+$got = $wpdb->get_results( $wpdb->prepare( 'SELECT channel, source FROM wp_vsps_events WHERE event_id = %s', $chrow[0]['event_id'] ) );
+check( 'channel: stored in its own columns', 'AI Assistant' === $got[0]->channel && 'chatgpt.com' === $got[0]->source );
+$wpdb->query( $wpdb->prepare( 'DELETE FROM wp_vsps_events WHERE event_id = %s', $chrow[0]['event_id'] ) );
 check( 'events: re-sent events are ignored (idempotent)', 0 === VSPS_Events::store( $batch ) && 3 === VSPS_Events::pending_count() );
 $old = VSPS_Events::parse_body( $body( array( $ev() ) ), gmdate( 'Y-m-d H:i:s', time() - 15 * DAY_IN_SECONDS ) );
 VSPS_Events::store( $old );
@@ -207,7 +212,33 @@ check( 'events: prune drops rows older than 14 days only', 1 === VSPS_Events::pr
 $pending = VSPS_Events::pending( 10 );
 check( 'events: pending() oldest first', $pending[0]->event_id === $batch[0]['event_id'] );
 $rec = VSPS_Events::record( $pending[0] );
-check( 'events: hub record has every contract field', array( 'event_id', 'session_id', 'name', 'occurred_at', 'device', 'layout', 'variant', 'location_id', 'appointment_type_id', 'page_path', 'fields' ) === array_keys( $rec ) && array() === $rec['fields'] );
+check( 'events: hub record has every contract field (no channel from an older widget)', array( 'event_id', 'session_id', 'name', 'occurred_at', 'device', 'layout', 'variant', 'location_id', 'appointment_type_id', 'page_path', 'source', 'fields' ) === array_keys( $rec ) && array() === $rec['fields'] );
+
+// --- traffic channel + source (v1.27.1) ---
+$one = function ( array $over ) use ( $ev, $body, $now ) {
+	$rows = VSPS_Events::parse_body( $body( array( $ev( $over ) ) ), $now );
+	return $rows[0];
+};
+foreach ( VSPS_Events::CHANNELS as $c ) {
+	if ( $c !== $one( array( 'channel' => $c ) )['channel'] ) {
+		check( "channel: $c kept", false );
+	}
+}
+check( 'channel: all 9 channels kept as sent', 9 === count( VSPS_Events::CHANNELS ) );
+check( 'channel: unknown value → Unassigned', 'Unassigned' === $one( array( 'channel' => 'Facebook Ads' ) )['channel'] );
+check( 'channel: wrong case → Unassigned', 'Unassigned' === $one( array( 'channel' => 'direct' ) )['channel'] );
+check( 'channel: not a string → Unassigned', 'Unassigned' === $one( array( 'channel' => array( 'Direct' ) ) )['channel'] );
+check( 'channel: empty string → Unassigned', 'Unassigned' === $one( array( 'channel' => '' ) )['channel'] );
+check( 'channel: missing (older widget) → stored empty', '' === $one( array() )['channel'] );
+check( 'source: lowercase host kept', 'google.com' === $one( array( 'source' => 'Google.com' ) )['source'] );
+check( 'source: other characters become "-"', 'google-ads-q4' === $one( array( 'source' => 'Google Ads_Q4!' ) )['source'] );
+check( 'source: a URL is reduced to its host (no path, no query)', 'facebook.com' === $one( array( 'source' => 'https://www.facebook.com/x?email=a@b.c' ) )['source'] );
+check( 'source: a path is dropped', 'evil.test' === $one( array( 'source' => 'evil.test/path?q=1' ) )['source'] );
+check( 'source: capped at 64', 64 === strlen( $one( array( 'source' => str_repeat( 'a', 90 ) ) )['source'] ) );
+check( 'source: not a string → empty', '' === $one( array( 'source' => 42 ) )['source'] && '' === $one( array() )['source'] );
+$row = (object) array_merge( $one( array( 'channel' => 'Paid Search', 'source' => 'google' ) ), array( 'id' => 1 ) );
+$rec = VSPS_Events::record( $row );
+check( 'channel: forwarded to the hub with the source', 'Paid Search' === $rec['channel'] && 'google' === $rec['source'] );
 
 // --- browser endpoint ---
 $GLOBALS['vsps_test_settings'] = array( 'hub_key' => '' );
