@@ -275,6 +275,9 @@
 	   trigger link (999999) so the modal always paints on top of it once open. */
 	z-index: 100000000;
 	padding: 16px;
+	/* Scrolling inside the popup never chains to the page behind it
+	   (scheduler.js also pins the page while a popup is open). */
+	overscroll-behavior: contain;
 }
 
 .vsps-overlay .vsps-modal {
@@ -286,6 +289,7 @@
 	max-width: 440px;
 	max-height: 90vh;
 	overflow-y: auto;
+	overscroll-behavior: contain;
 	color: #222;
 }
 
@@ -819,6 +823,7 @@
 	max-width: 90vw;
 	height: 100%;
 	overflow-y: auto;
+	overscroll-behavior: contain;
 	/* Extra room at the bottom so site overlays (accessibility buttons,
 	   chat bubbles) don't cover the last links. */
 	padding: 24px 22px 110px;

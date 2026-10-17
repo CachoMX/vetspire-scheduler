@@ -328,6 +328,49 @@ async function toChoice(page) {
   expectError('new-client, age out of range', await fieldError(v, 'age'), /0.*40/);
   await axeScan(v, 'new-client form with errors');
 
+  // ---- 6. The page behind an open popup must not scroll (phones: a swipe moved it) ----
+  const phone = await ctx.newPage();
+  phone.on('pageerror', (er) => errors.push(er.message));
+  await phone.setViewport({ width: 390, height: 844, isMobile: true, hasTouch: true });
+  await phone.goto(PAGE, { waitUntil: 'networkidle2', timeout: 90000 }); await wait(2500);
+  await phone.evaluate(() => window.scrollTo(0, 600)); await wait(400);
+  const y0 = await phone.evaluate(() => window.scrollY);
+  // Open the full picker from a bar widget that is on screen at this scroll position.
+  const opened = await phone.evaluate(() => {
+    const btn = Array.from(document.querySelectorAll('.vsps-layout-bar .vsps-bar-viewall')).find((b) => {
+      const r = b.getBoundingClientRect(); return r.width && r.top >= 0 && r.bottom <= window.innerHeight;
+    }) || document.querySelector('.vsps-layout-bar .vsps-bar-viewall');
+    if (!btn) return false;
+    btn.click(); return true;
+  });
+  await wait(3000);
+  const yOpen = await phone.evaluate(() => window.scrollY);
+  const anchorTop = () => phone.evaluate(() => { const w = document.querySelector('.vsps-widget'); return Math.round(w.getBoundingClientRect().top); });
+  const top0 = await anchorTop();
+  const modalBox = await phone.evaluate(() => { const m = document.querySelector('.vsps-overlay:last-of-type .vsps-modal'); const r = m.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; });
+  const cdp = await phone.target().createCDPSession();
+  const swipe = async (fromY, toY) => {
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: modalBox.x, y: fromY }] });
+    for (let i = 1; i <= 8; i++) {
+      await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: modalBox.x, y: fromY + ((toY - fromY) * i) / 8 }] });
+      await wait(16);
+    }
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+    await wait(600);
+  };
+  await swipe(modalBox.y + 150, modalBox.y - 250); // swipe up (would scroll the page down)
+  await swipe(modalBox.y - 150, modalBox.y + 250); // and back down
+  await phone.mouse.move(modalBox.x, modalBox.y);
+  await phone.mouse.wheel({ deltaY: 900 }); await wait(600);
+  const top1 = await anchorTop();
+  check('popup open on a phone: the page behind does not move on swipe/wheel', opened && top1 === top0, { opened, top0, top1 });
+  check('popup open: the page keeps its scroll position', yOpen === y0 || (await phone.evaluate(() => document.body.style.position)) === 'fixed', { y0, yOpen });
+  await phone.keyboard.press('Escape'); await wait(1200);
+  const yClosed = await phone.evaluate(() => window.scrollY);
+  const unlocked = await phone.evaluate(() => getComputedStyle(document.body).position !== 'fixed' && getComputedStyle(document.documentElement).overflow !== 'hidden');
+  check('popup closed: the page is back where it was and scrolls again', Math.abs(yClosed - y0) <= 1 && unlocked, { y0, yClosed, unlocked });
+  await phone.close();
+
   check('no JS errors', errors.length === 0, errors);
   await applySettings(admin, original);
   console.log(fails ? `\n${fails} FAILED` : '\nALL PASS');

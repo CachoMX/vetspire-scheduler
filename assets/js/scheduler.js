@@ -520,8 +520,49 @@
 		return false;
 	}
 
+	/*
+	 * The page behind an open popup must not scroll (on phones a swipe inside
+	 * the popup used to drag the page along). overflow:hidden alone doesn't
+	 * stop iOS Safari, so the body is also pinned with position:fixed at the
+	 * current offset, and the exact scroll position comes back on unlock.
+	 */
+	var SCROLL_LOCK = null;
+	function lockPageScroll() {
+		if (SCROLL_LOCK) { return; }
+		var html = document.documentElement;
+		var body = document.body;
+		var y = window.pageYOffset || html.scrollTop || 0;
+		var gutter = window.innerWidth - html.clientWidth; // the scrollbar that disappears
+		SCROLL_LOCK = { y: y, html: html.style.cssText, body: body.style.cssText };
+		html.style.overflow = 'hidden';
+		body.style.overflow = 'hidden';
+		body.style.position = 'fixed';
+		body.style.top = (-y) + 'px';
+		body.style.left = '0';
+		body.style.right = '0';
+		body.style.width = '100%';
+		if (gutter > 0) { body.style.paddingRight = gutter + 'px'; }
+	}
+	function unlockPageScroll() {
+		// Next tick: a popup that replaces another (picker → booking form)
+		// registers right after the first one closes; keep the lock across it.
+		setTimeout(function () {
+			if (OPEN_OVERLAYS.length || !SCROLL_LOCK) { return; }
+			var lock = SCROLL_LOCK;
+			SCROLL_LOCK = null;
+			var html = document.documentElement;
+			html.style.cssText = lock.html;
+			document.body.style.cssText = lock.body;
+			var smooth = html.style.scrollBehavior;
+			html.style.scrollBehavior = 'auto'; // no smooth-scroll animation back to the spot
+			window.scrollTo(0, lock.y);
+			html.style.scrollBehavior = smooth;
+		}, 0);
+	}
+
 	function makeAccessibleModal(overlay, dialogEl, openerOverride) {
 		OPEN_OVERLAYS.push(overlay);
+		lockPageScroll();
 		dialogEl.setAttribute('role', 'dialog');
 		dialogEl.setAttribute('aria-modal', 'true');
 		// So the "no focusable content yet" fallback below can actually focus
@@ -644,8 +685,10 @@
 			sentinelEnd.remove();
 			var idx = OPEN_OVERLAYS.indexOf(overlay);
 			if (-1 !== idx) { OPEN_OVERLAYS.splice(idx, 1); }
+			unlockPageScroll();
 			if (opener && 'function' === typeof opener.focus && document.body.contains(opener)) {
-				opener.focus();
+				// preventScroll: the page is still pinned this tick; it gets its spot back on unlock.
+				opener.focus({ preventScroll: true });
 			}
 			// A layout switch that waited for this popup. Next tick: a form that
 			// replaces a lightbox registers its own overlay right after this one closes.
