@@ -135,7 +135,11 @@ assistants before search engines) and its **source** (lowercase `utm_source`, el
 host without `www.`; never a path or query). Both are worked out once per tab from the first page
 the script runs on (the landing page may have no widget) and kept in sessionStorage, so an
 own-site referrer on later pages never overrides them. WordPress checks the channel against
-the nine values (anything else becomes Unassigned) and cleans the source. The classifier is the
+the nine values (anything else becomes Unassigned) and cleans the source (a value with "@", such
+as an email merge tag, is dropped). Like GA4, a `utm_source` without `utm_medium` is grouped by the
+source name alone (google → Organic Search, facebook → Organic Social, else Unassigned) and the
+referrer is ignored. A referrer on the same registrable domain counts as internal, so moving
+between subdomains (easyvet.com → iowacolony.easyvet.com) keeps the session's channel. The classifier is the
 pure `classifyChannel()` in `assets/js/scheduler.js` (`node tests/channel-unit.js`).
 
 ## Security

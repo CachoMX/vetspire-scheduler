@@ -232,9 +232,10 @@ check( 'channel: empty string → Unassigned', 'Unassigned' === $one( array( 'ch
 check( 'channel: missing (older widget) → stored empty', '' === $one( array() )['channel'] );
 check( 'source: lowercase host kept', 'google.com' === $one( array( 'source' => 'Google.com' ) )['source'] );
 check( 'source: other characters become "-"', 'google-ads-q4' === $one( array( 'source' => 'Google Ads_Q4!' ) )['source'] );
-check( 'source: a URL is reduced to its host (no path, no query)', 'facebook.com' === $one( array( 'source' => 'https://www.facebook.com/x?email=a@b.c' ) )['source'] );
+check( 'source: a URL is reduced to its host (no path, no query)', 'facebook.com' === $one( array( 'source' => 'https://www.facebook.com/x?ref=ad&utm=1' ) )['source'] );
 check( 'source: a path is dropped', 'evil.test' === $one( array( 'source' => 'evil.test/path?q=1' ) )['source'] );
 check( 'source: capped at 64', 64 === strlen( $one( array( 'source' => str_repeat( 'a', 90 ) ) )['source'] ) );
+check( 'source: an email (merge tag) is dropped', '' === $one( array( 'source' => 'jane@example.com' ) )['source'] && '' === $one( array( 'source' => 'https://u@evil.test/' ) )['source'] );
 check( 'source: not a string → empty', '' === $one( array( 'source' => 42 ) )['source'] && '' === $one( array() )['source'] );
 $row = (object) array_merge( $one( array( 'channel' => 'Paid Search', 'source' => 'google' ) ), array( 'id' => 1 ) );
 $rec = VSPS_Events::record( $row );

@@ -97,6 +97,31 @@ t('empty utm values → Direct', '?utm_source=&utm_medium=', '', 'Direct', '');
 t('garbage referrer → Direct', '', 'not a url', 'Direct', '');
 t('android-app referrer → Referral', '', 'android-app://com.google.android.gm/', 'Referral', 'com.google.android.gm');
 
+console.log('== 4b. Same site on another subdomain = internal ==');
+t('easyvet.com → iowacolony.easyvet.com', '', 'https://easyvet.com/locations/', 'Direct', '');
+t('www.easyvet.com → iowacolony.easyvet.com', '', 'https://www.easyvet.com/', 'Direct', '');
+t('katy.easyvet.com → iowacolony.easyvet.com', '', 'https://katy.easyvet.com/', 'Direct', '');
+t('iowacolony → easyvet.com (own host is the apex)', '', 'https://iowacolony.easyvet.com/', 'Direct', '', 'easyvet.com');
+t('www.easyvet.com own host, apex referrer', '', 'https://easyvet.com/', 'Direct', '', 'www.easyvet.com');
+t('shop.example.co.uk → www.example.co.uk', '', 'https://shop.example.co.uk/', 'Direct', '', 'www.example.co.uk');
+t('vet.example.com.au → example.com.au', '', 'https://vet.example.com.au/', 'Direct', '', 'example.com.au');
+t('another .co.uk site is still Referral', '', 'https://other.co.uk/', 'Referral', 'other.co.uk', 'www.example.co.uk');
+t('a different domain is still Referral', '', 'https://easyvet.net/', 'Referral', 'easyvet.net');
+t('lookalike domain myeasyvet.com is still Referral', '', 'https://myeasyvet.com/', 'Referral', 'myeasyvet.com');
+t('an internal page keeps its utm', '?utm_medium=email&utm_source=oct', 'https://katy.easyvet.com/', 'Email', 'oct');
+
+console.log('== 4c. Emails never become a source ==');
+t('utm_source with an email → source dropped', '?utm_source=jane%40example.com&utm_medium=email', '', 'Email', '');
+t('utm_source with a raw @ → source dropped', '?utm_source=a@b.c&utm_medium=cpc', '', 'Paid Search', '');
+t('utm_source "@" alone (no medium, no referrer) → Direct', '?utm_source=%40', '', 'Direct', '');
+
+console.log('== 4d. Search pattern edges ==');
+t('google.xyz.co is NOT Google', '', 'https://google.xyz.co/', 'Referral', 'google.xyz.co');
+t('google.co.jp is Google', '', 'https://www.google.co.jp/', 'Organic Search', 'google.co.jp');
+t('google.de is Google', '', 'https://www.google.de/', 'Organic Search', 'google.de');
+t('pinterest.co.uk is social', '', 'https://uk.pinterest.co.uk/', 'Organic Social', 'uk.pinterest.co.uk');
+t('pinterest.abc.co is not', '', 'https://pinterest.abc.co/', 'Referral', 'pinterest.abc.co');
+
 console.log('== 5. utm_source without utm_medium ==');
 t('utm_source=google → Organic Search', '?utm_source=google', '', 'Organic Search', 'google');
 t('utm_source=facebook → Organic Social', '?utm_source=facebook', 'https://www.google.com/', 'Organic Social', 'facebook');

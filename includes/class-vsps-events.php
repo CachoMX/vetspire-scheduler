@@ -162,7 +162,8 @@ class VSPS_Events {
 	 * path or a query can never be stored.
 	 */
 	public static function source( $value ) {
-		if ( ! is_string( $value ) || '' === $value ) {
+		// An "@" means an email (a merge tag in utm_source): never stored.
+		if ( ! is_string( $value ) || '' === $value || false !== strpos( $value, '@' ) ) {
 			return '';
 		}
 		$value = strtolower( trim( $value ) );

@@ -224,15 +224,18 @@
 	function classifyChannel(search, referrer, ownHost) {
 		var CHANNEL_AI_HOSTS = ['chatgpt.com', 'chat.openai.com', 'perplexity.ai', 'gemini.google.com', 'copilot.microsoft.com', 'claude.ai'];
 		var CHANNEL_SEARCH_HOSTS = ['bing.com', 'duckduckgo.com', 'ecosia.org', 'baidu.com', 'search.brave.com'];
-		var CHANNEL_SEARCH_PATTERNS = [/(^|\.)google\.[a-z]{2,3}(\.[a-z]{2})?$/, /(^|\.)yahoo\.[a-z]{2,3}(\.[a-z]{2})?$/, /(^|\.)yandex\.[a-z]{2,3}(\.[a-z]{2})?$/];
+		// google.com, google.de, google.co.uk, google.com.mx (never google.xyz.co).
+		var CHANNEL_SEARCH_PATTERNS = [/(^|\.)google\.([a-z]{2,3}|(co|com|org|net|ac|gov)\.[a-z]{2})$/, /(^|\.)yahoo\.([a-z]{2,3}|(co|com|org|net|ac|gov)\.[a-z]{2})$/, /(^|\.)yandex\.([a-z]{2,3}|(co|com|org|net|ac|gov)\.[a-z]{2})$/];
 		var CHANNEL_SOCIAL_HOSTS = ['facebook.com', 'instagram.com', 't.co', 'twitter.com', 'x.com', 'linkedin.com', 'lnkd.in', 'tiktok.com', 'youtube.com', 'reddit.com', 'nextdoor.com'];
-		var CHANNEL_SOCIAL_PATTERNS = [/(^|\.)pinterest\.[a-z]{2,3}(\.[a-z]{2})?$/];
+		var CHANNEL_SOCIAL_PATTERNS = [/(^|\.)pinterest\.([a-z]{2,3}|(co|com|org|net|ac|gov)\.[a-z]{2})$/];
 		// utm_source names (no dot) of social networks / search engines / AI assistants.
 		var SOCIAL_NAMES = /^(facebook|fb|meta|instagram|ig|twitter|x|linkedin|pinterest|tiktok|youtube|reddit|nextdoor|snapchat|threads)$/;
 		var SEARCH_NAMES = /^(google|bing|yahoo|duckduckgo|ecosia|baidu|yandex|brave)$/;
 		var AI_NAMES = /^(chatgpt|openai|perplexity|gemini|copilot|claude)$/;
 
 		function clean(value) {
+			// An "@" means an email (a merge tag in utm_source): never kept.
+			if (/@/.test(String(value || ''))) { return ''; }
 			return String(value || '').toLowerCase().replace(/[^a-z0-9.-]+/g, '-').replace(/^[-.]+|[-.]+$/g, '').slice(0, 64);
 		}
 		function hostOf(url) {
@@ -263,9 +266,19 @@
 			try { return decodeURIComponent(m[1].replace(/\+/g, ' ')).trim(); } catch (e) { return m[1].trim(); }
 		}
 
+		/** Registrable domain: the last two labels, or three under co/com/org/net/ac/gov.xx (.co.uk, .com.au). */
+		function siteOf(host) {
+			var labels = String(host || '').toLowerCase().replace(/\.$/, '').split('.');
+			var n = labels.length;
+			var three = n >= 3 && /^(co|com|org|net|ac|gov)$/.test(labels[n - 2]) && 2 === labels[n - 1].length;
+			return labels.slice(three ? -3 : -2).join('.');
+		}
+
 		var own = String(ownHost || '').toLowerCase().replace(/^www\./, '');
 		var refHost = hostOf(referrer);
-		if (refHost && own && refHost === own) { refHost = ''; } // internal navigation
+		// Internal navigation, including another subdomain of the same site
+		// (easyvet.com → iowacolony.easyvet.com).
+		if (refHost && own && siteOf(refHost) === siteOf(own)) { refHost = ''; }
 		var utmSource = clean(param('utm_source'));
 		var medium = param('utm_medium').toLowerCase();
 		var source = utmSource || clean(refHost);
