@@ -36,6 +36,12 @@ function vsps_input_paths( $value, $prefix = '' ) {
 
 /** Called from VSPS_Api::request() / VSPS_Nectar::request() when this file is loaded. */
 function vsps_record_operation( $pims, $query, $variables ) {
+	// Queries the tests send themselves (read-backs, cleanup) are not the plugin's contract.
+	$trace  = debug_backtrace( DEBUG_BACKTRACE_IGNORE_ARGS, 2 );
+	$caller = isset( $trace[1]['file'] ) ? realpath( dirname( $trace[1]['file'] ) ) : '';
+	if ( realpath( __DIR__ ) === $caller ) {
+		return;
+	}
 	$op = vsps_normalize_operation( $query );
 	foreach ( (array) $variables as $name => $value ) {
 		foreach ( vsps_input_paths( $value ) as $path ) {

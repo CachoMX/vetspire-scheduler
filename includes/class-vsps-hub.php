@@ -813,7 +813,9 @@ class VSPS_Hub {
 			$events[] = VSPS_Events::record( $row );
 			$ids[]    = (string) $row->event_id;
 		}
-		$body = wp_json_encode( array( 'events' => $events ), JSON_INVALID_UTF8_SUBSTITUTE );
+		// This push also stamps the site's check-in, so it carries the version too.
+		$site = array( 'plugin_version' => VSPS_VERSION );
+		$body = wp_json_encode( array( 'site' => $site, 'events' => $events ), JSON_INVALID_UTF8_SUBSTITUTE );
 		if ( false === $body ) {
 			return self::events_fail( 0, 'Could not encode the events.', self::EVENTS_BACKOFF_SECS );
 		}

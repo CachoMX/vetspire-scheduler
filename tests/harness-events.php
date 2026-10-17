@@ -304,13 +304,14 @@ $reset();
 $ids = $seed( 4 );
 $GLOBALS['vsps_mock_http'] = function ( $url, $args ) use ( &$calls, $http ) {
 	$sent    = json_decode( $args['body'], true );
-	$calls[] = array( 'url' => $url, 'n' => count( $sent['events'] ), 'auth' => $args['headers']['Authorization'], 'keys' => array_keys( $sent ) );
+	$calls[] = array( 'url' => $url, 'n' => count( $sent['events'] ), 'auth' => $args['headers']['Authorization'], 'keys' => array_keys( $sent ), 'site' => $sent['site'] ?? null );
 	$ids     = array_column( $sent['events'], 'event_id' );
 	return $http( 200, array( 'accepted' => array_slice( $ids, 0, 2 ), 'rejected' => array( array( 'event_id' => $ids[2], 'error' => 'bad' ) ) ) );
 };
 $n = $push->invoke( null, $key );
 check( 'hub events: POST to /api/wp/v1/scheduler/events with the site key', 'https://hub.test/api/wp/v1/scheduler/events' === $calls[0]['url'] && 'Bearer ' . $key === $calls[0]['auth'] );
-check( 'hub events: body is { events: [...] }', array( 'events' ) === $calls[0]['keys'] && 4 === $calls[0]['n'] );
+check( 'hub events: body is { site, events: [...] }', array( 'site', 'events' ) === $calls[0]['keys'] && 4 === $calls[0]['n'] );
+check( 'hub events: site carries the plugin version', array( 'plugin_version' => VSPS_VERSION ) === $calls[0]['site'] );
 check( 'hub events: accepted + rejected rows deleted, unanswered row kept', 3 === $n && 1 === VSPS_Events::pending_count() && $ids[3] === VSPS_Events::pending( 1 )[0]->event_id );
 
 $reset();
