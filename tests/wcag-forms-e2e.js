@@ -191,6 +191,7 @@ async function toChoice(page) {
   await admin.goto(`${BASE}/wp-admin/?vsps_autologin=${SECRET}`, { waitUntil: 'networkidle2', timeout: 90000 });
   const original = await readSettings(admin);
   await applySettings(admin, WANT);
+  try {
 
   const ctx = await browser.createBrowserContext();
   const v = await ctx.newPage();
@@ -328,11 +329,39 @@ async function toChoice(page) {
   expectError('new-client, age out of range', await fieldError(v, 'age'), /0.*40/);
   await axeScan(v, 'new-client form with errors');
 
+  // ---- 5b. A/AA audit extras on the new-client form (T5) ----
+  const extra = await v.evaluate(() => {
+    const ov = document.querySelector('.vsps-overlay:last-of-type');
+    const dlg = ov.querySelector('[role="dialog"]');
+    const ref = dlg && dlg.getAttribute('aria-labelledby');
+    const name = dlg ? ((ref && document.getElementById(ref) && document.getElementById(ref).textContent.trim()) || dlg.getAttribute('aria-label') || '') : '';
+    const lum = (c) => {
+      const m = c.match(/\d+(\.\d+)?/g).slice(0, 3).map(Number).map((v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); });
+      return 0.2126 * m[0] + 0.7152 * m[1] + 0.0722 * m[2];
+    };
+    const ratio = (a, b) => { const x = lum(a), y = lum(b); return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05); };
+    // A field NOT in its error state (red border), e.g. an optional one.
+    const input = ov.querySelector('form.vsps-form input[type="text"]:not([aria-invalid]):not([name="vsps_hp"])');
+    const border = ratio(getComputedStyle(input).borderTopColor, getComputedStyle(ov.querySelector('.vsps-modal')).backgroundColor);
+    const ac = {};
+    ['given_name', 'family_name', 'email', 'phone', 'address_line1', 'address_city', 'address_state', 'address_postal', 'phone_alt', 'email_secondary', 'owner_dob', 'business_name', 'title']
+      .forEach((n) => { const c = ov.querySelector(`form.vsps-form [name="${n}"]`); if (c) ac[n] = c.getAttribute('autocomplete') || ''; });
+    return { name, border: Math.round(border * 100) / 100, missingAc: Object.keys(ac).filter((k) => !ac[k]) };
+  });
+  check('booking popup (dialog) has an accessible name (4.1.2)', !!extra.name, extra.name);
+  check('input borders have at least 3:1 contrast (1.4.11)', extra.border >= 3, extra.border);
+  check("the client's own fields say what they are for, autocomplete (1.3.5)", extra.missingAc.length === 0, extra.missingAc);
+  await v.setViewport({ width: 320, height: 640 }); await wait(800);
+  const reflow = await v.evaluate(() => { const m = document.querySelector('.vsps-overlay:last-of-type .vsps-modal'); return { sw: m.scrollWidth, cw: m.clientWidth }; });
+  check('320px wide: the form fits without sideways scrolling (1.4.10)', reflow.sw <= reflow.cw + 1, reflow);
+  await v.setViewport({ width: 1366, height: 900 });
+
   // ---- 6. The page behind an open popup must not scroll (phones: a swipe moved it) ----
   const phone = await ctx.newPage();
   phone.on('pageerror', (er) => errors.push(er.message));
   await phone.setViewport({ width: 390, height: 844, isMobile: true, hasTouch: true });
-  await phone.goto(PAGE, { waitUntil: 'networkidle2', timeout: 90000 }); await wait(2500);
+  await phone.goto(PAGE, { waitUntil: 'networkidle2', timeout: 90000 });
+  await phone.waitForSelector('.vsps-layout-bar .vsps-bar-viewall', { timeout: 30000 }); await wait(1500);
   await phone.evaluate(() => window.scrollTo(0, 600)); await wait(400);
   const y0 = await phone.evaluate(() => window.scrollY);
   // Open the full picker from a bar widget that is on screen at this scroll position.
@@ -372,7 +401,12 @@ async function toChoice(page) {
   await phone.close();
 
   check('no JS errors', errors.length === 0, errors);
-  await applySettings(admin, original);
+  } catch (err) {
+    fails++;
+    console.log('CRASH', err && err.stack ? err.stack.split(/\r?\n/).slice(0, 3).join(' | ') : err);
+  } finally {
+    await applySettings(admin, original); // always put the clinic's field settings back
+  }
   console.log(fails ? `\n${fails} FAILED` : '\nALL PASS');
   await browser.close();
   process.exit(fails ? 1 : 0);

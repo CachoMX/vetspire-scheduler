@@ -560,11 +560,31 @@
 		}, 0);
 	}
 
+	/**
+	 * A dialog needs a name (WCAG 4.1.2): its own heading via aria-labelledby,
+	 * else "Book Online". Re-run when the content is replaced (the success view).
+	 */
+	function nameDialog(dialogEl) {
+		var ref = dialogEl.getAttribute('aria-labelledby');
+		var target = ref ? document.getElementById(ref) : null;
+		if (target && dialogEl.contains(target)) { return; }
+		var heading = dialogEl.querySelector('h1, h2, h3, h4, .vsps-modal-title');
+		if (heading) {
+			if (!heading.id) { heading.id = uid('dlg'); }
+			dialogEl.removeAttribute('aria-label');
+			dialogEl.setAttribute('aria-labelledby', heading.id);
+		} else {
+			dialogEl.removeAttribute('aria-labelledby');
+			if (!dialogEl.getAttribute('aria-label')) { dialogEl.setAttribute('aria-label', I18N.bookOnline); }
+		}
+	}
+
 	function makeAccessibleModal(overlay, dialogEl, openerOverride) {
 		OPEN_OVERLAYS.push(overlay);
 		lockPageScroll();
 		dialogEl.setAttribute('role', 'dialog');
 		dialogEl.setAttribute('aria-modal', 'true');
+		nameDialog(dialogEl);
 		// So the "no focusable content yet" fallback below can actually focus
 		// the dialog itself -- a plain <div>/<aside> isn't focusable otherwise.
 		if (!dialogEl.hasAttribute('tabindex')) { dialogEl.setAttribute('tabindex', '-1'); }
@@ -2235,8 +2255,8 @@
 	}
 
 	/** options: [{id, name}]; the first option is an empty "Select…" choice. */
-	function fieldSelect(name, text, flag, options, noBlank) {
-		var html = '<select name="' + name + '"' + (flag === 2 ? ' required' : '') + '>' +
+	function fieldSelect(name, text, flag, options, noBlank, extra) {
+		var html = '<select name="' + name + '"' + (flag === 2 ? ' required' : '') + (extra || '') + '>' +
 			(noBlank ? '' : '<option value="">' + escHtml(I18N.selectOne) + '</option>');
 		options.forEach(function (o) {
 			html += '<option value="' + escAttr(o.id) + '">' + escHtml(o.name) + '</option>';
@@ -2244,9 +2264,9 @@
 		return fieldWrap(text, flag, html + '</select>');
 	}
 
-	function fieldDate(name, text, flag) {
+	function fieldDate(name, text, flag, extra) {
 		var today = new Date().toISOString().slice(0, 10);
-		return fieldInput(name, text, flag, 'date', ' max="' + today + '"');
+		return fieldInput(name, text, flag, 'date', ' max="' + today + '"' + (extra || ''));
 	}
 
 	function fieldTextarea(name, text, flag) {
@@ -2475,17 +2495,17 @@
 			items.push({ html: fieldInput('address_state', I18N.state, f.address, 'text', ' autocomplete="address-level1"') });
 			items.push({ html: fieldInput('address_postal', I18N.zip, f.address, 'text', ' autocomplete="postal-code" inputmode="numeric"') });
 		}
-		if (f.phone_alt) { items.push({ html: fieldInput('phone_alt', I18N.phoneAlt, f.phone_alt, 'tel') }); }
-		if (f.email_secondary) { items.push({ html: fieldInput('email_secondary', I18N.emailSecondary, f.email_secondary, 'email') }); }
+		if (f.phone_alt) { items.push({ html: fieldInput('phone_alt', I18N.phoneAlt, f.phone_alt, 'tel', ' autocomplete="tel"') }); }
+		if (f.email_secondary) { items.push({ html: fieldInput('email_secondary', I18N.emailSecondary, f.email_secondary, 'email', ' autocomplete="email"') }); }
 		if (f.referral && choices.referral && choices.referral.length) {
 			items.push({ wide: true, html: fieldSelect('referral_id', I18N.referral, f.referral, choices.referral) });
 		}
 		if (f.title) {
-			items.push({ html: fieldSelect('title', I18N.title, f.title, (choices.titles || []).map(function (t) { return { id: t, name: t }; })) });
+			items.push({ html: fieldSelect('title', I18N.title, f.title, (choices.titles || []).map(function (t) { return { id: t, name: t }; }), false, ' autocomplete="honorific-prefix"') });
 		}
 		if (f.pronouns) { items.push({ html: fieldSelect('pronouns', I18N.pronouns, f.pronouns, choices.pronouns || []) }); }
-		if (f.business_name) { items.push({ html: fieldInput('business_name', I18N.businessName, f.business_name) }); }
-		if (f.owner_dob) { items.push({ html: fieldDate('owner_dob', I18N.ownerDob, f.owner_dob) }); }
+		if (f.business_name) { items.push({ html: fieldInput('business_name', I18N.businessName, f.business_name, 'text', ' autocomplete="organization"') }); }
+		if (f.owner_dob) { items.push({ html: fieldDate('owner_dob', I18N.ownerDob, f.owner_dob, ' autocomplete="bday"') }); }
 		if (f.client_notes) { items.push({ wide: true, html: fieldTextarea('client_notes', I18N.clientNotes, f.client_notes) }); }
 		return fieldRows(items);
 	};
@@ -2713,6 +2733,7 @@
 			done.appendChild(el('h4', 'vsps-modal-title', isRequest ? I18N.requested : I18N.booked));
 			done.appendChild(el('p', 'vsps-modal-sub', bk.type.name + ' \u2014 ' + formatDateLabel(bk.date) + ' ' + I18N.at + ' ' + formatTime(bk.slot.time)));
 			done.appendChild(el('p', 'vsps-message', isRequest ? I18N.requestedNote : I18N.confirmationTo));
+			nameDialog(bk.modal); // the old title went with the form
 			var closeBtn = el('button', 'vsps-btn-primary', I18N.close);
 			closeBtn.type = 'button';
 			closeBtn.addEventListener('click', bk.close);

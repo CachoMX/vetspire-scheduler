@@ -315,7 +315,8 @@
 .vsps-overlay .vsps-form textarea {
 	width: 100%;
 	padding: 9px 10px;
-	border: 1px solid #ccc;
+	/* #767676: 4.5:1 on white, so the field outline is visible (WCAG 1.4.11 needs 3:1). */
+	border: 1px solid #767676;
 	border-radius: 8px;
 	font: inherit;
 	color: #222;
