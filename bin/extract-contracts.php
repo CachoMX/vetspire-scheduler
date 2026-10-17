@@ -30,9 +30,7 @@ foreach ( $sources as $pims => $file ) {
 		. implode( "\n\n", $ops ) . "\n";
 	if ( $check ) {
 		// Line endings don't matter (Windows checkouts may convert them).
-		if ( ! is_file( $target ) || str_replace( "
-", "
-", file_get_contents( $target ) ) !== $text ) {
+		if ( ! is_file( $target ) || str_replace( "\r\n", "\n", file_get_contents( $target ) ) !== $text ) {
 			$stale[] = 'contracts/' . $pims . '.graphql';
 		}
 		continue;
