@@ -35,6 +35,17 @@
 		other: 'Other',
 		reason: 'Reason for visit',
 		requiredNote: 'Indicates a required field',
+		errorPrefix: 'Error:',
+		errRequired: 'Please fill in {label}.',
+		errChoose: 'Please choose an option for {label}.',
+		errEmailRequired: 'Please enter your email address.',
+		errEmail: 'Please enter a valid email address, like name@example.com.',
+		errPhone: 'Please enter a phone number with at least 7 digits, like 555-123-4567.',
+		errLast4: 'Please enter the last 4 digits of the phone number the clinic has on file, using numbers only.',
+		errNumber: 'Please enter a number from {min} to {max} for {label}.',
+		errDate: 'Please enter a complete date for {label}.',
+		errDateFuture: 'Please enter a date that is not in the future for {label}.',
+		errFormat: 'Please check the format of {label}.',
 		address1: 'Street address',
 		address2: 'Apt / Suite',
 		city: 'City',
@@ -2060,6 +2071,7 @@
 
 		form.addEventListener('submit', function (e) {
 			e.preventDefault();
+			if (!validateForm(form)) { return; }
 			var email = form.querySelector('[name="lookup_email"]').value.trim();
 			var errorEl = form.querySelector('.vsps-error');
 			var btn = form.querySelector('.vsps-btn-primary');
@@ -2139,6 +2151,7 @@
 		this.focusStep();
 		form.addEventListener('submit', function (e) {
 			e.preventDefault();
+			if (!validateForm(form)) { return; }
 			self.submitBooking(form, {
 				client_type: 'existing',
 				pet_is_new: false,
@@ -2162,14 +2175,15 @@
 
 	/**
 	 * Every form field gets a VISIBLE label (WCAG 1.3.1 / 3.3.2: a placeholder
-	 * alone disappears while typing and isn't a reliable accessible name).
-	 * The <label> wraps its control, so no ids are needed and several widget
-	 * instances can share a page. Required fields show a red asterisk
-	 * (aria-hidden: screen readers get "required" from the attribute itself).
+	 * alone disappears while typing and isn't a reliable accessible name),
+	 * wired to its control with for/id by wireForm(). The field's error text
+	 * goes under the control, outside the label, so it never becomes part of
+	 * the control's name. Required fields show a red asterisk (aria-hidden:
+	 * screen readers get "required" from the attribute itself).
 	 */
 	function fieldWrap(text, flag, control, extraClass) {
-		return '<label class="vsps-field' + (extraClass ? ' ' + extraClass : '') + '"><span class="vsps-field-label">' + escHtml(text) +
-			(flag === 2 ? '<span class="vsps-req" aria-hidden="true"> *</span>' : '') + '</span>' + control + '</label>';
+		return '<div class="vsps-field' + (extraClass ? ' ' + extraClass : '') + '"><label class="vsps-field-label">' + escHtml(text) +
+			(flag === 2 ? '<span class="vsps-req" aria-hidden="true"> *</span>' : '') + '</label>' + control + '</div>';
 	}
 
 	function fieldInput(name, text, flag, type, extra) {
@@ -2221,22 +2235,133 @@
 	}
 
 	/**
-	 * Gives every control a unique id and its visible label a matching `for`
-	 * (the label still wraps the control), and mirrors `required` as
-	 * aria-required. Ids carry a per-form number, so several widgets and
-	 * re-rendered steps never collide.
+	 * Gives every control a unique id and its visible label a matching `for`,
+	 * mirrors `required` as aria-required, and switches the browser's own
+	 * validation bubbles off: validateForm() writes text errors instead.
+	 * Ids carry a per-form number, so several widgets and re-rendered steps
+	 * never collide.
 	 */
 	function wireForm(form) {
 		var n = uid('f');
-		Array.prototype.forEach.call(form.querySelectorAll('label.vsps-field'), function (label) {
-			Array.prototype.forEach.call(label.querySelectorAll('input, select, textarea'), function (control, i) {
+		form.setAttribute('novalidate', '');
+		Array.prototype.forEach.call(form.querySelectorAll('.vsps-field'), function (field) {
+			var label = field.querySelector('label.vsps-field-label');
+			Array.prototype.forEach.call(field.querySelectorAll('input, select, textarea'), function (control, i) {
 				control.id = n + '-' + (control.name || 'field');
-				if (0 === i) { label.htmlFor = control.id; }
+				if (0 === i && label) { label.htmlFor = control.id; }
 			});
 		});
 		Array.prototype.forEach.call(form.querySelectorAll('[required]'), function (control) {
 			control.setAttribute('aria-required', 'true');
 		});
+		// After the first submit, an error goes away as soon as its field is
+		// fixed (never added while the visitor is still typing).
+		var recheck = function (e) {
+			var control = e.target;
+			if (!form.hasAttribute('data-vsps-tried') || 'true' !== control.getAttribute('aria-invalid')) { return; }
+			if (!controlError(control)) { clearFieldError(control); }
+		};
+		form.addEventListener('input', recheck);
+		form.addEventListener('change', recheck);
+	}
+
+	/* ---------- field errors (WCAG 3.3.1 / 3.3.3 / 1.4.1) ---------- */
+
+	function fill(template, map) {
+		return template.replace(/\{(\w+)\}/g, function (m, k) { return k in map ? map[k] : m; });
+	}
+
+	/** The control's visible label text without the asterisk, lower-cased mid-sentence ("first name", "ZIP code"). */
+	function labelText(control) {
+		var label = control.id ? document.querySelector('label[for="' + control.id + '"]') : null;
+		var text = label ? label.textContent.replace('*', '').trim() : (control.getAttribute('aria-label') || control.name);
+		return /^[A-Z][a-z]/.test(text) ? text.charAt(0).toLowerCase() + text.slice(1) : text;
+	}
+
+	/**
+	 * What is wrong with one control, as an actionable sentence, or '' when it
+	 * is fine. The rules come from the control's own attributes (required,
+	 * type, pattern, min/max), the same ones the browser used to check.
+	 */
+	function controlError(control) {
+		if (control.disabled || 'hidden' === control.type || 'vsps_hp' === control.name) { return ''; }
+		var value = String(control.value || '').trim();
+		var label = labelText(control);
+		var bad = !!(control.validity && control.validity.badInput);
+		if (!value && !bad) {
+			if (!control.required) { return ''; }
+			if ('SELECT' === control.tagName) { return fill(I18N.errChoose, { label: label }); }
+			if ('email' === control.type) { return I18N.errEmailRequired; }
+			if ('phone_last4' === control.name) { return I18N.errLast4; }
+			return fill(I18N.errRequired, { label: label });
+		}
+		if ('email' === control.type && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)) { return I18N.errEmail; }
+		if ('tel' === control.type && value.replace(/\D/g, '').length < 7) { return I18N.errPhone; }
+		if ('number' === control.type) {
+			var num = Number(value);
+			var min = control.getAttribute('min');
+			var max = control.getAttribute('max');
+			if (bad || isNaN(num) || (min !== null && num < Number(min)) || (max !== null && num > Number(max))) {
+				return fill(I18N.errNumber, { min: min === null ? '0' : min, max: max === null ? '' : max, label: label });
+			}
+		}
+		if ('date' === control.type) {
+			if (bad) { return fill(I18N.errDate, { label: label }); }
+			if (control.getAttribute('max') && value > control.getAttribute('max')) { return fill(I18N.errDateFuture, { label: label }); }
+		}
+		var pattern = control.getAttribute('pattern');
+		if (pattern && !new RegExp('^(?:' + pattern + ')$').test(value)) {
+			return 'phone_last4' === control.name ? I18N.errLast4 : fill(I18N.errFormat, { label: label });
+		}
+		return '';
+	}
+
+	/**
+	 * Shows `message` under the control: text that starts with "Error:", an
+	 * icon (not color alone), aria-invalid on the control and the error's id
+	 * in its aria-describedby, so screen readers read it with the field.
+	 */
+	function showFieldError(control, message) {
+		var errId = control.id + '-error';
+		var err = document.getElementById(errId);
+		if (!err) {
+			err = el('p', 'vsps-field-error');
+			err.id = errId;
+			var field = control.closest('.vsps-field');
+			(field || control.parentNode).appendChild(err);
+		}
+		err.innerHTML = '<span class="vsps-err-icon" aria-hidden="true">\u26a0</span> ';
+		err.appendChild(document.createTextNode(I18N.errorPrefix + ' ' + message));
+		control.setAttribute('aria-invalid', 'true');
+		var ids = (control.getAttribute('aria-describedby') || '').split(/\s+/).filter(Boolean);
+		if (ids.indexOf(errId) === -1) { ids.push(errId); }
+		control.setAttribute('aria-describedby', ids.join(' '));
+	}
+
+	function clearFieldError(control) {
+		var errId = control.id + '-error';
+		var err = document.getElementById(errId);
+		if (err) { err.parentNode.removeChild(err); }
+		control.removeAttribute('aria-invalid');
+		var ids = (control.getAttribute('aria-describedby') || '').split(/\s+/).filter(function (id) { return id && id !== errId; });
+		if (ids.length) { control.setAttribute('aria-describedby', ids.join(' ')); } else { control.removeAttribute('aria-describedby'); }
+	}
+
+	/** Checks every control; marks the bad ones and focuses the first. True when the form can be sent. */
+	function validateForm(form) {
+		form.setAttribute('data-vsps-tried', '1');
+		var first = null;
+		Array.prototype.forEach.call(form.querySelectorAll('input, select, textarea'), function (control) {
+			var message = controlError(control);
+			if (message) {
+				showFieldError(control, message);
+				first = first || control;
+			} else if ('true' === control.getAttribute('aria-invalid')) {
+				clearFieldError(control);
+			}
+		});
+		if (first) { first.focus(); }
+		return !first;
 	}
 
 	var YES_NO = function () { return [{ id: 'yes', name: I18N.yes }, { id: 'no', name: I18N.no }]; };
@@ -2378,6 +2503,7 @@
 		step.appendChild(fallback);
 		form.addEventListener('submit', function (e) {
 			e.preventDefault();
+			if (!validateForm(form)) { return; }
 			var fd = new FormData(form);
 			self.submitBooking(form, {
 				client_type: 'existing',
@@ -2417,6 +2543,7 @@
 		form.querySelector('.vsps-btn-secondary').addEventListener('click', this._bk.close);
 		form.addEventListener('submit', function (e) {
 			e.preventDefault();
+			if (!validateForm(form)) { return; }
 			var fd = new FormData(form);
 			self.submitBooking(form, {
 				client_type: 'new',

@@ -107,7 +107,7 @@ function auditForm(page) {
       // The weight unit (lb/kg) sits inside the visible "Weight" label next to
       // the number; it is named by its own aria-label.
       if (el.name === 'weight_unit') {
-        if (!el.getAttribute('aria-label') || !el.closest('label.vsps-field')) out.noLabelFor.push('weight_unit');
+        if (!el.getAttribute('aria-label') || !el.closest('.vsps-field')) out.noLabelFor.push('weight_unit');
         return;
       }
       const label = document.querySelector(`label[for="${CSS.escape(el.id)}"]`);
@@ -306,7 +306,8 @@ async function toChoice(page) {
   await submit(v);
   const inv = await v.evaluate(() => {
     const form = document.querySelector('.vsps-overlay:last-of-type form.vsps-form');
-    const req = Array.from(form.querySelectorAll('[required]'));
+    // Required AND empty (Pet type starts on a valid default, Dog).
+    const req = Array.from(form.querySelectorAll('[required]')).filter((n) => !String(n.value || '').trim());
     return {
       required: req.length,
       flagged: req.filter((n) => n.getAttribute('aria-invalid') === 'true').length,
