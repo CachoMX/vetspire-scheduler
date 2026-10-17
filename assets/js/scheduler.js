@@ -34,7 +34,7 @@
 		cat: 'Cat',
 		other: 'Other',
 		reason: 'Reason for visit',
-		requiredNote: 'Required',
+		requiredNote: 'Indicates a required field',
 		address1: 'Street address',
 		address2: 'Apt / Suite',
 		city: 'City',
@@ -465,6 +465,13 @@
 		if (className) { node.className = className; }
 		if (text !== undefined) { node.textContent = text; }
 		return node;
+	}
+
+	/** Page-unique id ("vsps-type-3"): label `for`, aria-describedby targets. */
+	var UID_SEQ = 0;
+	function uid(prefix) {
+		UID_SEQ++;
+		return 'vsps-' + prefix + '-' + UID_SEQ;
 	}
 
 	/**
@@ -1145,12 +1152,9 @@
 
 		if (this.usesTypeSelect()) {
 			var select = el('select', 'vsps-type-select');
-			// The visible <label> below isn't wrapped around or `for`-linked to
-			// this <select> (it can't be: `for` needs an id, and several widget
-			// instances with the same layout can exist on one page) -- give it
-			// an accessible name directly so screen readers announce what the
-			// dropdown is, not just "combo box".
-			select.setAttribute('aria-label', I18N.apptType);
+			// Its visible "Appointment Type" label is wired with for/id; the id is
+			// unique per render, so several widgets can share a page.
+			select.id = uid('type');
 			var placeholder = el('option', null, I18N.selectOne);
 			placeholder.value = '';
 			placeholder.disabled = true;
@@ -1173,7 +1177,9 @@
 				self.loadAvailability();
 			});
 			var typeWrap = el('div', 'vsps-type-wrap');
-			typeWrap.appendChild(el('label', 'vsps-label', I18N.apptType));
+			var typeLabel = el('label', 'vsps-label', I18N.apptType);
+			typeLabel.htmlFor = select.id;
+			typeWrap.appendChild(typeLabel);
 			typeWrap.appendChild(select);
 			this.body.appendChild(typeWrap);
 		} else if ('full' === this.layout || 'calendar' === this.layout) {
@@ -2044,9 +2050,10 @@
 		var step = this._bk.step;
 		step.innerHTML = '';
 		var form = el('form', 'vsps-form');
-		form.innerHTML = '<div class="vsps-row">' + fieldInput('lookup_email', I18N.emailAtClinic, 2, 'email', ' autocomplete="email"') + '</div>' +
+		form.innerHTML = requiredNote() + '<div class="vsps-row">' + fieldInput('lookup_email', I18N.emailAtClinic, 2, 'email', ' autocomplete="email"') + '</div>' +
 			'<p class="vsps-error" role="alert" style="display:none;"></p>' +
 			'<div class="vsps-actions"><button type="submit" class="vsps-btn-primary">' + escHtml(I18N.continueBtn) + '</button></div>';
+		wireForm(form);
 		step.appendChild(form);
 		step.appendChild(this.backLink(function () { self.renderChoiceStep(); }));
 		if (this._bk.email) { form.querySelector('[name="lookup_email"]').value = this._bk.email; }
@@ -2126,6 +2133,7 @@
 		form.innerHTML = (this.fieldFlags().reason === 2 ? requiredNote() : '') + this.reasonHtml() +
 			'<p class="vsps-error" role="alert" style="display:none;"></p>' +
 			'<div class="vsps-actions"><button type="submit" class="vsps-btn-primary">' + escHtml(I18N.confirm) + '</button></div>';
+		wireForm(form);
 		step.appendChild(form);
 		step.appendChild(this.backLink(function () { self.renderPetChoice(); }));
 		this.focusStep();
@@ -2207,9 +2215,28 @@
 		return html;
 	}
 
-	/** "* Required" legend at the top of any form that has a required field (WCAG 3.3.2). */
+	/** "* Indicates a required field" legend at the top of any form that has a required field (WCAG 3.3.2). */
 	function requiredNote() {
 		return '<p class="vsps-req-note"><span class="vsps-req" aria-hidden="true">*</span> ' + escHtml(I18N.requiredNote) + '</p>';
+	}
+
+	/**
+	 * Gives every control a unique id and its visible label a matching `for`
+	 * (the label still wraps the control), and mirrors `required` as
+	 * aria-required. Ids carry a per-form number, so several widgets and
+	 * re-rendered steps never collide.
+	 */
+	function wireForm(form) {
+		var n = uid('f');
+		Array.prototype.forEach.call(form.querySelectorAll('label.vsps-field'), function (label) {
+			Array.prototype.forEach.call(label.querySelectorAll('input, select, textarea'), function (control, i) {
+				control.id = n + '-' + (control.name || 'field');
+				if (0 === i) { label.htmlFor = control.id; }
+			});
+		});
+		Array.prototype.forEach.call(form.querySelectorAll('[required]'), function (control) {
+			control.setAttribute('aria-required', 'true');
+		});
 	}
 
 	var YES_NO = function () { return [{ id: 'yes', name: I18N.yes }, { id: 'no', name: I18N.no }]; };
@@ -2338,6 +2365,7 @@
 			this.reasonHtml() +
 			'<p class="vsps-error" role="alert" style="display:none;"></p>' +
 			'<div class="vsps-actions"><button type="submit" class="vsps-btn-primary">' + escHtml(I18N.confirm) + '</button></div>';
+		wireForm(form);
 		step.appendChild(form);
 		var fallback = el('button', 'vsps-back', I18N.cantVerify);
 		fallback.type = 'button';
@@ -2382,6 +2410,7 @@
 			'<button type="submit" class="vsps-btn-primary">__CONFIRM__</button></div>';
 		form.innerHTML = form.innerHTML
 			.replace('__CANCEL__', escHtml(I18N.cancel)).replace('__CONFIRM__', escHtml(I18N.confirm));
+		wireForm(form);
 		step.appendChild(form);
 		step.appendChild(this.backLink(function () { self.renderChoiceStep(); }));
 		if (prefillEmail) { form.querySelector('[name="email"]').value = prefillEmail; }

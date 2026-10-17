@@ -123,7 +123,7 @@ class VSPS_Shortcode {
 				'cat'            => __( 'Cat', 'vetspire-scheduler' ),
 				'other'          => __( 'Other', 'vetspire-scheduler' ),
 				'reason'         => __( 'Reason for visit', 'vetspire-scheduler' ),
-				'requiredNote'   => __( 'Required', 'vetspire-scheduler' ),
+				'requiredNote'   => __( 'Indicates a required field', 'vetspire-scheduler' ),
 				'address1'       => __( 'Street address', 'vetspire-scheduler' ),
 				'address2'       => __( 'Apt / Suite', 'vetspire-scheduler' ),
 				'city'           => __( 'City', 'vetspire-scheduler' ),
