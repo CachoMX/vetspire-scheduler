@@ -110,6 +110,11 @@ class VSPS_Nectar implements VSPS_Pims {
 		if ( is_wp_error( $token ) ) {
 			return $token;
 		}
+		// Tests record which input fields each operation sends (contracts/*.inputs.json);
+		// the function only exists in the test harness.
+		if ( function_exists( 'vsps_record_operation' ) ) {
+			vsps_record_operation( 'nectar', $query, $variables );
+		}
 		$body = array( 'query' => $query );
 		if ( ! empty( $variables ) ) {
 			$body['variables'] = $variables;

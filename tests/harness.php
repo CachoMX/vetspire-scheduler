@@ -80,6 +80,7 @@ require __DIR__ . '/../includes/class-vsps-pims.php';
 require __DIR__ . '/../includes/class-vsps-api.php';
 require __DIR__ . '/../includes/class-vsps-cache.php';
 require __DIR__ . '/../includes/class-vsps-booking.php';
+require __DIR__ . '/contract-recorder.php';
 
 /* ---------- Config ---------- */
 

@@ -58,6 +58,7 @@ require __DIR__ . '/../includes/class-vsps-cache.php';
 require __DIR__ . '/../includes/class-vsps-nectar.php';
 require __DIR__ . '/../includes/class-vsps-booking.php';
 require __DIR__ . '/../includes/class-vsps-fields.php';
+require __DIR__ . '/contract-recorder.php';
 
 $passed = 0; $failed = 0;
 function check( $label, $ok, $detail = '' ) {

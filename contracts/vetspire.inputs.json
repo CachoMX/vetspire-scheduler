@@ -1,0 +1,56 @@
+{
+    "mutation( $clientId:ID!, $input:PatientInput ){ createPatient( clientId:$clientId, input:$input ){ id name } }": {
+        "input": [
+            "birthDate",
+            "breed",
+            "color",
+            "isEstimatedAge",
+            "isMixed",
+            "microchip",
+            "name",
+            "neutered",
+            "notes",
+            "sex",
+            "species"
+        ]
+    },
+    "mutation( $input:AppointmentInput! ){ createAppointment( input:$input ){ id start status patient{ id name } } }": {
+        "input": [
+            "appointmentTypeId",
+            "bookedOnline",
+            "duration",
+            "locationId",
+            "patientId",
+            "reason",
+            "sendConfirmation",
+            "start"
+        ]
+    },
+    "mutation( $input:ClientInput ){ createClient( input:$input ){ id email givenName familyName } }": {
+        "input": [
+            "addresses",
+            "addresses[].city",
+            "addresses[].isPrimary",
+            "addresses[].line1",
+            "addresses[].line2",
+            "addresses[].postalCode",
+            "addresses[].state",
+            "addresses[].use",
+            "businessName",
+            "clientReferralSourceId",
+            "dateOfBirth",
+            "email",
+            "familyName",
+            "givenName",
+            "notes",
+            "phoneNumbers",
+            "phoneNumbers[].name",
+            "phoneNumbers[].preferred",
+            "phoneNumbers[].value",
+            "primaryLocationId",
+            "pronouns",
+            "secondaryEmail",
+            "title"
+        ]
+    }
+}

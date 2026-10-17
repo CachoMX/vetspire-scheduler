@@ -189,6 +189,20 @@ node <scratchpad>/visual-test.js # puppeteer: renders, books, checks dataLayer e
 Requires PHP with `openssl` (and `curl` for WP parity). `.env` must contain `VETSPIRE_API_TOKEN`;
 `.env.local` must contain `NECTAR_CLIENT_ID` / `NECTAR_CLIENT_SECRET` (sandbox) for the Nectar test.
 
+### API contracts (checked by the hub every 6 hours)
+
+`contracts/` lists what the plugin sends to each PIMS. The Vetcelerator hub validates it against
+the live Vetspire and Nectar schemas and alerts Slack when a query would stop working
+(`/docs/scheduler/api-alerts` in the hub). It reads the files at the latest release tag.
+
+- `contracts/<pims>.graphql`: every query and mutation, extracted from the source by
+  `php bin/extract-contracts.php`. After changing a GraphQL string, run it and commit the result;
+  `php bin/extract-contracts.php --check` fails when the file is out of date (run it before a release).
+- `contracts/<pims>.inputs.json`: the input-object fields each operation sends in its variables
+  (names only, never values), recorded while `tests/harness.php`, `tests/fields-e2e.php` and
+  `tests/nectar-e2e.php` run. Those tests fail if they send a field that isn't listed; re-run the
+  failing one with `VSPS_UPDATE_CONTRACTS=1` to add it.
+
 ## Vetspire API notes (learned during development)
 
 - Endpoint `https://api.vetspire.com/graphql`; header `Authorization: <key>`; query depth ≤ 8.

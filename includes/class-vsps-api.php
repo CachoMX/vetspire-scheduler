@@ -180,6 +180,11 @@ Notes from the client: " . $c['notes'];
 	 * @return array|WP_Error Decoded `data` array on success.
 	 */
 	public function request( $query, $variables = array() ) {
+		// Tests record which input fields each operation sends (contracts/*.inputs.json);
+		// the function only exists in the test harness.
+		if ( function_exists( 'vsps_record_operation' ) ) {
+			vsps_record_operation( 'vetspire', $query, $variables );
+		}
 		$body = array( 'query' => $query );
 		if ( ! empty( $variables ) ) {
 			$body['variables'] = $variables;

@@ -1,0 +1,17 @@
+{
+    "query( $f:ClinicUserFilterSchema, $p:PaginationInfo ){ clientsPaginated( filter:$f, paginationInfo:$p ){ edges{ node{ id firstName lastName emailH emailW phoneH phoneW clientInfo{ familyId clientStatus } } } } }": {
+        "f": [
+            "emailH",
+            "emailH.operator",
+            "emailH.value1",
+            "emailW",
+            "emailW.operator",
+            "emailW.value1"
+        ],
+        "p": [
+            "cursor",
+            "mode",
+            "perPage"
+        ]
+    }
+}
