@@ -7,12 +7,13 @@
  * so Nectar exposes a single "location" (id LOCATION_ID); multi-location clinics
  * pass their metaLocation code.
  *
- * Verified against the Nectar sandbox (2026-10-12): token, appointmentTypes,
- * clientsPaginated (email lookup), clientPatients, species.
- * NOT yet callable with a server token (Nectar is enabling them, Harris
- * 2026-10-06): getAvailableAppointmentSlots, addOnlineAppointment,
- * scheduleAndRequestAppointment. `clinics` answers 403 until whitelisted, so the
- * clinic timezone falls back to the one chosen in Settings.
+ * Verified against the Nectar sandbox: token, appointmentTypes,
+ * clientsPaginated (email lookup), clientPatients, species (2026-10-12), and a
+ * full booking request with the server token (2026-10-22): slots come back
+ * already cut to the type's length, and addOnlineAppointment +
+ * scheduleAndRequestAppointment leave it ONLINE_REQUESTED. Bookings are made on
+ * the client's behalf, so creatorUid = clientId. `clinics` still answers 403,
+ * so the clinic timezone falls back to the one chosen in Settings.
  */
 
 if ( ! defined( 'ABSPATH' ) ) {

@@ -1,4 +1,32 @@
 {
+    "mutation( $input:AppointmentCreateSchema! ){ addOnlineAppointment( input:$input ){ id appointmentId startDatetime status } }": {
+        "input": [
+            "appointmentTypeId",
+            "assignedUid",
+            "clientId",
+            "creatorUid",
+            "endDatetime",
+            "isOnlineRequest",
+            "patientId",
+            "staffNotes",
+            "startDatetime"
+        ]
+    },
+    "mutation( $input:OnlineAppointmentScheduleSchema! ){ scheduleAndRequestAppointment( input:$input ){ id appointmentId status startDatetime } }": {
+        "input": [
+            "appointmentId"
+        ]
+    },
+    "mutation( $input:PatientCreateSchema! ){ addPatient( input:$input ){ id firstName } }": {
+        "input": [
+            "createdVia",
+            "familyId",
+            "firstName",
+            "lastName",
+            "species",
+            "status"
+        ]
+    },
     "query( $f:ClinicUserFilterSchema, $p:PaginationInfo ){ clientsPaginated( filter:$f, paginationInfo:$p ){ edges{ node{ id firstName lastName emailH emailW phoneH phoneW clientInfo{ familyId clientStatus } } } } }": {
         "f": [
             "emailH",

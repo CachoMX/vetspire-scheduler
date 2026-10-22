@@ -6,8 +6,8 @@
  *  3. The shared booking flow with an in-memory Nectar-like platform
  *     (duplicate owners on one email, request-based booking).
  *  4. Booking-form fields limited to what Nectar can store.
- * Nothing is written to Nectar: its booking mutations are not open to server
- * tokens yet (Harris, 2026-10-06).
+ *  5. A real booking request on staging (test client zz-test-scheduler@…),
+ *     read back, then deleted. Server tokens can book since 2026-10-16 (Harris).
  *
  * Run: php tests/nectar-e2e.php   (reads NECTAR_CLIENT_ID / NECTAR_CLIENT_SECRET from ../.env.local)
  */
@@ -228,6 +228,65 @@ $saved  = VSPS_Fields::sanitize( $posted, $stored, 'nectar' );
 check( 'saving on Nectar keeps the Vetspire-only field choices', 1 === $saved['referral']['show'] && 1 === $saved['pronouns']['req'] && 0 === $saved['microchip']['show'] && 0 === $saved['weight']['req'] );
 check( 'ids: numbers and hex accepted, junk refused', '5541' === VSPS_Pims_Registry::sanitize_id( 5541 ) && '65b814d3c444b3e7b0de1e82' === VSPS_Pims_Registry::sanitize_id( '65b814d3c444b3e7b0de1e82' ) && '' === VSPS_Pims_Registry::sanitize_id( "1; DROP" ) && '' === VSPS_Pims_Registry::sanitize_id( array( 1 ) ) );
 check( 'widget ids: Vetspire stays numeric', 23539 === VSPS_Pims_Registry::id_for_js( '23539' ) && 'clinic' === VSPS_Pims_Registry::id_for_js( 'clinic' ) );
+
+/* ---------- 5. Real booking on staging (written, then deleted) ---------- */
+
+echo "== 5. Real booking on Nectar staging ==\n";
+
+$clinics = $nectar->request( '{ clinics { id name street city state zipCode phone email timezone metaLocation } }' );
+echo '      (clinics: ' . ( is_wp_error( $clinics ) ? 'still refused → ' . $clinics->get_error_message() : count( $clinics['clinics'] ) . ' clinic(s)' ) . ")\n";
+
+$wellness = '';
+foreach ( is_wp_error( $types ) ? array() : $types as $t ) {
+	if ( 'Wellness' === $t['name'] ) {
+		$wellness = $t['id'];
+	}
+}
+$day = '';
+$open = array();
+for ( $i = 2; $i <= 10 && ! $open; $i++ ) {
+	$day  = ( new DateTimeImmutable( '+' . $i . ' days', $tz ) )->format( 'Y-m-d' );
+	$open = $nectar->get_available_times( 'clinic', $wellness, $day );
+	$open = is_wp_error( $open ) ? array() : $open;
+}
+check( 'slots open to the server token (Wellness, next 10 days)', '' !== $wellness && ! empty( $open ), $day );
+
+$test_email = 'zz-test-scheduler@vetcelerator.com';
+$owner      = $nectar->find_client_by_email( $test_email );
+// A new name (VSPS_NECTAR_PET=…) exercises addPatient, e.g. to re-record its contract.
+$pet_name   = getenv( 'VSPS_NECTAR_PET' ) ? getenv( 'VSPS_NECTAR_PET' ) : 'TestPet';
+$has_pet    = false;
+foreach ( is_array( $owner ) ? $owner['patients'] : array() as $p ) {
+	$has_pet = $has_pet || 0 === strcasecmp( trim( $p['name'] ), $pet_name );
+}
+$phone      = '5550104242';
+$real       = array(
+	'client_type' => is_array( $owner ) ? 'existing' : 'new', 'pet_is_new' => ! $has_pet, 'phone_last4' => is_array( $owner ) ? substr( $phone, -4 ) : '',
+	'location_id' => 'clinic', 'appointment_type_id' => $wellness,
+	'date' => $day, 'time' => $open ? $open[0]['time'] : '', 'provider_id' => $open ? $open[0]['providerId'] : '', 'schedule_id' => $open ? $open[0]['scheduleId'] : '',
+	'notes' => 'Vetcelerator test booking, deleted by tests/nectar-e2e.php',
+	'client'  => array( 'given_name' => 'Zz', 'family_name' => 'TestScheduler', 'email' => $test_email, 'phone' => $phone ),
+	'patient' => array( 'name' => $pet_name, 'species' => 'Canine', 'breed' => '', 'sex' => '' ),
+);
+$booked = $open ? VSPS_Booking::book( $nectar, $real ) : new WP_Error( 'skipped', 'no slots' );
+$appt_id = ! is_wp_error( $booked ) && ! empty( $booked['appointment_id'] ) ? (string) $booked['appointment_id'] : '';
+check( 'booking through the shared flow creates a Nectar request', '' !== $appt_id && true === $booked['request'], is_wp_error( $booked ) ? $booked->get_error_code() . ': ' . $booked->get_error_message() : wp_json_encode( $booked ) );
+
+if ( '' !== $appt_id ) {
+	$read = $nectar->request( 'query ($id: ID!) { appointment(appointmentId: $id) { appointmentId status isOnlineRequest startDatetime clientId creatorUid patientId appointmentTypeId assignedUid } }', array( 'id' => $appt_id ) );
+	$a    = is_wp_error( $read ) ? array() : $read['appointment'];
+	check( 'Nectar holds it as ONLINE_REQUESTED, flagged as an online request', isset( $a['status'] ) && 'ONLINE_REQUESTED' === $a['status'] && ! empty( $a['isOnlineRequest'] ), is_wp_error( $read ) ? $read->get_error_message() : wp_json_encode( $a ) );
+	check( 'creatorUid = clientId (booked on the client\'s behalf)', isset( $a['clientId'] ) && '' !== (string) $a['clientId'] && $a['clientId'] === $a['creatorUid'] && $a['clientId'] === $booked['client_id'] );
+	check( 'the picked slot, type, pet and provider were kept', isset( $a['startDatetime'] ) && $a['appointmentTypeId'] === $wellness && $a['patientId'] === $booked['patient_id'] && $a['assignedUid'] === $open[0]['providerId']
+		&& ( new DateTimeImmutable( $a['startDatetime'] ) )->getTimestamp() === ( new DateTimeImmutable( $day . ' ' . $open[0]['time'], $tz ) )->getTimestamp(), wp_json_encode( $a ) );
+	$after = $nectar->get_available_times( 'clinic', $wellness, $day );
+	$still = array_filter( is_wp_error( $after ) ? array() : $after, function ( $s ) use ( $open ) {
+		return $s['time'] === $open[0]['time'] && $s['providerId'] === $open[0]['providerId'];
+	} );
+	check( 'the requested slot is no longer offered', ! is_wp_error( $after ) && ! $still );
+	$del = $nectar->request( 'mutation ($id: ID!) { deleteAppointment(appointmentId: $id) }', array( 'id' => $appt_id ) );
+	check( 'test request deleted', ! is_wp_error( $del ), is_wp_error( $del ) ? $del->get_error_message() . ' (delete appointment ' . $appt_id . ' by hand)' : '' );
+}
 
 echo "\n==== RESULT: $passed passed, $failed failed ====\n";
 exit( $failed ? 1 : 0 );
