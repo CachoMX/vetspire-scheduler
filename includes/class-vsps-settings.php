@@ -15,6 +15,8 @@ class VSPS_Settings {
 
 	/** Why the last connection check failed (shown on the connect card). */
 	private static $connection_error = '';
+	/** The hub's error code for it ('' when it did not come from the hub). */
+	private static $connection_error_code = '';
 
 	public static function init() {
 		add_action( 'admin_menu', array( __CLASS__, 'add_menu' ) );
@@ -289,7 +291,9 @@ class VSPS_Settings {
 			return $api->connection();
 		}, 600 );
 		if ( is_wp_error( $data ) ) {
-			self::$connection_error = $data->get_error_message();
+			$info                        = $data->get_error_data();
+			self::$connection_error      = $data->get_error_message();
+			self::$connection_error_code = is_array( $info ) && isset( $info['error'] ) ? (string) $info['error'] : '';
 			return null;
 		}
 		// A valid key with 0 locations is CONNECTED — don't confuse it with a bad key.
@@ -330,7 +334,13 @@ class VSPS_Settings {
 				<p>Choose the clinic's practice management system and paste its credentials to start showing live appointment times on your website. Everything else is configured after connecting.</p>
 				<?php settings_errors( VSPS_OPTION_KEY ); ?>
 				<?php if ( $has_token && 'nectar' === $settings['pims'] && 'production' === $settings['nectar_env'] ) : ?>
-					<div class="notice notice-error inline"><p><?php echo esc_html( '' !== self::$connection_error ? self::$connection_error : "The Vetcelerator hub couldn't connect this site to Nectar." ); ?> If this site is linked and the clinic has turned on the Vetcelerator integration in Nectar (Settings → Third-Party Services), try again in a minute.</p></div>
+					<div class="notice notice-error inline">
+						<p><?php echo esc_html( '' !== self::$connection_error ? self::$connection_error : "The Vetcelerator hub couldn't connect this site to Nectar." ); ?></p>
+						<?php if ( in_array( self::$connection_error_code, array( 'nectar_clinic_not_linked', 'nectar_detail' ), true ) ) : ?>
+							<p>Check that a Vetcelerator admin linked this site to its Nectar clinic in the hub and that the clinic turned on the Vetcelerator integration in Nectar (Settings → Third-Party Services).</p>
+						<?php endif; ?>
+						<p><a class="button" href="<?php echo esc_url( admin_url( 'admin.php?page=vsps-settings' ) ); ?>">Try again</a></p>
+					</div>
 				<?php elseif ( $has_token ) : ?>
 					<div class="notice notice-error inline"><p>Those credentials weren't accepted by <?php echo esc_html( VSPS_Pims_Registry::label( $settings['pims'] ) ); ?>. Double-check them and try again.</p></div>
 				<?php endif; ?>
@@ -391,11 +401,12 @@ class VSPS_Settings {
 			</p>
 			<div class="vsps-nectar-hub">
 				<?php if ( $first_run ) : ?>
+					<?php $saved_hub_key = isset( $settings['hub_key'] ) ? (string) $settings['hub_key'] : ''; ?>
 					<p>
 						<label for="vsps_connect_hub_key"><strong>Hub connection key</strong></label><br />
 						<input type="password" id="vsps_connect_hub_key" name="<?php echo esc_attr( $opt ); ?>[hub_key]"
-							value="" class="regular-text" style="width:100%;margin-top:6px;"
-							placeholder="vss_…" autocomplete="new-password" spellcheck="false" data-vsps-hub-required="1" />
+							value="<?php echo esc_attr( $mask( $saved_hub_key ) ); ?>" class="regular-text" style="width:100%;margin-top:6px;"
+							placeholder="vss_…" autocomplete="new-password" spellcheck="false"<?php echo '' === $saved_hub_key ? ' data-vsps-hub-required="1"' : ''; ?> />
 					</p>
 				<?php endif; ?>
 				<p class="description">No Nectar credentials go on this site: it reaches Nectar through the Vetcelerator hub with its hub connection key<?php echo $first_run ? '' : ' (Vetcelerator Hub box below)'; ?>. A Vetcelerator admin links the site to its Nectar clinic in the hub (Scheduler Data → Manage sites), and the clinic turns on the Vetcelerator integration in Nectar. Online bookings arrive in Nectar as requests the clinic confirms.</p>
@@ -425,7 +436,7 @@ class VSPS_Settings {
 				document.querySelectorAll('.vsps-pims-fields').forEach(function (box) {
 					var on = box.getAttribute('data-vsps-pims') === select.value;
 					box.hidden = !on;
-					box.querySelectorAll('input').forEach(function (input) {
+					box.querySelectorAll('input, select').forEach(function (input) {
 						input.disabled = !on; // disabled = not posted = stored value kept
 						input.required = on && firstRun && input.hasAttribute('data-vsps-required');
 					});

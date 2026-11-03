@@ -80,6 +80,8 @@ check( 'an invalid hub key is refused and the stored one kept', $key === $out['h
 
 $out = save( array( 'hub_key' => $key ), $connect );
 check( 'a connect card without the hub key field keeps the stored key', $key === $out['hub_key'] );
+$out = save( array( 'hub_key' => $key ), $connect + array( 'hub_key' => str_repeat( "\u{2022}", 12 ) . substr( $key, -4 ) ) );
+check( 'the masked saved key sent back keeps the stored key', $key === $out['hub_key'] && array() === $GLOBALS['vsps_errors'] );
 
 echo "== connect card, Nectar sandbox ==\n";
 $out = save( array(), array( 'connect_only' => '1', 'pims' => 'nectar', 'nectar_env' => 'sandbox', 'nectar_client_id' => 'id', 'nectar_client_secret' => 'secret' ) );

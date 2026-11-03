@@ -127,15 +127,27 @@ class VSPS_Nectar implements VSPS_Pims {
 			return new WP_Error( 'vsps_auth', "The Vetcelerator hub did not accept this site's hub connection key." );
 		}
 		if ( 'nectar_clinic_not_linked' === $error ) {
-			return new WP_Error( 'vsps_config', "This site isn't linked to its Nectar clinic in the Vetcelerator hub yet (Scheduler Data → Manage sites → Link Nectar clinic)." );
+			return new WP_Error( 'vsps_config', "This site isn't linked to its Nectar clinic in the Vetcelerator hub yet (Scheduler Data → Manage sites → Link Nectar clinic).", array( 'hub' => true, 'error' => $error ) );
 		}
-		if ( 'operation_not_allowed' === $error ) {
-			return new WP_Error( 'vsps_graphql', 'The Vetcelerator hub refused this Nectar request for this plugin version.', array( 'status' => $code ) );
+		// 'hub' => the error came through the hub: never cached as a Nectar answer.
+		$data = array( 'status' => $code, 'hub' => true, 'error' => $error );
+		if ( 'operation_not_allowed' === $error || 'variables_not_allowed' === $error ) {
+			return new WP_Error( 'vsps_graphql', 'The Vetcelerator hub refused this Nectar request for this plugin version. Update the plugin, or contact Vetcelerator.', $data );
+		}
+		if ( 'rate_limited' === $error ) {
+			return new WP_Error( 'vsps_http', 'Too many requests to Nectar from this site right now. Please try again in a minute.', $data );
 		}
 		if ( is_array( $json ) && isset( $json['detail'] ) && is_string( $json['detail'] ) ) {
-			return new WP_Error( 'vsps_http', 'Nectar: ' . $json['detail'] . ' (HTTP ' . $code . ')', array( 'status' => $code ) );
+			$data['error'] = 'nectar_detail';
+			return new WP_Error( 'vsps_http', 'Nectar: ' . substr( $json['detail'], 0, 200 ) . ' (HTTP ' . $code . ')', $data );
 		}
-		return new WP_Error( 'vsps_http', 'Vetcelerator hub: ' . ( '' !== $error ? $error : 'unexpected answer' ) . ' (HTTP ' . $code . ')', array( 'status' => $code ) );
+		if ( 504 === (int) $code ) {
+			return new WP_Error( 'vsps_http', "The Vetcelerator hub couldn't reach Nectar just now. Please try again in a few minutes.", $data );
+		}
+		if ( $code >= 500 ) {
+			return new WP_Error( 'vsps_http', 'The Vetcelerator hub could not connect to Nectar (' . ( '' !== $error ? $error : 'HTTP ' . $code ) . '). Please contact Vetcelerator.', $data );
+		}
+		return new WP_Error( 'vsps_http', 'Vetcelerator hub: ' . ( '' !== $error ? $error : 'unexpected answer' ) . ' (HTTP ' . $code . ')', $data );
 	}
 
 	/* ---------- transport ---------- */
@@ -156,7 +168,7 @@ class VSPS_Nectar implements VSPS_Pims {
 	private function access_token( $force = false ) {
 		if ( '' === $this->api_url ) {
 			// Fail before any secret leaves the site.
-			return new WP_Error( 'vsps_config', "Enter the clinic's Nectar address in Settings to connect to Nectar production." );
+			return new WP_Error( 'vsps_config', 'No Nectar production clinic is set for this connection.' );
 		}
 		$key = $this->token_key();
 		if ( ! $force ) {
@@ -217,7 +229,7 @@ class VSPS_Nectar implements VSPS_Pims {
 			$body['variables'] = $variables;
 		}
 		$response = wp_remote_post( $this->api_url, array(
-			'timeout' => 20,
+			'timeout' => $via_hub ? 30 : 20, // the hub may log in to Nectar before forwarding
 			'headers' => $via_hub
 				? array(
 					'Authorization'  => 'Bearer ' . $token,
@@ -276,8 +288,11 @@ class VSPS_Nectar implements VSPS_Pims {
 				: '{ clinics { id name street city state zipCode phone email timezone } }' );
 			if ( is_wp_error( $data ) ) {
 				$status = $data->get_error_data();
-				// A permission refusal is an answer, not an outage: remember it.
-				return isset( $status['status'] ) && 403 === (int) $status['status'] ? array( 'clinics' => array() ) : $data;
+				// Direct to Nectar, a 403 on clinics means the endpoint isn't open to this
+				// token: an answer, remembered. Through the hub a 403 is temporary (a
+				// refused version, a clinic not enabled yet) and must not stick for 12 h.
+				$answer = isset( $status['status'] ) && 403 === (int) $status['status'] && empty( $status['hub'] );
+				return $answer ? array( 'clinics' => array() ) : $data;
 			}
 			return $data;
 		}, 12 * HOUR_IN_SECONDS );

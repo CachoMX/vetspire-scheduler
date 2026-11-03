@@ -27,7 +27,7 @@ function wp_json_encode( $data ) { return json_encode( $data ); }
 // Records every outgoing request instead of sending it.
 $GLOBALS['vsps_sent'] = array();
 function wp_remote_post( $url, $args ) {
-	$GLOBALS['vsps_sent'][] = array( 'url' => $url, 'body' => json_decode( $args['body'], true ), 'headers' => $args['headers'] );
+	$GLOBALS['vsps_sent'][] = array( 'url' => $url, 'body' => json_decode( $args['body'], true ), 'headers' => $args['headers'], 'timeout' => isset( $args['timeout'] ) ? $args['timeout'] : null );
 	if ( false !== strpos( $url, 'auth0.com' ) ) {
 		return array( 'response' => array( 'code' => 200 ), 'body' => json_encode( array( 'access_token' => 'tok', 'expires_in' => 3600 ) ) );
 	}
@@ -210,6 +210,40 @@ check( 'a 401 is not retried with a Nectar login in hub mode', is_wp_error( $err
 reset_net( array() );
 $err = VSPS_Nectar::via_hub( 'https://hub.test', '', '', 'America/New_York', '1.29.0' )->request( '{ appointmentTypes { id } }' );
 check( 'no hub key: config error, nothing sent', is_wp_error( $err ) && 'vsps_config' === $err->get_error_code() && array() === $GLOBALS['vsps_sent'] );
+
+check( 'hub mode: no Nectar server header from WordPress', ! isset( $sent[0]['headers']['X-Auth-Type'] ) );
+check( 'hub mode: 30 s timeout (the hub may log in to Nectar first)', 30 === $sent[0]['timeout'] );
+
+echo "== hub refusals are not remembered as 'no clinic' ==\n";
+foreach ( array(
+	'hub refused the operation' => array( array( 'error' => 'operation_not_allowed' ), 403 ),
+	'Nectar: clinic not enabled' => array( array( 'detail' => 'Clinic is not enabled or not registered' ), 403 ),
+) as $label => $reply ) {
+	reset_net( $reply[0], $reply[1] );
+	$h = VSPS_Nectar::via_hub( 'https://hub.test', $site_key, '', 'America/New_York', '1.29.0' );
+	$h->get_location( VSPS_Nectar::LOCATION_ID );
+	$GLOBALS['vsps_reply']      = array( 'data' => array( 'clinics' => array( array( 'id' => 'c1', 'name' => 'EasyVet Estero', 'timezone' => 'America/Detroit' ) ) ) );
+	$GLOBALS['vsps_reply_code'] = 200;
+	$where = VSPS_Nectar::via_hub( 'https://hub.test', $site_key, '', 'America/New_York', '1.29.0' )->get_location( VSPS_Nectar::LOCATION_ID );
+	check( "$label: the next call reads the clinic again", 'EasyVet Estero' === $where['name'] );
+}
+
+echo "== hub messages ==\n";
+$cases = array(
+	'missing key (401)'      => array( array( 'error' => 'missing_site_key' ), 401, 'vsps_auth', 'hub connection key' ),
+	'rate limited (429)'     => array( array( 'error' => 'rate_limited' ), 429, 'vsps_http', 'Too many' ),
+	'hub can\'t log in (502)' => array( array( 'error' => 'nectar_upstream_auth' ), 502, 'vsps_http', 'contact Vetcelerator' ),
+	'hub not ready (503)'    => array( array( 'error' => 'nectar_not_configured' ), 503, 'vsps_http', 'contact Vetcelerator' ),
+	'Nectar down (504)'      => array( array( 'error' => 'nectar_unreachable' ), 504, 'vsps_http', 'try again' ),
+);
+foreach ( $cases as $label => $c ) {
+	reset_net( $c[0], $c[1] );
+	$err = VSPS_Nectar::via_hub( 'https://hub.test', $site_key, '', 'America/New_York', '1.29.0' )->request( '{ appointmentTypes { id } }' );
+	check( "$label: " . $c[2] . ' with a plain message', is_wp_error( $err ) && $c[2] === $err->get_error_code() && false !== stripos( $err->get_error_message(), $c[3] ) );
+}
+reset_net( array( 'detail' => str_repeat( 'x', 5000 ) ), 403 );
+$err = VSPS_Nectar::via_hub( 'https://hub.test', $site_key, '', 'America/New_York', '1.29.0' )->request( '{ appointmentTypes { id } }' );
+check( "Nectar's detail is capped", is_wp_error( $err ) && strlen( $err->get_error_message() ) < 300 );
 
 echo $fails ? "\n$fails FAILED\n" : "\nALL PASS\n";
 exit( $fails ? 1 : 0 );
