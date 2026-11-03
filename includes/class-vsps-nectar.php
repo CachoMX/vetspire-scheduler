@@ -31,7 +31,7 @@ class VSPS_Nectar implements VSPS_Pims {
 	// where <code> is the first label of the clinic's app address (<code>.app.prod.nectar.vet).
 	// VSPS_NECTAR_API_URL in wp-config.php overrides it.
 	const PRODUCTION_HOST_SUFFIX = '.prod.nectar.vet';
-	const CLINIC_CODE_RE         = '/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/';
+	const CLINIC_CODE_RE         = '/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/D'; // D: no trailing newline
 
 	private $client_id;
 	private $client_secret;

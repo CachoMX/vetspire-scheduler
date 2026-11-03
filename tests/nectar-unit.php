@@ -94,9 +94,20 @@ $bad_inputs = array(
 	'estero easyvet',
 	str_repeat( 'a', 64 ),
 	'esteroeasyvet.app.prod.nectar.vet:8443',
+	'https://evil.example\@esteroeasyvet.app.prod.nectar.vet/',
+	'https://evil.example#@esteroeasyvet.app.prod.nectar.vet/',
+	'https://evil.example?@esteroeasyvet.app.prod.nectar.vet/',
+	'esteroeasyvet.app.prod.nectar.vet.',
+	'esteroeasyvet%2eapp.prod.nectar.vet',
+	"esteroeasyvet\n.app.prod.nectar.vet",
+	"estero\0easyvet",
+	'https://[::1]/graphql',
+	'ｅｓｔｅｒｏ.app.prod.nectar.vet',
+	'ftp://esteroeasyvet.app.prod.nectar.vet/',
+	'javascript:alert(1)',
 );
 foreach ( $bad_inputs as $in ) {
-	check( "refused: '" . substr( $in, 0, 60 ) . "'", false === VSPS_Nectar::clinic_code( $in ) );
+	check( "refused: '" . addcslashes( substr( $in, 0, 60 ), "\0..\37" ) . "'", false === VSPS_Nectar::clinic_code( $in ) );
 }
 check( '63-char code accepted', str_repeat( 'a', 63 ) === VSPS_Nectar::clinic_code( str_repeat( 'a', 63 ) ) );
 
@@ -106,6 +117,8 @@ echo "== API host ==\n";
 check( 'code → per-clinic host', 'https://esteroeasyvet.api.prod.nectar.vet/graphql' === VSPS_Nectar::production_api_url( 'esteroeasyvet' ) );
 check( 'no code → no host', '' === VSPS_Nectar::production_api_url( '' ) );
 check( 'invalid code → no host', '' === VSPS_Nectar::production_api_url( 'evil.example/x' ) );
+check( 'stored code with a trailing newline → no host', '' === VSPS_Nectar::production_api_url( "estero\n" ) );
+check( 'a trailing newline is not a code', false === VSPS_Nectar::clinic_code( "esteroeasyvet\n.x" ) );
 
 reset_net( array( 'data' => array( 'appointmentTypes' => array() ) ) );
 $prod = new VSPS_Nectar( 'id', 'secret', '', 'America/New_York', 'production', 'esteroeasyvet' );

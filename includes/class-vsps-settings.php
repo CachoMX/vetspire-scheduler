@@ -351,6 +351,8 @@ class VSPS_Settings {
 				<?php settings_errors( VSPS_OPTION_KEY ); ?>
 				<?php if ( $has_token && 'nectar' === $settings['pims'] && 'production' === $settings['nectar_env'] && '' === VSPS_Nectar::production_api_url( $settings['nectar_clinic'] ) && ! ( defined( 'VSPS_NECTAR_API_URL' ) && VSPS_NECTAR_API_URL ) ) : ?>
 					<div class="notice notice-error inline"><p>Enter the clinic's Nectar address (for example https://yourclinic.app.prod.nectar.vet/) to connect to Nectar production.</p></div>
+				<?php elseif ( $has_token && 'nectar' === $settings['pims'] && 'production' === $settings['nectar_env'] ) : ?>
+					<div class="notice notice-error inline"><p>Nectar didn't accept the connection. Check the client ID and secret, and that the clinic's Nectar address is right and the clinic has turned on the Vetcelerator integration in Nectar.</p></div>
 				<?php elseif ( $has_token ) : ?>
 					<div class="notice notice-error inline"><p>Those credentials weren't accepted by <?php echo esc_html( VSPS_Pims_Registry::label( $settings['pims'] ) ); ?>. Double-check them and try again.</p></div>
 				<?php endif; ?>
