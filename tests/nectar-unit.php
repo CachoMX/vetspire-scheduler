@@ -27,11 +27,12 @@ function wp_json_encode( $data ) { return json_encode( $data ); }
 // Records every outgoing request instead of sending it.
 $GLOBALS['vsps_sent'] = array();
 function wp_remote_post( $url, $args ) {
-	$GLOBALS['vsps_sent'][] = array( 'url' => $url, 'body' => json_decode( $args['body'], true ) );
+	$GLOBALS['vsps_sent'][] = array( 'url' => $url, 'body' => json_decode( $args['body'], true ), 'headers' => $args['headers'] );
 	if ( false !== strpos( $url, 'auth0.com' ) ) {
 		return array( 'response' => array( 'code' => 200 ), 'body' => json_encode( array( 'access_token' => 'tok', 'expires_in' => 3600 ) ) );
 	}
-	return array( 'response' => array( 'code' => 200 ), 'body' => json_encode( $GLOBALS['vsps_reply'] ) );
+	$code = isset( $GLOBALS['vsps_reply_code'] ) ? $GLOBALS['vsps_reply_code'] : 200;
+	return array( 'response' => array( 'code' => $code ), 'body' => json_encode( $GLOBALS['vsps_reply'] ) );
 }
 function wp_remote_retrieve_response_code( $r ) { return is_array( $r ) ? $r['response']['code'] : 0; }
 function wp_remote_retrieve_body( $r ) { return is_array( $r ) ? $r['body'] : ''; }
@@ -53,7 +54,8 @@ function check( $label, $ok ) {
 		$fails++;
 	}
 }
-function reset_net( $reply ) {
+function reset_net( $reply, $code = 200 ) {
+	$GLOBALS['vsps_reply_code'] = $code;
 	$GLOBALS['vsps_sent']       = array();
 	$GLOBALS['vsps_transients'] = array();
 	$GLOBALS['vsps_reply']      = $reply;
@@ -173,6 +175,41 @@ $GLOBALS['vsps_reply'] = array( 'data' => array( 'clinics' => array( array_merge
 $b     = new VSPS_Nectar( 'same-id', 'secret', '', 'America/New_York', 'production', 'clinicb' );
 $where = $b->get_location( VSPS_Nectar::LOCATION_ID );
 check( 'same client id, other clinic: its own clinic profile', 'Clinic B' === $where['name'] );
+
+/* ---------- production through the Vetcelerator hub ---------- */
+
+echo "== through the hub ==\n";
+$site_key = 'vss_' . str_repeat( 'ab', 24 );
+reset_net( array( 'data' => array( 'appointmentTypes' => array( array( 'id' => 't1' ) ) ) ) );
+$hub  = VSPS_Nectar::via_hub( 'https://hub.test/', $site_key, '', 'America/New_York', '1.29.0' );
+$data = $hub->request( '{ appointmentTypes { id } }' );
+$sent = $GLOBALS['vsps_sent'];
+check( 'hub mode: one request, to the hub proxy', 1 === count( $sent ) && 'https://hub.test/api/wp/v1/scheduler/nectar/graphql' === $sent[0]['url'] );
+check( 'hub mode: no Nectar login from WordPress', 0 === count( array_filter( $sent, function ( $c ) { return false !== strpos( $c['url'], 'auth0' ); } ) ) );
+check( 'hub mode: authenticated with the site key', 'Bearer ' . $site_key === $sent[0]['headers']['Authorization'] );
+check( 'hub mode: sends the plugin version', '1.29.0' === $sent[0]['headers']['X-VSPS-Version'] );
+check( 'hub mode: data comes back as from Nectar', array( array( 'id' => 't1' ) ) === $data['appointmentTypes'] );
+check( 'hub mode: platform is still nectar', 'nectar' === $hub->platform() );
+
+reset_net( array( 'error' => 'nectar_clinic_not_linked' ), 409 );
+$err = VSPS_Nectar::via_hub( 'https://hub.test', $site_key, '', 'America/New_York', '1.29.0' )->connection();
+check( 'site not linked: config error that says where to link it', is_wp_error( $err ) && 'vsps_config' === $err->get_error_code() && false !== stripos( $err->get_error_message(), 'Manage sites' ) );
+
+reset_net( array( 'error' => 'invalid_site_key' ), 403 );
+$err = VSPS_Nectar::via_hub( 'https://hub.test', $site_key, '', 'America/New_York', '1.29.0' )->connection();
+check( 'refused site key: auth error', is_wp_error( $err ) && 'vsps_auth' === $err->get_error_code() );
+
+reset_net( array( 'detail' => 'Clinic is not enabled or not registered' ), 403 );
+$err = VSPS_Nectar::via_hub( 'https://hub.test', $site_key, '', 'America/New_York', '1.29.0' )->connection();
+check( "Nectar's own refusal is passed on", is_wp_error( $err ) && false !== strpos( $err->get_error_message(), 'Clinic is not enabled' ) );
+
+reset_net( array( 'detail' => 'expired' ), 401 );
+$err = VSPS_Nectar::via_hub( 'https://hub.test', $site_key, '', 'America/New_York', '1.29.0' )->request( '{ appointmentTypes { id } }' );
+check( 'a 401 is not retried with a Nectar login in hub mode', is_wp_error( $err ) && 1 === count( $GLOBALS['vsps_sent'] ) );
+
+reset_net( array() );
+$err = VSPS_Nectar::via_hub( 'https://hub.test', '', '', 'America/New_York', '1.29.0' )->request( '{ appointmentTypes { id } }' );
+check( 'no hub key: config error, nothing sent', is_wp_error( $err ) && 'vsps_config' === $err->get_error_code() && array() === $GLOBALS['vsps_sent'] );
 
 echo $fails ? "\n$fails FAILED\n" : "\nALL PASS\n";
 exit( $fails ? 1 : 0 );

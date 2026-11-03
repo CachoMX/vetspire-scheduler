@@ -32,6 +32,11 @@ class VSPS_Nectar implements VSPS_Pims {
 	// VSPS_NECTAR_API_URL in wp-config.php overrides it.
 	const PRODUCTION_HOST_SUFFIX = '.prod.nectar.vet';
 	const CLINIC_CODE_RE         = '/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/D'; // D: no trailing newline
+	// Production on clinic sites goes through the Vetcelerator hub: Nectar gives one
+	// client id/secret for every clinic, so it stays in the hub. The site sends its
+	// GraphQL with its hub connection key and the hub forwards it to the clinic an
+	// admin linked to the site (Scheduler Data → Manage sites).
+	const HUB_PROXY_PATH = '/api/wp/v1/scheduler/nectar/graphql';
 
 	private $client_id;
 	private $client_secret;
@@ -39,6 +44,8 @@ class VSPS_Nectar implements VSPS_Pims {
 	private $fallback_timezone;
 	private $auth_url;
 	private $api_url;
+	private $hub_key        = ''; // hub mode: the site's hub connection key
+	private $plugin_version = '';
 
 	/**
 	 * @param string $environment 'sandbox' (Nectar's test clinic) or 'production'. Each
@@ -100,6 +107,37 @@ class VSPS_Nectar implements VSPS_Pims {
 		return preg_match( self::CLINIC_CODE_RE, $code ) ? 'https://' . $code . '.api' . self::PRODUCTION_HOST_SUFFIX . '/graphql' : '';
 	}
 
+	/**
+	 * Nectar production through the Vetcelerator hub (what clinic sites use):
+	 * no Nectar credentials on the site, only its hub connection key.
+	 */
+	public static function via_hub( $hub_url, $site_key, $meta_location = '', $fallback_timezone = '', $plugin_version = '' ) {
+		$nectar                 = new self( '', '', $meta_location, $fallback_timezone, 'production' );
+		$nectar->auth_url       = '';
+		$nectar->api_url        = rtrim( (string) $hub_url, '/' ) . self::HUB_PROXY_PATH;
+		$nectar->hub_key        = (string) $site_key;
+		$nectar->plugin_version = (string) $plugin_version;
+		return $nectar;
+	}
+
+	/** The hub's own refusals ({"error": code}) as errors the Settings screen can explain. */
+	private static function hub_error( $code, $json ) {
+		$error = is_array( $json ) && isset( $json['error'] ) && is_string( $json['error'] ) ? $json['error'] : '';
+		if ( 'missing_site_key' === $error || 'invalid_site_key' === $error ) {
+			return new WP_Error( 'vsps_auth', "The Vetcelerator hub did not accept this site's hub connection key." );
+		}
+		if ( 'nectar_clinic_not_linked' === $error ) {
+			return new WP_Error( 'vsps_config', "This site isn't linked to its Nectar clinic in the Vetcelerator hub yet (Scheduler Data → Manage sites → Link Nectar clinic)." );
+		}
+		if ( 'operation_not_allowed' === $error ) {
+			return new WP_Error( 'vsps_graphql', 'The Vetcelerator hub refused this Nectar request for this plugin version.', array( 'status' => $code ) );
+		}
+		if ( is_array( $json ) && isset( $json['detail'] ) && is_string( $json['detail'] ) ) {
+			return new WP_Error( 'vsps_http', 'Nectar: ' . $json['detail'] . ' (HTTP ' . $code . ')', array( 'status' => $code ) );
+		}
+		return new WP_Error( 'vsps_http', 'Vetcelerator hub: ' . ( '' !== $error ? $error : 'unexpected answer' ) . ' (HTTP ' . $code . ')', array( 'status' => $code ) );
+	}
+
 	/* ---------- transport ---------- */
 
 	private function token_key() {
@@ -157,9 +195,17 @@ class VSPS_Nectar implements VSPS_Pims {
 	 * @return array|WP_Error Decoded `data` on success.
 	 */
 	public function request( $query, $variables = array(), $retry = true ) {
-		$token = $this->access_token();
-		if ( is_wp_error( $token ) ) {
-			return $token;
+		$via_hub = '' === $this->auth_url;
+		if ( $via_hub ) {
+			if ( '' === $this->hub_key ) {
+				return new WP_Error( 'vsps_config', 'Add the hub connection key in Settings to connect to Nectar production.' );
+			}
+			$token = $this->hub_key;
+		} else {
+			$token = $this->access_token();
+			if ( is_wp_error( $token ) ) {
+				return $token;
+			}
 		}
 		// Tests record which input fields each operation sends (contracts/*.inputs.json);
 		// the function only exists in the test harness.
@@ -172,11 +218,17 @@ class VSPS_Nectar implements VSPS_Pims {
 		}
 		$response = wp_remote_post( $this->api_url, array(
 			'timeout' => 20,
-			'headers' => array(
-				'Authorization' => 'Bearer ' . $token,
-				'Content-Type'  => 'application/json',
-				'X-Auth-Type'   => 'server',
-			),
+			'headers' => $via_hub
+				? array(
+					'Authorization'  => 'Bearer ' . $token,
+					'Content-Type'   => 'application/json',
+					'X-VSPS-Version' => $this->plugin_version,
+				)
+				: array(
+					'Authorization' => 'Bearer ' . $token,
+					'Content-Type'  => 'application/json',
+					'X-Auth-Type'   => 'server',
+				),
 			'body'    => wp_json_encode( $body ),
 		) );
 		if ( is_wp_error( $response ) ) {
@@ -184,6 +236,9 @@ class VSPS_Nectar implements VSPS_Pims {
 		}
 		$code = wp_remote_retrieve_response_code( $response );
 		$json = json_decode( wp_remote_retrieve_body( $response ), true );
+		if ( $via_hub && 200 !== $code ) {
+			return self::hub_error( $code, $json );
+		}
 		if ( 401 === $code && $retry ) {
 			$this->access_token( true ); // expired or revoked token: fetch a new one once
 			return $this->request( $query, $variables, false );

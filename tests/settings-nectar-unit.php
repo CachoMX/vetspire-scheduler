@@ -1,7 +1,9 @@
 <?php
 /**
- * Offline checks for saving the Nectar production clinic address through the
- * real VSPS_Settings::sanitize() (connect card and full Settings saves).
+ * Offline checks for saving Nectar settings through the real
+ * VSPS_Settings::sanitize() (connect card and full Settings saves).
+ * Nectar production goes through the Vetcelerator hub, so the connect card
+ * takes the site's hub connection key instead of Nectar credentials.
  * No WordPress, no network.
  *
  * php tests/settings-nectar-unit.php
@@ -28,16 +30,17 @@ function get_option( $key, $default = false ) { return $GLOBALS['vsps_option']; 
 function vsps_get_settings() {
 	return array_merge( array(
 		'pims' => 'vetspire', 'api_token' => '', 'api_endpoint' => 'https://api.vetspire.com/graphql', 'cache_ttl' => 300,
-		'nectar_client_id' => '', 'nectar_client_secret' => '', 'nectar_env' => 'sandbox', 'nectar_clinic' => '',
-		'nectar_meta_location' => '', 'clinic_timezone' => '',
+		'nectar_client_id' => '', 'nectar_client_secret' => '', 'nectar_env' => 'sandbox',
+		'nectar_meta_location' => '', 'clinic_timezone' => '', 'hub_key' => '',
 	), $GLOBALS['vsps_option'] );
 }
 class VSPS_Cache {
 	public static function flush() {}
 }
+$GLOBALS['vsps_hub_resets'] = 0;
 class VSPS_Hub {
 	const KEY_PATTERN = '/^vss_[0-9a-f]{48}$/';
-	public static function reset_after_key_change() {}
+	public static function reset_after_key_change() { $GLOBALS['vsps_hub_resets']++; }
 }
 class VSPS_Shortcode {
 	public static function valid_mobile_layout( $v ) { return ''; }
@@ -62,32 +65,32 @@ function save( array $stored, array $input ) {
 	return VSPS_Settings::sanitize( $input );
 }
 
-$connect = array( 'connect_only' => '1', 'pims' => 'nectar', 'nectar_client_id' => 'id', 'nectar_client_secret' => 'secret', 'nectar_env' => 'production' );
+$key     = 'vss_' . str_repeat( 'ab', 24 );
+$connect = array( 'connect_only' => '1', 'pims' => 'nectar', 'nectar_env' => 'production' );
 
-echo "== connect card ==\n";
-$out = save( array(), $connect + array( 'nectar_clinic' => 'https://esteroeasyvet.app.prod.nectar.vet/' ) );
-check( 'pasted app address → code stored', 'esteroeasyvet' === $out['nectar_clinic'] );
-check( 'no error notice', array() === $GLOBALS['vsps_errors'] );
+echo "== connect card, Nectar production ==\n";
+$out = save( array(), $connect + array( 'hub_key' => '  ' . strtoupper( $key ) . ' ' ) );
+check( 'hub key from the connect card is stored (normalized)', $key === $out['hub_key'] );
 check( 'production + Nectar stored', 'production' === $out['nectar_env'] && 'nectar' === $out['pims'] );
+check( 'the single Nectar location is selected', VSPS_Nectar::LOCATION_ID === $out['default_location'] );
+check( 'no Nectar credentials are needed or stored', '' === $out['nectar_client_id'] && '' === $out['nectar_client_secret'] );
 
-$out = save( array( 'pims' => 'nectar', 'nectar_clinic' => 'esteroeasyvet' ), $connect + array( 'nectar_clinic' => 'https://evil.example/graphql' ) );
-check( 'foreign address refused, previous code kept', 'esteroeasyvet' === $out['nectar_clinic'] );
-check( 'refusal shows a notice', array( 'vsps_nectar_clinic' ) === $GLOBALS['vsps_errors'] );
+$out = save( array( 'hub_key' => $key ), $connect + array( 'hub_key' => 'not-a-key' ) );
+check( 'an invalid hub key is refused and the stored one kept', $key === $out['hub_key'] && array( 'vsps_hub_key' ) === $GLOBALS['vsps_errors'] );
 
-$out = save( array( 'pims' => 'nectar', 'nectar_clinic' => 'esteroeasyvet' ), $connect );
-check( 'field not posted → stored code kept', 'esteroeasyvet' === $out['nectar_clinic'] );
+$out = save( array( 'hub_key' => $key ), $connect );
+check( 'a connect card without the hub key field keeps the stored key', $key === $out['hub_key'] );
 
-$out = save( array( 'pims' => 'nectar', 'nectar_clinic' => 'esteroeasyvet' ), $connect + array( 'nectar_clinic' => '' ) );
-check( 'emptied field → code cleared', '' === $out['nectar_clinic'] );
-
-$out = save( array( 'pims' => 'nectar', 'nectar_env' => 'production', 'nectar_clinic' => 'esteroeasyvet' ), array_merge( $connect, array( 'nectar_env' => 'sandbox' ) ) );
-check( 'switching to sandbox keeps the production code for later', 'esteroeasyvet' === $out['nectar_clinic'] && 'sandbox' === $out['nectar_env'] );
+echo "== connect card, Nectar sandbox ==\n";
+$out = save( array(), array( 'connect_only' => '1', 'pims' => 'nectar', 'nectar_env' => 'sandbox', 'nectar_client_id' => 'id', 'nectar_client_secret' => 'secret' ) );
+check( 'sandbox still stores its own credentials', 'id' === $out['nectar_client_id'] && 'secret' === $out['nectar_client_secret'] && 'sandbox' === $out['nectar_env'] );
 
 echo "== full settings save ==\n";
-$stored = array( 'pims' => 'nectar', 'nectar_env' => 'production', 'nectar_clinic' => 'esteroeasyvet', 'nectar_client_id' => 'id', 'nectar_client_secret' => 'secret' );
+$stored = array( 'pims' => 'nectar', 'nectar_env' => 'production', 'hub_key' => $key );
 $out    = save( $stored, array( 'layout' => 'bar', 'primary_color' => '#112233', 'fields' => array() ) );
-check( 'a Settings save without the field keeps the code', 'esteroeasyvet' === $out['nectar_clinic'] );
-check( 'Nectar location stays the single clinic', VSPS_Nectar::LOCATION_ID === $out['default_location'] );
+check( 'a Settings save without the hub key field keeps it', $key === $out['hub_key'] );
+check( 'Nectar production stays selected', 'production' === $out['nectar_env'] && VSPS_Nectar::LOCATION_ID === $out['default_location'] );
+check( 'no clinic-address setting is stored on the site', ! array_key_exists( 'nectar_clinic', $out ) );
 
 echo $fails ? "\n$fails FAILED\n" : "\nALL PASS\n";
 exit( $fails ? 1 : 0 );

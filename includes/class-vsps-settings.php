@@ -13,6 +13,9 @@ if ( ! defined( 'ABSPATH' ) ) {
 
 class VSPS_Settings {
 
+	/** Why the last connection check failed (shown on the connect card). */
+	private static $connection_error = '';
+
 	public static function init() {
 		add_action( 'admin_menu', array( __CLASS__, 'add_menu' ) );
 		add_action( 'admin_init', array( __CLASS__, 'register' ) );
@@ -86,12 +89,8 @@ class VSPS_Settings {
 			? substr( sanitize_text_field( (string) $input['nectar_meta_location'] ), 0, 64 )
 			: ( isset( $current['nectar_meta_location'] ) ? (string) $current['nectar_meta_location'] : '' );
 		$nectar_env  = isset( $input['nectar_env'] )
-			? ( 'production' === $input['nectar_env'] ? 'production' : 'sandbox' )
-			: ( isset( $current['nectar_env'] ) && 'production' === $current['nectar_env'] ? 'production' : 'sandbox' );
-		$nectar_clinic = self::sanitize_nectar_clinic(
-			array_key_exists( 'nectar_clinic', $input ) ? $input['nectar_clinic'] : null,
-			isset( $current['nectar_clinic'] ) ? (string) $current['nectar_clinic'] : ''
-		);
+			? ( 'sandbox' === $input['nectar_env'] ? 'sandbox' : 'production' )
+			: ( isset( $current['nectar_env'] ) && 'sandbox' === $current['nectar_env'] ? 'sandbox' : 'production' );
 		// Each platform remembers its own location / primary type, so a switch
 		// (even an accidental one) is undone by switching back.
 		$memory = isset( $current['pims_memory'] ) && is_array( $current['pims_memory'] ) ? $current['pims_memory'] : array();
@@ -115,7 +114,10 @@ class VSPS_Settings {
 			$merged['clinic_timezone']     = $timezone;
 			$merged['nectar_meta_location'] = $meta;
 			$merged['nectar_env']          = $nectar_env;
-			$merged['nectar_clinic']       = $nectar_clinic;
+			if ( array_key_exists( 'hub_key', $input ) ) {
+				// The connect card asks for the hub key when Nectar production is chosen.
+				$merged['hub_key'] = self::sanitize_hub_key( $input['hub_key'], isset( $current['hub_key'] ) ? (string) $current['hub_key'] : '' );
+			}
 			$merged['pims_memory']         = $memory;
 			if ( $switched ) {
 				foreach ( array( 'default_location', 'allowed_locations', 'default_type' ) as $key ) {
@@ -165,7 +167,6 @@ class VSPS_Settings {
 			'clinic_timezone'   => $timezone,
 			'nectar_meta_location' => $meta,
 			'nectar_env'        => $nectar_env,
-			'nectar_clinic'     => $nectar_clinic,
 			'pims_memory'       => $memory,
 		), $credentials );
 
@@ -206,28 +207,6 @@ class VSPS_Settings {
 		}
 		VSPS_Hub::reset_after_key_change();
 		return $key;
-	}
-
-	/**
-	 * Nectar production clinic: stored as the bare code. A missing field keeps
-	 * the stored value; an address that is not the clinic's own Nectar address
-	 * is refused (the client secret must never go anywhere else).
-	 */
-	private static function sanitize_nectar_clinic( $submitted, $current ) {
-		if ( null === $submitted || ! is_string( $submitted ) ) {
-			return $current;
-		}
-		$code = VSPS_Nectar::clinic_code( sanitize_text_field( $submitted ) );
-		if ( false === $code ) {
-			add_settings_error(
-				VSPS_OPTION_KEY,
-				'vsps_nectar_clinic',
-				"That is not a Nectar clinic address. Paste the address the clinic opens Nectar at, for example https://yourclinic.app.prod.nectar.vet/. The previous value was kept.",
-				'error'
-			);
-			return $current;
-		}
-		return $code;
 	}
 
 	/**
@@ -310,6 +289,7 @@ class VSPS_Settings {
 			return $api->connection();
 		}, 600 );
 		if ( is_wp_error( $data ) ) {
+			self::$connection_error = $data->get_error_message();
 			return null;
 		}
 		// A valid key with 0 locations is CONNECTED — don't confuse it with a bad key.
@@ -349,10 +329,8 @@ class VSPS_Settings {
 				<h2 style="margin-top:0;"><span class="dashicons dashicons-calendar-alt" style="color:#2271b1;"></span> Connect your practice system</h2>
 				<p>Choose the clinic's practice management system and paste its credentials to start showing live appointment times on your website. Everything else is configured after connecting.</p>
 				<?php settings_errors( VSPS_OPTION_KEY ); ?>
-				<?php if ( $has_token && 'nectar' === $settings['pims'] && 'production' === $settings['nectar_env'] && '' === VSPS_Nectar::production_api_url( $settings['nectar_clinic'] ) && ! ( defined( 'VSPS_NECTAR_API_URL' ) && VSPS_NECTAR_API_URL ) ) : ?>
-					<div class="notice notice-error inline"><p>Enter the clinic's Nectar address (for example https://yourclinic.app.prod.nectar.vet/) to connect to Nectar production.</p></div>
-				<?php elseif ( $has_token && 'nectar' === $settings['pims'] && 'production' === $settings['nectar_env'] ) : ?>
-					<div class="notice notice-error inline"><p>Nectar didn't accept the connection. Check the client ID and secret, and that the clinic's Nectar address is right and the clinic has turned on the Vetcelerator integration in Nectar.</p></div>
+				<?php if ( $has_token && 'nectar' === $settings['pims'] && 'production' === $settings['nectar_env'] ) : ?>
+					<div class="notice notice-error inline"><p><?php echo esc_html( '' !== self::$connection_error ? self::$connection_error : "The Vetcelerator hub couldn't connect this site to Nectar." ); ?> If this site is linked and the clinic has turned on the Vetcelerator integration in Nectar (Settings → Third-Party Services), try again in a minute.</p></div>
 				<?php elseif ( $has_token ) : ?>
 					<div class="notice notice-error inline"><p>Those credentials weren't accepted by <?php echo esc_html( VSPS_Pims_Registry::label( $settings['pims'] ) ); ?>. Double-check them and try again.</p></div>
 				<?php endif; ?>
@@ -405,6 +383,25 @@ class VSPS_Settings {
 		</div>
 		<div class="vsps-pims-fields" data-vsps-pims="nectar">
 			<p>
+				<label for="vsps_nectar_env"><strong>Nectar environment</strong></label><br />
+				<select id="vsps_nectar_env" name="<?php echo esc_attr( $opt ); ?>[nectar_env]" style="margin-top:6px;min-width:280px;">
+					<option value="production" <?php selected( $settings['nectar_env'], 'production' ); ?>>Production (the real clinic, through the Vetcelerator hub)</option>
+					<option value="sandbox" <?php selected( $settings['nectar_env'], 'sandbox' ); ?>>Sandbox (Nectar's test clinic)</option>
+				</select>
+			</p>
+			<div class="vsps-nectar-hub">
+				<?php if ( $first_run ) : ?>
+					<p>
+						<label for="vsps_connect_hub_key"><strong>Hub connection key</strong></label><br />
+						<input type="password" id="vsps_connect_hub_key" name="<?php echo esc_attr( $opt ); ?>[hub_key]"
+							value="" class="regular-text" style="width:100%;margin-top:6px;"
+							placeholder="vss_…" autocomplete="new-password" spellcheck="false" data-vsps-hub-required="1" />
+					</p>
+				<?php endif; ?>
+				<p class="description">No Nectar credentials go on this site: it reaches Nectar through the Vetcelerator hub with its hub connection key<?php echo $first_run ? '' : ' (Vetcelerator Hub box below)'; ?>. A Vetcelerator admin links the site to its Nectar clinic in the hub (Scheduler Data → Manage sites), and the clinic turns on the Vetcelerator integration in Nectar. Online bookings arrive in Nectar as requests the clinic confirms.</p>
+			</div>
+			<div class="vsps-nectar-direct">
+			<p>
 				<label for="vsps_nectar_id"><strong>Nectar client ID</strong></label><br />
 				<input type="text" id="vsps_nectar_id" name="<?php echo esc_attr( $opt ); ?>[nectar_client_id]"
 					value="<?php echo esc_attr( $settings['nectar_client_id'] ); ?>" class="regular-text" style="width:100%;margin-top:6px;"
@@ -416,21 +413,8 @@ class VSPS_Settings {
 					value="<?php echo esc_attr( $mask( $settings['nectar_client_secret'] ) ); ?>" class="regular-text" style="width:100%;margin-top:6px;"
 					autocomplete="new-password" spellcheck="false" data-vsps-required="1" />
 			</p>
-			<p>
-				<label for="vsps_nectar_env"><strong>Nectar environment</strong></label><br />
-				<select id="vsps_nectar_env" name="<?php echo esc_attr( $opt ); ?>[nectar_env]" style="margin-top:6px;min-width:280px;">
-					<option value="sandbox" <?php selected( $settings['nectar_env'], 'sandbox' ); ?>>Sandbox (Nectar's test clinic)</option>
-					<option value="production" <?php selected( $settings['nectar_env'], 'production' ); ?>>Production (the real clinic)</option>
-				</select>
-			</p>
-			<p class="vsps-nectar-prod">
-				<label for="vsps_nectar_clinic"><strong>Clinic's Nectar address</strong></label><br />
-				<input type="text" id="vsps_nectar_clinic" name="<?php echo esc_attr( $opt ); ?>[nectar_clinic]"
-					value="<?php echo esc_attr( '' !== $settings['nectar_clinic'] ? 'https://' . $settings['nectar_clinic'] . '.app.prod.nectar.vet/' : '' ); ?>" class="regular-text" style="width:100%;margin-top:6px;"
-					placeholder="https://yourclinic.app.prod.nectar.vet/" autocomplete="off" spellcheck="false" data-vsps-prod-required="1" />
-				<span class="description">The address the clinic opens Nectar at. Each clinic has its own.</span>
-			</p>
-			<p class="description">Provided by Nectar for the Vetcelerator integration; sandbox and production credentials are different. Treat the secret like an admin password. Online bookings arrive in Nectar as requests the clinic confirms.</p>
+			<p class="description">Nectar's sandbox credentials, for testing only. Treat the secret like an admin password.</p>
+			</div>
 		</div>
 		<script>
 		(function () {
@@ -447,15 +431,18 @@ class VSPS_Settings {
 					});
 				});
 				if (warning) { warning.hidden = select.value === select.getAttribute('data-saved'); }
+				// Nectar production = through the hub (no credentials here); sandbox = its own credentials.
 				var env = document.getElementById('vsps_nectar_env');
-				var prodOnly = document.querySelector('.vsps-pims-fields .vsps-nectar-prod');
-				if (env && prodOnly) {
-					var prod = select.value === 'nectar' && env.value === 'production';
-					prodOnly.hidden = !prod;
-					prodOnly.querySelectorAll('input').forEach(function (input) {
-						input.required = prod && input.hasAttribute('data-vsps-prod-required');
+				var nectar = select.value === 'nectar';
+				var prod = nectar && env && env.value === 'production';
+				document.querySelectorAll('.vsps-nectar-hub, .vsps-nectar-direct').forEach(function (part) {
+					var on = nectar && (part.classList.contains('vsps-nectar-hub') ? prod : !prod);
+					part.hidden = !on;
+					part.querySelectorAll('input').forEach(function (input) {
+						input.disabled = !on;
+						input.required = on && firstRun && (input.hasAttribute('data-vsps-required') || input.hasAttribute('data-vsps-hub-required'));
 					});
-				}
+				});
 			}
 			select.addEventListener('change', sync);
 			var envSelect = document.getElementById('vsps_nectar_env');

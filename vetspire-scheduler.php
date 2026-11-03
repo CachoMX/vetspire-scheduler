@@ -62,8 +62,7 @@ function vsps_get_settings() {
 		// Nectar connection (pims = nectar).
 		'nectar_client_id'     => '',
 		'nectar_client_secret' => '',
-		'nectar_env'           => 'sandbox', // sandbox | production
-		'nectar_clinic'        => '', // production: clinic code from <code>.app.prod.nectar.vet
+		'nectar_env'           => 'production', // production (through the hub) | sandbox (own test credentials)
 		'nectar_meta_location' => '', // only for multi-location Nectar clinics
 		'clinic_timezone'      => '', // used when Nectar does not report one
 	);
@@ -99,6 +98,10 @@ function vsps_get_settings() {
 function vsps_has_credentials( $settings = null ) {
 	$settings = null === $settings ? vsps_get_settings() : $settings;
 	if ( 'nectar' === $settings['pims'] ) {
+		// Production goes through the Vetcelerator hub with the site's hub key.
+		if ( 'production' === $settings['nectar_env'] ) {
+			return '' !== VSPS_Hub::key();
+		}
 		return '' !== $settings['nectar_client_id'] && '' !== $settings['nectar_client_secret'];
 	}
 	return '' !== $settings['api_token'];
@@ -114,13 +117,15 @@ function vsps_api() {
 		return null;
 	}
 	if ( 'nectar' === $settings['pims'] ) {
+		if ( 'production' === $settings['nectar_env'] ) {
+			return VSPS_Nectar::via_hub( VSPS_HUB_URL, VSPS_Hub::key(), $settings['nectar_meta_location'], $settings['clinic_timezone'], VSPS_VERSION );
+		}
 		return new VSPS_Nectar(
 			$settings['nectar_client_id'],
 			$settings['nectar_client_secret'],
 			$settings['nectar_meta_location'],
 			$settings['clinic_timezone'],
-			$settings['nectar_env'],
-			$settings['nectar_clinic']
+			'sandbox'
 		);
 	}
 	return new VSPS_Api( $settings['api_token'], $settings['api_endpoint'] );
