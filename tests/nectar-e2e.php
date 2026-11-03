@@ -10,6 +10,10 @@
  *     read back, then deleted. Server tokens can book since 2026-10-16 (Harris).
  *
  * Run: php tests/nectar-e2e.php   (reads NECTAR_CLIENT_ID / NECTAR_CLIENT_SECRET from ../.env.local)
+ *
+ * Production, READ-ONLY (never books; a real clinic would see the request):
+ *   VSPS_NECTAR_ENV=production VSPS_NECTAR_CLINIC=esteroeasyvet php tests/nectar-e2e.php
+ *   (reads NECTAR_CLIENT_PROD_ID / NECTAR_CLIENT_PROD_SECRET)
  */
 
 error_reporting( E_ALL );
@@ -70,9 +74,13 @@ function check( $label, $ok, $detail = '' ) {
 /* ---------- 1. Real sandbox (read-only) ---------- */
 
 $env = parse_ini_file( __DIR__ . '/../.env.local', false, INI_SCANNER_RAW );
-if ( empty( $env['NECTAR_CLIENT_ID'] ) || empty( $env['NECTAR_CLIENT_SECRET'] ) ) {
+if ( 'production' !== getenv( 'VSPS_NECTAR_ENV' ) && ( empty( $env['NECTAR_CLIENT_ID'] ) || empty( $env['NECTAR_CLIENT_SECRET'] ) ) ) {
 	fwrite( STDERR, "NECTAR_CLIENT_ID / NECTAR_CLIENT_SECRET missing in .env.local\n" );
 	exit( 1 );
+}
+if ( 'production' === getenv( 'VSPS_NECTAR_ENV' ) ) {
+	require __DIR__ . '/nectar-prod-readonly.php';
+	exit( $failed ? 1 : 0 );
 }
 $nectar = new VSPS_Nectar( $env['NECTAR_CLIENT_ID'], $env['NECTAR_CLIENT_SECRET'], '', 'America/Los_Angeles' );
 
@@ -100,7 +108,7 @@ check( 'unknown email returns null', null === $nectar->find_client_by_email( 'zz
 check( 'regex characters in an email are literal ("." is not a wildcard)', null === $nectar->find_client_by_email( '12pawsfoundation.gmail.com' ) );
 check( 'regex characters in an email are literal ("+")', null === $nectar->find_client_by_email( '12pawsfoundation@gmai+l.com' ) );
 $prod = ( new VSPS_Nectar( 'id', 'secret', '', '', 'production' ) )->connection();
-check( 'production without a confirmed API address fails before sending the secret', is_wp_error( $prod ) && 'vsps_config' === $prod->get_error_code() );
+check( 'production without a clinic address fails before sending the secret', is_wp_error( $prod ) && 'vsps_config' === $prod->get_error_code() );
 
 $tz      = new DateTimeZone( 'America/Los_Angeles' );
 $today   = ( new DateTimeImmutable( 'now', $tz ) )->format( 'Y-m-d' );
