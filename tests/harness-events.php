@@ -93,7 +93,9 @@ require_once __DIR__ . '/../includes/class-vsps-hub.php';
 
 echo "== 0. Funnel events (offline) ==\n";
 
-$now = '2026-10-16 15:00:00';
+// Relative to today: prune() drops rows older than 14 days by the real clock
+// (a fixed date here made 18 checks fail from 2026-10-31 on).
+$now = gmdate( 'Y-m-d H:i:s', time() - 3600 );
 $ev  = function ( array $over = array() ) {
 	return array_merge( array(
 		'event_id'            => bin2hex( random_bytes( 16 ) ),
