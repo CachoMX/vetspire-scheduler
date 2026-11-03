@@ -63,6 +63,7 @@ function vsps_get_settings() {
 		'nectar_client_id'     => '',
 		'nectar_client_secret' => '',
 		'nectar_env'           => 'sandbox', // sandbox | production
+		'nectar_clinic'        => '', // production: clinic code from <code>.app.prod.nectar.vet
 		'nectar_meta_location' => '', // only for multi-location Nectar clinics
 		'clinic_timezone'      => '', // used when Nectar does not report one
 	);
@@ -118,7 +119,8 @@ function vsps_api() {
 			$settings['nectar_client_secret'],
 			$settings['nectar_meta_location'],
 			$settings['clinic_timezone'],
-			$settings['nectar_env']
+			$settings['nectar_env'],
+			$settings['nectar_clinic']
 		);
 	}
 	return new VSPS_Api( $settings['api_token'], $settings['api_endpoint'] );

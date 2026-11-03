@@ -20,3 +20,5 @@ query( $start:datetime!, $end:datetime!, $type:ID!, $meta:String ){ getAvailable
 { appointmentTypes{ id } }
 
 { clinics{ id name street city state zipCode phone email timezone metaLocation } }
+
+{ clinics{ id name street city state zipCode phone email timezone } }

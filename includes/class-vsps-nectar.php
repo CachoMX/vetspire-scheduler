@@ -27,7 +27,11 @@ class VSPS_Nectar implements VSPS_Pims {
 	const SANDBOX_AUTH_URL    = 'https://nectarstaging.us.auth0.com/oauth/token';
 	const SANDBOX_API_URL     = 'https://dev-clinic.api.dev.nectar.vet/graphql';
 	const PRODUCTION_AUTH_URL = 'https://nectarvet.us.auth0.com/oauth/token';
-	// Production GraphQL address: not published yet; set VSPS_NECTAR_API_URL in wp-config.php.
+	// Production has one GraphQL host per clinic: https://<code>.api.prod.nectar.vet/graphql,
+	// where <code> is the first label of the clinic's app address (<code>.app.prod.nectar.vet).
+	// VSPS_NECTAR_API_URL in wp-config.php overrides it.
+	const PRODUCTION_HOST_SUFFIX = '.prod.nectar.vet';
+	const CLINIC_CODE_RE         = '/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/';
 
 	private $client_id;
 	private $client_secret;
@@ -39,15 +43,16 @@ class VSPS_Nectar implements VSPS_Pims {
 	/**
 	 * @param string $environment 'sandbox' (Nectar's test clinic) or 'production'. Each
 	 *                            environment only ever receives its own credentials.
+	 * @param string $clinic_code Production only: the clinic's code (see clinic_code()).
 	 */
-	public function __construct( $client_id, $client_secret, $meta_location = '', $fallback_timezone = '', $environment = 'sandbox' ) {
+	public function __construct( $client_id, $client_secret, $meta_location = '', $fallback_timezone = '', $environment = 'sandbox', $clinic_code = '' ) {
 		$this->client_id         = (string) $client_id;
 		$this->client_secret     = (string) $client_secret;
 		$this->meta_location     = (string) $meta_location;
 		$this->fallback_timezone = (string) $fallback_timezone;
 		if ( 'production' === $environment ) {
 			$this->auth_url = defined( 'VSPS_NECTAR_AUTH_URL' ) && VSPS_NECTAR_AUTH_URL ? VSPS_NECTAR_AUTH_URL : self::PRODUCTION_AUTH_URL;
-			$this->api_url  = defined( 'VSPS_NECTAR_API_URL' ) && VSPS_NECTAR_API_URL ? VSPS_NECTAR_API_URL : '';
+			$this->api_url  = defined( 'VSPS_NECTAR_API_URL' ) && VSPS_NECTAR_API_URL ? VSPS_NECTAR_API_URL : self::production_api_url( $clinic_code );
 		} else {
 			$this->auth_url = self::SANDBOX_AUTH_URL;
 			$this->api_url  = self::SANDBOX_API_URL;
@@ -58,17 +63,62 @@ class VSPS_Nectar implements VSPS_Pims {
 		return 'nectar';
 	}
 
+	/**
+	 * The clinic's production code from what an admin pastes: the bare code
+	 * ("esteroeasyvet") or the clinic's Nectar app / API address
+	 * ("https://esteroeasyvet.app.prod.nectar.vet/"). Only <code>.app or
+	 * <code>.api under prod.nectar.vet is accepted, so the client secret can
+	 * only ever go to Nectar's own hosts.
+	 *
+	 * @return string|false The code, '' when nothing was entered, false when refused.
+	 */
+	public static function clinic_code( $input ) {
+		$input = strtolower( trim( (string) $input ) );
+		if ( '' === $input ) {
+			return '';
+		}
+		if ( preg_match( self::CLINIC_CODE_RE, $input ) ) {
+			return $input;
+		}
+		$url   = preg_match( '#^[a-z][a-z0-9+.-]*://#', $input ) ? $input : 'https://' . $input;
+		$parts = parse_url( $url );
+		if ( ! is_array( $parts ) || empty( $parts['host'] ) || ! in_array( isset( $parts['scheme'] ) ? $parts['scheme'] : '', array( 'http', 'https' ), true )
+			|| isset( $parts['user'] ) || isset( $parts['pass'] ) || isset( $parts['port'] ) ) {
+			return false;
+		}
+		$labels = explode( '.', $parts['host'] );
+		$suffix = substr( self::PRODUCTION_HOST_SUFFIX, 1 );
+		if ( 5 !== count( $labels ) || implode( '.', array_slice( $labels, 2 ) ) !== $suffix || ! in_array( $labels[1], array( 'app', 'api' ), true ) ) {
+			return false;
+		}
+		return preg_match( self::CLINIC_CODE_RE, $labels[0] ) ? $labels[0] : false;
+	}
+
+	/** Production GraphQL URL for a clinic code, '' when the code is missing or invalid. */
+	public static function production_api_url( $code ) {
+		$code = (string) $code;
+		return preg_match( self::CLINIC_CODE_RE, $code ) ? 'https://' . $code . '.api' . self::PRODUCTION_HOST_SUFFIX . '/graphql' : '';
+	}
+
 	/* ---------- transport ---------- */
 
 	private function token_key() {
 		return VSPS_Cache::PREFIX . 'nectar_tok_' . md5( $this->client_id . '|' . $this->auth_url );
 	}
 
+	/**
+	 * Cache scope for clinic data: production uses one client id for every
+	 * clinic, so the API host is part of the key.
+	 */
+	private function cache_scope() {
+		return md5( $this->client_id . '|' . $this->api_url );
+	}
+
 	/** Cached OAuth access token (client credentials). */
 	private function access_token( $force = false ) {
 		if ( '' === $this->api_url ) {
 			// Fail before any secret leaves the site.
-			return new WP_Error( 'vsps_config', 'Nectar production is not enabled yet: its API address has not been confirmed by Nectar.' );
+			return new WP_Error( 'vsps_config', "Enter the clinic's Nectar address in Settings to connect to Nectar production." );
 		}
 		$key = $this->token_key();
 		if ( ! $force ) {
@@ -161,8 +211,14 @@ class VSPS_Nectar implements VSPS_Pims {
 	 * not let this token read it (403 until the endpoint is whitelisted).
 	 */
 	private function clinic_profile() {
-		$data = VSPS_Cache::remember( array( 'nectar-clinic', md5( $this->client_id ), $this->meta_location ), function () {
-			$data = $this->request( '{ clinics { id name street city state zipCode phone email timezone metaLocation } }' );
+		$data = VSPS_Cache::remember( array( 'nectar-clinic', $this->cache_scope(), $this->meta_location ), function () {
+			// metaLocation is only asked for when it is needed to pick the clinic:
+			// Nectar declares it non-null but returns null for single-location
+			// clinics, which fails the whole query (Estero, 2026-11-03).
+			// Two literal queries so bin/extract-contracts.php records both.
+			$data = $this->request( '' !== $this->meta_location
+				? '{ clinics { id name street city state zipCode phone email timezone metaLocation } }'
+				: '{ clinics { id name street city state zipCode phone email timezone } }' );
 			if ( is_wp_error( $data ) ) {
 				$status = $data->get_error_data();
 				// A permission refusal is an answer, not an outage: remember it.
@@ -377,7 +433,7 @@ class VSPS_Nectar implements VSPS_Pims {
 	}
 
 	private function type_duration( $type_id ) {
-		$types = VSPS_Cache::remember( array( 'nectar-types', md5( $this->client_id ) ), function () {
+		$types = VSPS_Cache::remember( array( 'nectar-types', $this->cache_scope() ), function () {
 			return $this->get_bookable_types( self::LOCATION_ID );
 		}, HOUR_IN_SECONDS );
 		if ( is_wp_error( $types ) ) {
