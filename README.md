@@ -19,7 +19,7 @@ booking mode, minimum lead time and which optional booking-form fields it can st
 
 | | Vetspire | Nectar |
 |---|---|---|
-| Credentials | API key (`VSPS_API_TOKEN`) | OAuth client id + secret (`VSPS_NECTAR_CLIENT_ID` / `_SECRET`) |
+| Credentials | API key (`VSPS_API_TOKEN`) | production: the site's hub key only (the hub holds Nectar's credentials); sandbox: OAuth client id + secret (`VSPS_NECTAR_CLIENT_ID` / `_SECRET`) |
 | Locations | the org's locations | one per credentials (`clinic`); multi-location clinics set a location code |
 | Ids | numbers | 24-hex strings |
 | Booking | confirmed on the spot | a **request** (`ONLINE_REQUESTED`) the clinic confirms |
@@ -29,11 +29,17 @@ booking mode, minimum lead time and which optional booking-form fields it can st
 Sites saved before 1.25.0 have no platform stored and stay on Vetspire. Switching platform in
 Settings remembers each platform's location and primary type, so switching back restores them.
 
-Nectar status (2026-10-12): token, appointment types, client lookup and pets work with a
-server token. `getAvailableAppointmentSlots`, `addOnlineAppointment` and
-`scheduleAndRequestAppointment` are being opened to server tokens by Nectar; until then the
-widget shows no Nectar times. The production GraphQL address is not published yet: production
-needs `VSPS_NECTAR_API_URL` in `wp-config.php` (the sandbox works out of the box).
+**Nectar production goes through the Vetcelerator hub (since 1.29.0).** Nectar gives
+Vetcelerator one client id/secret for every clinic, so it lives only in the hub. A site picks
+Settings → Nectar → Production and enters its hub connection key; a Vetcelerator admin links the
+site to its Nectar clinic in the hub (Scheduler Data → Manage sites → Link Nectar clinic, the
+first label of the clinic's `<code>.app.prod.nectar.vet` address). The plugin then sends its
+GraphQL to `VSPS_HUB_URL/api/wp/v1/scheduler/nectar/graphql` with the site key, and the hub
+forwards only this plugin version's released operations to that clinic's
+`https://<code>.api.prod.nectar.vet/graphql`. The clinic must also turn on Settings →
+Third-Party Services → Vetcelerator in Nectar. Sandbox keeps its own test credentials and talks
+to Nectar directly. `php tests/nectar-e2e.php` with `VSPS_NECTAR_ENV=production
+VSPS_NECTAR_CLINIC=<code>` runs a read-only production check (never books).
 
 ## How it works
 
