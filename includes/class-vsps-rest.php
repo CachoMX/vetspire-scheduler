@@ -536,8 +536,9 @@ class VSPS_Rest {
 				'species'  => sanitize_text_field( isset( $patient['species'] ) ? $patient['species'] : '' ),
 				'breed'    => sanitize_text_field( isset( $patient['breed'] ) ? $patient['breed'] : '' ),
 				'sex'      => self::valid_sex( isset( $patient['sex'] ) ? $patient['sex'] : '' ),
-				// '' = not answered; 0 is a real answer (under a year old).
-				'age'      => isset( $patient['age'] ) && is_numeric( $patient['age'] ) ? min( 40, absint( $patient['age'] ) ) : '',
+				// Whole years and months; '' = not answered, 0 is a real answer.
+				'age'        => VSPS_Fields::age_number( isset( $patient['age'] ) ? $patient['age'] : '', VSPS_Fields::AGE_MAX_YEARS ),
+				'age_months' => VSPS_Fields::age_number( isset( $patient['age_months'] ) ? $patient['age_months'] : '', 11 ),
 				'neutered' => in_array( isset( $patient['neutered'] ) ? $patient['neutered'] : '', array( 'yes', 'no' ), true ) ? $patient['neutered'] : '',
 			),
 		);

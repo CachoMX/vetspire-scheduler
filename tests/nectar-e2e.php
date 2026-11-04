@@ -274,7 +274,9 @@ $real       = array(
 	'date' => $day, 'time' => $open ? $open[0]['time'] : '', 'provider_id' => $open ? $open[0]['providerId'] : '', 'schedule_id' => $open ? $open[0]['scheduleId'] : '',
 	'notes' => 'Vetcelerator test booking, deleted by tests/nectar-e2e.php',
 	'client'  => array( 'given_name' => 'Zz', 'family_name' => 'TestScheduler', 'email' => $test_email, 'phone' => $phone ),
-	'patient' => array( 'name' => $pet_name, 'species' => 'Canine', 'breed' => '', 'sex' => '' ),
+	// A new pet carries an age (1.30.0): Nectar can't store an estimated age, so it
+	// must arrive in the request's staff notes, never as an invented birthday.
+	'patient' => array( 'name' => $pet_name, 'species' => 'Canine', 'breed' => '', 'sex' => '', 'age' => '', 'age_months' => 3 ),
 );
 $booked = $open ? VSPS_Booking::book( $nectar, $real ) : new WP_Error( 'skipped', 'no slots' );
 $appt_id = ! is_wp_error( $booked ) && ! empty( $booked['appointment_id'] ) ? (string) $booked['appointment_id'] : '';
@@ -292,6 +294,19 @@ if ( '' !== $appt_id ) {
 		return $s['time'] === $open[0]['time'] && $s['providerId'] === $open[0]['providerId'];
 	} );
 	check( 'the requested slot is no longer offered', ! is_wp_error( $after ) && ! $still );
+	if ( ! $has_pet ) {
+		$notes = $nectar->request( 'query ($id: ID!) { appointment(appointmentId: $id) { staffNotes } }', array( 'id' => $appt_id ) );
+		$text  = is_wp_error( $notes ) ? '' : (string) $notes['appointment']['staffNotes'];
+		check( 'new pet: its age is in the staff notes ("3 months")', false !== strpos( $text, "Pet's age (owner's estimate): 3 months" ), is_wp_error( $notes ) ? $notes->get_error_message() : $text );
+		$pet = $nectar->request( 'query ($id: ID!) { clientPatients(clientId: $id) { id firstName dateOfBirth } }', array( 'id' => (string) $booked['client_id'] ) );
+		$dob = 'missing';
+		foreach ( is_wp_error( $pet ) ? array() : $pet['clientPatients'] as $row ) {
+			if ( (string) $row['id'] === (string) $booked['patient_id'] ) {
+				$dob = $row['dateOfBirth'];
+			}
+		}
+		check( 'new pet: no invented birthday', null === $dob || '' === $dob, $dob );
+	}
 	$del = $nectar->request( 'mutation ($id: ID!) { deleteAppointment(appointmentId: $id) }', array( 'id' => $appt_id ) );
 	check( 'test request deleted', ! is_wp_error( $del ), is_wp_error( $del ) ? $del->get_error_message() . ' (delete appointment ' . $appt_id . ' by hand)' : '' );
 }

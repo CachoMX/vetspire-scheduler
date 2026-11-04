@@ -2,6 +2,8 @@
     "mutation( $clientId:ID!, $input:PatientInput ){ createPatient( clientId:$clientId, input:$input ){ id name } }": {
         "input": [
             "birthDate",
+            "birthMonth",
+            "birthYear",
             "breed",
             "color",
             "isEstimatedAge",

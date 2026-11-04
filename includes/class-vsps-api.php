@@ -51,8 +51,14 @@ class VSPS_Api implements VSPS_Pims {
 		if ( '' !== $p['sex'] ) {
 			$input['sex'] = $p['sex'];
 		}
-		if ( isset( $p['age'] ) && '' !== $p['age'] ) {
-			$input['birthYear']      = (int) gmdate( 'Y' ) - (int) $p['age'];
+		if ( VSPS_Fields::has_age( $p ) ) {
+			// Year + month, no day: Vetspire then shows the age the owner gave
+			// ("3 years old", "6 months old") as an estimate. A year alone
+			// reads as January ("3 years 10 months" in late October).
+			$tz                      = isset( $args['clinic_timezone'] ) ? $args['clinic_timezone'] : '';
+			$born                    = VSPS_Fields::age_birth_month( isset( $p['age'] ) ? $p['age'] : '', isset( $p['age_months'] ) ? $p['age_months'] : '', null, $tz );
+			$input['birthYear']      = $born['year'];
+			$input['birthMonth']     = $born['month'];
 			$input['isEstimatedAge'] = true;
 		}
 		if ( ! empty( $p['neutered'] ) ) {
@@ -60,7 +66,7 @@ class VSPS_Api implements VSPS_Pims {
 		}
 		$input = array_merge( $input, self::patient_extras( $p ) );
 		if ( isset( $input['birthDate'] ) ) {
-			unset( $input['birthYear'] );
+			unset( $input['birthYear'], $input['birthMonth'] );
 		}
 		$patient = $this->create_patient( $client['id'], $input );
 		if ( is_wp_error( $patient ) || empty( $patient['id'] ) ) {

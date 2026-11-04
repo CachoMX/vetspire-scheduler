@@ -147,8 +147,17 @@ class VSPS_Booking {
 				return new WP_Error( 'vsps_verify', 'We could not verify that this account is yours. Please use the phone number the clinic has on file, or call the clinic to add a new pet.' );
 			}
 		}
+		$pet_age = '';
 		if ( null === $patient_id ) {
-			$patient = $api->create_booking_patient( $client, $args );
+			$p = $args['patient'];
+			// The age the owner gave for the pet being created, for platforms that
+			// can't store an estimated age on the pet (Nectar puts it in the notes).
+			if ( VSPS_Fields::has_age( $p ) && empty( $p['birth_date'] ) ) {
+				$pet_age = VSPS_Fields::age_phrase( isset( $p['age'] ) ? $p['age'] : '', isset( $p['age_months'] ) ? $p['age_months'] : '' );
+			}
+			// The pet's estimated birth month counts back from the clinic's month, not UTC's.
+			$args['clinic_timezone'] = isset( $location['timezone'] ) ? (string) $location['timezone'] : '';
+			$patient                 = $api->create_booking_patient( $client, $args );
 			if ( is_wp_error( $patient ) ) {
 				return $patient;
 			}
@@ -169,6 +178,7 @@ class VSPS_Booking {
 			'provider_id'         => $provider_id,
 			'schedule_id'         => $schedule_id,
 			'reason'              => self::SOURCE_LABEL . ' booking' . ( '' !== $args['notes'] ? ': ' . $args['notes'] : '' ),
+			'pet_age'             => $pet_age,
 		) );
 		if ( is_wp_error( $appointment ) ) {
 			return $appointment;

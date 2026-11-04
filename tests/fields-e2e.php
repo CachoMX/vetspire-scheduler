@@ -185,6 +185,19 @@ check( 'pet note saved', false !== strpos( (string) ( $p['notes'] ?? '' ), 'nerv
 check( 'weight recorded (23.4 LB)', isset( $p['latestWeight']['value'] ) && abs( (float) $p['latestWeight']['value'] - 23.4 ) < 0.01 && 'LB' === strtoupper( (string) $p['latestWeight']['unit'] ), json_encode( $p['latestWeight'] ?? null ) );
 check( 'reason for visit in the appointment', ! is_wp_error( $a ) && 'Vetcelerator booking: AUTOMATED FIELDS TEST — safe to delete' === $a['appointment']['reason'], json_encode( $a ) );
 
+// v1.30.0: an age in years + months (no birth date) is an estimated year and
+// month, so Vetspire shows exactly the age the owner gave. A second pet on the
+// same test client (deactivated with it in cleanup).
+$aged = $api->create_booking_patient(
+	array( 'id' => (string) $res['client_id'] ),
+	array( 'patient' => array_merge( $booking['patient'], array( 'name' => 'AgePet', 'age' => 2, 'age_months' => 3, 'birth_date' => '', 'weight' => 0 ) ) )
+);
+$ap = ! is_wp_error( $aged ) && ! empty( $aged['id'] )
+	? $api->request( 'query ($id: ID!) { patient(id: $id) { age birthYear birthMonth birthDay birthDate isEstimatedAge } }', array( 'id' => (string) $aged['id'] ) )
+	: $aged;
+check( 'age 2 years 3 months shown as "2 years 3 months old", estimated', ! is_wp_error( $ap ) && '2 years 3 months old' === ( $ap['patient']['age'] ?? '' ) && true === ( $ap['patient']['isEstimatedAge'] ?? null ), json_encode( $ap ) );
+check( 'age: no birth day or date invented', ! is_wp_error( $ap ) && array_key_exists( 'birthDay', $ap['patient'] ) && null === $ap['patient']['birthDay'] && null === $ap['patient']['birthDate'], json_encode( $ap ) );
+
 echo "== 4. Cleanup ==\n";
 $del = $api->request( 'mutation ($id: ID!) { deleteAppointment(id: $id) { id deleted } }', array( 'id' => (string) $res['appointment_id'] ) );
 check( 'test appointment deleted', ! is_wp_error( $del ) && ! empty( $del['deleteAppointment']['deleted'] ), json_encode( $del ) );

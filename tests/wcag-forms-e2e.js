@@ -110,6 +110,19 @@ function auditForm(page) {
         if (!el.getAttribute('aria-label') || !el.closest('.vsps-field')) out.noLabelFor.push('weight_unit');
         return;
       }
+      // Pet's age (1.30.0): years + months boxes under one "Pet's age" label, each
+      // named by its aria-label. Required means one of the two, so neither box is
+      // required on its own; the visible hint (aria-describedby) says so.
+      if (el.name === 'age' || el.name === 'age_months') {
+        const hint = el.closest('.vsps-field') && el.closest('.vsps-field').querySelector('.vsps-age-hint');
+        const linked = !!hint && (el.getAttribute('aria-describedby') || '').split(/\s+/).includes(hint.id);
+        const group = el.closest('.vsps-age[role="group"]');
+        const groupLabel = group && document.getElementById(group.getAttribute('aria-labelledby') || '');
+        const named = !!groupLabel && /Pet's age/.test(groupLabel.textContent);
+        if (!el.getAttribute('aria-label') || !linked || !named) out.noLabelFor.push(el.name);
+        if (el.required || el.hasAttribute('aria-required')) out.ariaNoReq.push(el.name);
+        return;
+      }
       const label = document.querySelector(`label[for="${CSS.escape(el.id)}"]`);
       if (!label) { out.noLabelFor.push(el.name); return; }
       const text = (label.innerText || '').replace('*', '').trim();

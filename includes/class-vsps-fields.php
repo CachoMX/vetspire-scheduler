@@ -39,7 +39,7 @@ class VSPS_Fields {
 		'mixed'           => array( 'pet', 'Mixed breed?', false, false ),
 		'sex'             => array( 'pet', 'Sex', false, false ),
 		'neutered'        => array( 'pet', 'Spayed / Neutered', false, false ),
-		'age'             => array( 'pet', 'Age (years)', false, false ),
+		'age'             => array( 'pet', 'Age (years and months)', false, false ),
 		'birth_date'      => array( 'pet', 'Birth date', false, false ),
 		'weight'          => array( 'pet', 'Weight', false, false ),
 		'color'           => array( 'pet', 'Color', false, false ),
@@ -60,6 +60,67 @@ class VSPS_Fields {
 
 	public static function locked_required( $key ) {
 		return ! empty( self::REGISTRY[ $key ][3] );
+	}
+
+	/* ---------- pet age (years + months, the owner's estimate) ---------- */
+
+	const AGE_MAX_YEARS = 40;
+
+	/**
+	 * A whole number from the form, or '' when not given. 0 is an answer
+	 * (a 6-month-old kitten has 0 years). The form only sends whole numbers;
+	 * a decimal (an older cached form) keeps its whole part; text is refused.
+	 */
+	public static function age_number( $value, $max ) {
+		if ( is_int( $value ) ) {
+			$value = (string) $value;
+		}
+		if ( ! is_string( $value ) || ! preg_match( '/^\s*(\d{1,3})(?:\.\d+)?\s*$/', $value, $m ) ) {
+			return '';
+		}
+		return min( (int) $max, (int) $m[1] );
+	}
+
+	/** Whether the owner gave an age (years, months or both). */
+	public static function has_age( array $patient ) {
+		return ( isset( $patient['age'] ) && '' !== $patient['age'] ) || ( isset( $patient['age_months'] ) && '' !== $patient['age_months'] );
+	}
+
+	/**
+	 * The estimated birth year and month for an age of $years + $months,
+	 * counted back from this month in the clinic's timezone (UTC when it is
+	 * unknown or invalid). No day: the owner never gave one.
+	 *
+	 * @return array{year:int,month:int}
+	 */
+	public static function age_birth_month( $years, $months, $now = null, $timezone = '' ) {
+		$now = null === $now ? time() : (int) $now;
+		try {
+			$zone = new DateTimeZone( '' !== (string) $timezone ? (string) $timezone : 'UTC' );
+		} catch ( Exception $e ) {
+			$zone = new DateTimeZone( 'UTC' );
+		}
+		$local = ( new DateTimeImmutable( '@' . $now ) )->setTimezone( $zone );
+		$total = (int) $years * 12 + (int) $months;
+		$index = (int) $local->format( 'Y' ) * 12 + ( (int) $local->format( 'n' ) - 1 ) - $total;
+		return array( 'year' => intdiv( $index, 12 ), 'month' => $index % 12 + 1 );
+	}
+
+	/** "3 years", "6 months", "1 year 2 months"; "under 1 year" for 0 years and no months (for staff notes). */
+	public static function age_phrase( $years, $months ) {
+		if ( 0 === $years && '' === $months ) {
+			return 'under 1 year';
+		}
+		$years  = '' === $years ? 0 : (int) $years;
+		$months = '' === $months ? 0 : (int) $months;
+		$parts  = array();
+		if ( $years > 0 ) {
+			$parts[] = $years . ( 1 === $years ? ' year' : ' years' );
+		}
+		if ( $months > 0 || ! $parts ) {
+			$parts[] = $months . ( 1 === $months ? ' month' : ' months' );
+		}
+		return implode( ' ', $parts );
 	}
 
 	/**
@@ -245,6 +306,10 @@ class VSPS_Fields {
 		if ( 'weight' === $key ) {
 			return empty( $value );
 		}
+		if ( 'age' === $key ) {
+			// Years OR months answers it: a 6-month-old kitten leaves years empty.
+			return ! self::has_age( $args['patient'] );
+		}
 		return '' === $value || null === $value; // age 0 (under a year) is an answer
 	}
 
@@ -260,6 +325,9 @@ class VSPS_Fields {
 		}
 		$last         = end( $path );
 		$ref[ $last ] = 'weight' === $key ? 0 : '';
+		if ( 'age' === $key ) {
+			$ref['age_months'] = '';
+		}
 		unset( $ref );
 	}
 

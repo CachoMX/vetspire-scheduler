@@ -673,11 +673,11 @@ class VSPS_Nectar implements VSPS_Pims {
 		if ( ! empty( $p['neutered'] ) ) {
 			$input['spayNeuter'] = 'yes' === $p['neutered'];
 		}
+		// Only a real birth date goes on the pet. Nectar has no "estimated age",
+		// so an age the owner gave goes in the appointment's notes instead
+		// (create_booking_appointment, 'pet_age'): never an invented birthday.
 		if ( ! empty( $p['birth_date'] ) ) {
 			$input['dateOfBirth'] = self::date_time( $p['birth_date'] );
-		} elseif ( isset( $p['age'] ) && '' !== $p['age'] ) {
-			// Nectar has no "estimated age" flag: today's date, N years back.
-			$input['dateOfBirth'] = self::date_time( gmdate( 'Y-m-d', strtotime( '-' . (int) $p['age'] . ' years' ) ) );
 		}
 		if ( ! empty( $p['weight'] ) ) {
 			$input[ 'KG' === $p['weight_unit'] ? 'weightKg' : 'weightLbs' ] = (float) $p['weight'];
@@ -719,7 +719,7 @@ class VSPS_Nectar implements VSPS_Pims {
 			'clientId'          => (string) $booking['client_id'],
 			'appointmentTypeId' => (string) $booking['appointment_type_id'],
 			'isOnlineRequest'   => true,
-			'staffNotes'        => (string) $booking['reason'],
+			'staffNotes'        => self::staff_notes( $booking ),
 		);
 		if ( '' !== (string) $booking['provider_id'] ) {
 			$input['assignedUid'] = (string) $booking['provider_id'];
@@ -772,6 +772,38 @@ class VSPS_Nectar implements VSPS_Pims {
 
 	private static function digits( $phone ) {
 		return preg_replace( '/\D/', '', (string) $phone );
+	}
+
+	/** Longest staffNotes the Vetcelerator hub forwards (nectar-variables.ts MAX_STRING). */
+	const STAFF_NOTES_MAX = 1000;
+
+	/**
+	 * The appointment's notes: the booking reason, plus "Pet's age (owner's
+	 * estimate): 6 months" for a new pet whose owner gave an age. A long reason
+	 * is shortened so the whole text stays within what the hub accepts.
+	 */
+	private static function staff_notes( array $booking ) {
+		$age    = isset( $booking['pet_age'] ) ? trim( (string) $booking['pet_age'] ) : '';
+		$note   = '' === $age ? '' : "\nPet's age (owner's estimate): " . $age;
+		$room   = self::STAFF_NOTES_MAX - self::length( $note );
+		$reason = (string) $booking['reason'];
+		if ( self::length( $reason ) > $room ) {
+			$cut = function_exists( 'mb_substr' ) ? mb_substr( $reason, 0, $room - 1, 'UTF-8' ) : substr( $reason, 0, $room - 1 );
+			// An emoji counts twice for the hub: drop characters until it fits.
+			while ( '' !== $cut && self::length( $cut ) > $room - 1 ) {
+				$cut = function_exists( 'mb_substr' ) ? mb_substr( $cut, 0, -1, 'UTF-8' ) : substr( $cut, 0, -1 );
+			}
+			$reason = $cut . '…';
+		}
+		return $reason . $note;
+	}
+
+	/** Length as the hub (JavaScript) counts it: UTF-16 code units. */
+	private static function length( $text ) {
+		if ( function_exists( 'mb_convert_encoding' ) ) {
+			return (int) ( strlen( mb_convert_encoding( $text, 'UTF-16LE', 'UTF-8' ) ) / 2 );
+		}
+		return strlen( $text ); // bytes: never fewer than UTF-16 units, so still within the limit
 	}
 
 	/** A Y-m-d date as a Nectar datetime (noon UTC, so no timezone shifts it a day). */

@@ -62,7 +62,10 @@ interface VSPS_Pims {
 	 * Creates the appointment (or, on request-based platforms, the appointment request).
 	 *
 	 * @param array $booking { location_id, appointment_type_id, client_id, patient_id, start (ISO 8601),
-	 *                         duration (minutes), provider_id, schedule_id, reason }
+	 *                         duration (minutes), provider_id, schedule_id, reason, pet_age }
+	 *                         pet_age: the age the owner gave for a pet created in this booking
+	 *                         ("6 months"), '' otherwise. A platform that stores an estimated age on
+	 *                         the pet (Vetspire) ignores it; Nectar puts it in the appointment notes.
 	 * @return array|WP_Error { id, start }
 	 */
 	public function create_booking_appointment( array $booking );

@@ -46,6 +46,8 @@
 		errDate: 'Please enter a complete date for {label}.',
 		errDateFuture: 'Please enter a date that is not in the future for {label}.',
 		errFormat: 'Please check the format of {label}.',
+		errWhole: 'Please enter a whole number for {label}, like 3.',
+		errAge: "Please enter your pet's age in years, months or both. A best guess is fine.",
 		address1: 'Street address',
 		address2: 'Apt / Suite',
 		city: 'City',
@@ -102,6 +104,13 @@
 		male: 'Male',
 		female: 'Female',
 		ageYears: 'Age in years',
+		ageMonths: 'Age in months',
+		petAge: "Pet's age",
+		ageYearsUnit: 'years',
+		ageMonthsUnit: 'months',
+		ageHint: 'Whole numbers. A best guess is fine.',
+		ageHintRequired: 'Required: years, months or both. A best guess is fine.',
+		errAgeMonths: 'Please add the months for a pet under 1 year old.',
 		neuteredQ: 'Spayed / Neutered?',
 		yes: 'Yes',
 		no: 'No',
@@ -428,7 +437,7 @@
 	var FIELD_KEY_BY_INPUT = {
 		address_line1: 'address', address_line2: 'address', address_city: 'address',
 		address_state: 'address', address_postal: 'address',
-		referral_id: 'referral', notes: 'reason', lookup_email: 'email'
+		referral_id: 'referral', notes: 'reason', lookup_email: 'email', age_months: 'age'
 	};
 	var SKIP_INPUTS = ['vsps_hp', 'weight_unit', 'phone_last4'];
 
@@ -2273,6 +2282,30 @@
 		return fieldInput(name, text, flag, 'date', ' max="' + today + '"' + (extra || ''));
 	}
 
+	/**
+	 * Pet's age: whole years and whole months side by side ("3 years", "0 years
+	 * 6 months"). Required means at least ONE of them (a 6-month-old kitten
+	 * leaves years empty), so neither box is required on its own. The boxes
+	 * sit in a group named by the visible "Pet's age" label; each box has its
+	 * own name ("Age in years"); the visible hint, linked to the group and to
+	 * both boxes, says what is needed, starting with "Required:" when it is.
+	 */
+	function ageField(flag) {
+		var labelId = uid('agelabel');
+		var hintId = uid('agehint');
+		var req = flag === 2 ? ' data-vsps-age-required="1"' : '';
+		function part(name, max, aria, unit) {
+			return '<span class="vsps-age-part"><input name="' + name + '" type="number" min="0" max="' + max + '" step="1" inputmode="numeric"' +
+				' data-vsps-int="1" aria-label="' + escAttr(aria) + '" aria-describedby="' + hintId + '"' + req + '>' +
+				'<span class="vsps-age-unit" aria-hidden="true">' + escHtml(unit) + '</span></span>';
+		}
+		return '<div class="vsps-field"><label class="vsps-field-label" id="' + labelId + '">' + escHtml(I18N.petAge) +
+			(flag === 2 ? '<span class="vsps-req" aria-hidden="true"> *</span>' : '') + '</label>' +
+			'<span class="vsps-age" role="group" aria-labelledby="' + labelId + '" aria-describedby="' + hintId + '">' +
+			part('age', 40, I18N.ageYears, I18N.ageYearsUnit) + part('age_months', 11, I18N.ageMonths, I18N.ageMonthsUnit) + '</span>' +
+			'<span class="vsps-age-hint" id="' + hintId + '">' + escHtml(flag === 2 ? I18N.ageHintRequired : I18N.ageHint) + '</span></div>';
+	}
+
 	function fieldTextarea(name, text, flag) {
 		return fieldWrap(text, flag, '<textarea name="' + name + '" rows="2"' + (flag === 2 ? ' required' : '') + '></textarea>');
 	}
@@ -2325,12 +2358,23 @@
 		// After the first submit, an error goes away as soon as its field is
 		// fixed (never added while the visitor is still typing).
 		var recheck = function (e) {
-			var control = e.target;
-			if (!form.hasAttribute('data-vsps-tried') || 'true' !== control.getAttribute('aria-invalid')) { return; }
-			if (!controlError(control)) { clearFieldError(control); }
+			// The age boxes answer one question: typing months clears "enter the age" on years.
+			var group = e.target.closest && e.target.closest('.vsps-age');
+			var controls = group ? group.querySelectorAll('input') : [e.target];
+			Array.prototype.forEach.call(controls, function (control) {
+				if (!form.hasAttribute('data-vsps-tried') || 'true' !== control.getAttribute('aria-invalid')) { return; }
+				if (!controlError(control)) { clearFieldError(control); }
+			});
 		};
 		form.addEventListener('input', recheck);
 		form.addEventListener('change', recheck);
+		// Whole numbers only (age): number inputs would otherwise take "2.5", "1e2", "-1".
+		form.addEventListener('keydown', function (e) {
+			if (e.ctrlKey || e.metaKey || e.altKey) { return; } // zoom (Ctrl +/-) and other shortcuts
+			if (e.target.hasAttribute && e.target.hasAttribute('data-vsps-int') && /^[.,eE+\-]$/.test(e.key || '')) {
+				e.preventDefault();
+			}
+		});
 	}
 
 	/* ---------- field errors (WCAG 3.3.1 / 3.3.3 / 1.4.1) ---------- */
@@ -2342,7 +2386,8 @@
 	/** The control's visible label text without the asterisk, lower-cased mid-sentence ("first name", "ZIP code"). */
 	function labelText(control) {
 		var label = control.id ? document.querySelector('label[for="' + control.id + '"]') : null;
-		var text = label ? label.textContent.replace('*', '').trim() : (control.getAttribute('aria-label') || control.name);
+		var own = control.getAttribute('aria-label');
+		var text = own || (label ? label.textContent.replace('*', '').trim() : control.name);
 		return /^[A-Z][a-z]/.test(text) ? text.charAt(0).toLowerCase() + text.slice(1) : text;
 	}
 
@@ -2356,6 +2401,21 @@
 		var value = String(control.value || '').trim();
 		var label = labelText(control);
 		var bad = !!(control.validity && control.validity.badInput);
+		if ('age' === control.name && control.hasAttribute('data-vsps-age-required') && !value && !bad) {
+			var group = control.closest('.vsps-age');
+			var months = group ? group.querySelector('[name="age_months"]') : null;
+			var monthsBad = !!(months && months.validity && months.validity.badInput);
+			if (!months || (!String(months.value || '').trim() && !monthsBad)) { return I18N.errAge; }
+		}
+		if (control.hasAttribute('data-vsps-int') && (bad || (value && !/^\d+$/.test(value)))) {
+			return fill(I18N.errWhole, { label: label });
+		}
+		if ('age' === control.name && /^0+$/.test(value)) {
+			// "0 years" alone would be stored as a newborn: a pet under a year needs its months.
+			var sib = control.closest('.vsps-age');
+			var mo = sib ? sib.querySelector('[name="age_months"]') : null;
+			if (mo && !String(mo.value || '').trim() && !(mo.validity && mo.validity.badInput)) { return I18N.errAgeMonths; }
+		}
 		if (!value && !bad) {
 			if (!control.required) { return ''; }
 			if ('SELECT' === control.tagName) { return fill(I18N.errChoose, { label: label }); }
@@ -2403,9 +2463,22 @@
 		err.innerHTML = '<span class="vsps-err-icon" aria-hidden="true">\u26a0</span> ';
 		err.appendChild(document.createTextNode(I18N.errorPrefix + ' ' + message));
 		control.setAttribute('aria-invalid', 'true');
-		var ids = (control.getAttribute('aria-describedby') || '').split(/\s+/).filter(Boolean);
-		if (ids.indexOf(errId) === -1) { ids.push(errId); }
-		control.setAttribute('aria-describedby', ids.join(' '));
+		// "Enter the age" is about both age boxes: the months box reads it too.
+		var targets = message === I18N.errAge && control.closest('.vsps-age')
+			? Array.prototype.slice.call(control.closest('.vsps-age').querySelectorAll('input'))
+			: [control];
+		targets.forEach(function (node) { addDescribedBy(node, errId); });
+	}
+
+	function addDescribedBy(node, id) {
+		var ids = (node.getAttribute('aria-describedby') || '').split(/\s+/).filter(Boolean);
+		if (ids.indexOf(id) === -1) { ids.push(id); }
+		node.setAttribute('aria-describedby', ids.join(' '));
+	}
+
+	function removeDescribedBy(node, id) {
+		var ids = (node.getAttribute('aria-describedby') || '').split(/\s+/).filter(function (x) { return x && x !== id; });
+		if (ids.length) { node.setAttribute('aria-describedby', ids.join(' ')); } else { node.removeAttribute('aria-describedby'); }
 	}
 
 	function clearFieldError(control) {
@@ -2413,8 +2486,9 @@
 		var err = document.getElementById(errId);
 		if (err) { err.parentNode.removeChild(err); }
 		control.removeAttribute('aria-invalid');
-		var ids = (control.getAttribute('aria-describedby') || '').split(/\s+/).filter(function (id) { return id && id !== errId; });
-		if (ids.length) { control.setAttribute('aria-describedby', ids.join(' ')); } else { control.removeAttribute('aria-describedby'); }
+		var group = control.closest('.vsps-age');
+		var targets = group ? Array.prototype.slice.call(group.querySelectorAll('input')) : [control];
+		targets.forEach(function (node) { removeDescribedBy(node, errId); });
 	}
 
 	/**
@@ -2530,7 +2604,7 @@
 		if (f.mixed) { items.push({ html: fieldSelect('mixed', I18N.mixed, f.mixed, YES_NO()) }); }
 		if (f.sex) { items.push({ html: fieldSelect('sex', I18N.sexLabel, f.sex, [{ id: 'MALE', name: I18N.male }, { id: 'FEMALE', name: I18N.female }]) }); }
 		if (f.neutered) { items.push({ html: fieldSelect('neutered', I18N.neuteredQ, f.neutered, YES_NO()) }); }
-		if (f.age) { items.push({ html: fieldInput('age', I18N.ageYears, f.age, 'number', ' min="0" max="40"') }); }
+		if (f.age) { items.push({ html: ageField(f.age) }); }
 		if (f.weight) {
 			items.push({ html: fieldWrap(I18N.weight, f.weight, '<span class="vsps-weight"><input name="weight" type="number" min="0.1" max="2000" step="0.1"' +
 				(f.weight === 2 ? ' required' : '') + '><select name="weight_unit" aria-label="' + escAttr(I18N.weight) + ' unit"><option value="LB">lb</option><option value="KG">kg</option></select></span>') });
@@ -2568,7 +2642,8 @@
 	function collectPet(fd) {
 		return {
 			name: formValue(fd, 'pet_name'), species: formValue(fd, 'species'),
-			breed: formValue(fd, 'breed'), sex: formValue(fd, 'sex'), age: formValue(fd, 'age'), neutered: formValue(fd, 'neutered'),
+			breed: formValue(fd, 'breed'), sex: formValue(fd, 'sex'), age: formValue(fd, 'age'), age_months: formValue(fd, 'age_months'),
+			neutered: formValue(fd, 'neutered'),
 			mixed: formValue(fd, 'mixed'), birth_date: formValue(fd, 'birth_date'), weight: formValue(fd, 'weight'),
 			weight_unit: formValue(fd, 'weight_unit'), color: formValue(fd, 'color'), microchip: formValue(fd, 'microchip'),
 			notes: formValue(fd, 'pet_notes')

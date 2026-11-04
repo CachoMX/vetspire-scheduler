@@ -397,6 +397,38 @@
 	flex-shrink: 0;
 }
 
+/* Pet's age: [ 3 ] years [ 2 ] months, together taking one half of a row. */
+.vsps-overlay .vsps-form .vsps-age {
+	display: flex;
+	gap: 10px;
+	width: 100%;
+}
+
+.vsps-overlay .vsps-form .vsps-age-part {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	flex: 1 1 0;
+	min-width: 0;
+}
+
+.vsps-overlay .vsps-form .vsps-age-part input {
+	width: 100%;
+	min-width: 3.5em;
+}
+
+.vsps-overlay .vsps-form .vsps-age-unit {
+	flex-shrink: 0;
+	font-size: 0.9em;
+}
+
+.vsps-overlay .vsps-form .vsps-age-hint {
+	display: block;
+	margin-top: 4px;
+	font-size: 0.85em;
+	color: #555; /* 7.4:1 on white */
+}
+
 .vsps-overlay .vsps-error {
 	color: #b00020;
 	margin: 4px 0 8px;
