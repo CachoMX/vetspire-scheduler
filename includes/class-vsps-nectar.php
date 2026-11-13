@@ -719,7 +719,10 @@ class VSPS_Nectar implements VSPS_Pims {
 			'clientId'          => (string) $booking['client_id'],
 			'appointmentTypeId' => (string) $booking['appointment_type_id'],
 			'isOnlineRequest'   => true,
-			'staffNotes'        => (string) $booking['reason'],
+			// The hub refuses staffNotes longer than 1000 characters
+			// (variables_not_allowed). A long reason must be shortened here,
+			// or the whole booking fails as if this plugin version were blocked.
+			'staffNotes'        => self::clip( (string) $booking['reason'], 1000 ),
 		);
 		if ( '' !== (string) $booking['provider_id'] ) {
 			$input['assignedUid'] = (string) $booking['provider_id'];
@@ -772,6 +775,15 @@ class VSPS_Nectar implements VSPS_Pims {
 
 	private static function digits( $phone ) {
 		return preg_replace( '/\D/', '', (string) $phone );
+	}
+
+	/** Shortens $text to $max characters without splitting a multibyte character. */
+	private static function clip( $text, $max ) {
+		$text = (string) $text;
+		if ( function_exists( 'mb_strlen' ) && function_exists( 'mb_substr' ) ) {
+			return mb_strlen( $text, 'UTF-8' ) > $max ? mb_substr( $text, 0, $max, 'UTF-8' ) : $text;
+		}
+		return strlen( $text ) > $max ? substr( $text, 0, $max ) : $text;
 	}
 
 	/** A Y-m-d date as a Nectar datetime (noon UTC, so no timezone shifts it a day). */

@@ -156,7 +156,7 @@ class VSPS_Fields {
 		$unit     = strtoupper( $text( $patient, 'weight_unit', 4 ) );
 		$weight   = isset( $patient['weight'] ) && is_numeric( $patient['weight'] ) ? round( (float) $patient['weight'], 2 ) : 0;
 		$mixed    = $text( $patient, 'mixed', 3 );
-		$referral = $text( $client, 'referral_id', 20 );
+		$referral = $text( $client, 'referral_id', 64 ); // Shepherd referral ids are UUIDs (36)
 		if ( '' !== $referral && ! in_array( $referral, wp_list_pluck( self::referral_sources(), 'id' ), true ) ) {
 			$referral = '';
 		}

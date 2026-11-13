@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Vetcelerator Scheduler
  * Plugin URI:  https://vetcelerator.com
- * Description: Embeddable appointment scheduler for Vetspire and Nectar clinics. Shows live available times and books appointments on-site so analytics attribution is preserved.
+ * Description: Embeddable appointment scheduler for Vetspire, Nectar, and Shepherd clinics. Shows live available times and books appointments on-site so analytics attribution is preserved.
  * Version:     1.29.0
  * Author:      Vetcelerator
  * License:     GPL-2.0+
@@ -25,6 +25,7 @@ if ( ! defined( 'VSPS_HUB_URL' ) ) {
 require_once VSPS_PLUGIN_DIR . 'includes/class-vsps-pims.php';
 require_once VSPS_PLUGIN_DIR . 'includes/class-vsps-api.php';
 require_once VSPS_PLUGIN_DIR . 'includes/class-vsps-nectar.php';
+require_once VSPS_PLUGIN_DIR . 'includes/class-vsps-shepherd.php';
 require_once VSPS_PLUGIN_DIR . 'includes/class-vsps-cache.php';
 require_once VSPS_PLUGIN_DIR . 'includes/class-vsps-booking.php';
 require_once VSPS_PLUGIN_DIR . 'includes/class-vsps-fields.php';
@@ -42,7 +43,7 @@ register_deactivation_hook( __FILE__, array( 'VSPS_Hub', 'deactivate' ) );
  */
 function vsps_get_settings() {
 	$defaults = array(
-		'pims'              => VSPS_Pims_Registry::DEFAULT_PLATFORM, // vetspire | nectar
+		'pims'              => VSPS_Pims_Registry::DEFAULT_PLATFORM, // vetspire | nectar | shepherd
 		'api_token'         => '',
 		'api_endpoint'      => 'https://api.vetspire.com/graphql',
 		'cache_ttl'         => 300,
@@ -64,7 +65,12 @@ function vsps_get_settings() {
 		'nectar_client_secret' => '',
 		'nectar_env'           => 'production', // production (through the hub) | sandbox (own test credentials)
 		'nectar_meta_location' => '', // only for multi-location Nectar clinics
-		'clinic_timezone'      => '', // used when Nectar does not report one
+		'clinic_timezone'      => '', // used when the PIMS does not report an IANA zone
+		// Shepherd (pims = shepherd). Both keys are secret. Empty until Encore issues them.
+		'shepherd_public_key'  => '',
+		'shepherd_private_key' => '',
+		'shepherd_clinic_id'   => '',
+		'shepherd_env'         => 'sandbox', // sandbox (demo host) | production. Sandbox until a clinic is ready.
 	);
 	$saved = get_option( VSPS_OPTION_KEY, array() );
 	if ( ! is_array( $saved ) ) {
@@ -91,6 +97,15 @@ function vsps_get_settings() {
 	if ( defined( 'VSPS_NECTAR_CLIENT_SECRET' ) && VSPS_NECTAR_CLIENT_SECRET ) {
 		$settings['nectar_client_secret'] = VSPS_NECTAR_CLIENT_SECRET;
 	}
+	if ( defined( 'VSPS_SHEPHERD_PUBLIC_KEY' ) && VSPS_SHEPHERD_PUBLIC_KEY ) {
+		$settings['shepherd_public_key'] = VSPS_SHEPHERD_PUBLIC_KEY;
+	}
+	if ( defined( 'VSPS_SHEPHERD_PRIVATE_KEY' ) && VSPS_SHEPHERD_PRIVATE_KEY ) {
+		$settings['shepherd_private_key'] = VSPS_SHEPHERD_PRIVATE_KEY;
+	}
+	if ( defined( 'VSPS_SHEPHERD_CLINIC_ID' ) && VSPS_SHEPHERD_CLINIC_ID ) {
+		$settings['shepherd_clinic_id'] = VSPS_SHEPHERD_CLINIC_ID;
+	}
 	return $settings;
 }
 
@@ -103,6 +118,9 @@ function vsps_has_credentials( $settings = null ) {
 			return '' !== VSPS_Hub::key();
 		}
 		return '' !== $settings['nectar_client_id'] && '' !== $settings['nectar_client_secret'];
+	}
+	if ( 'shepherd' === $settings['pims'] ) {
+		return VSPS_Shepherd::configured( $settings );
 	}
 	return '' !== $settings['api_token'];
 }
@@ -126,6 +144,15 @@ function vsps_api() {
 			$settings['nectar_meta_location'],
 			$settings['clinic_timezone'],
 			'sandbox'
+		);
+	}
+	if ( 'shepherd' === $settings['pims'] ) {
+		return new VSPS_Shepherd(
+			$settings['shepherd_public_key'],
+			$settings['shepherd_private_key'],
+			$settings['shepherd_clinic_id'],
+			$settings['shepherd_env'],
+			$settings['clinic_timezone']
 		);
 	}
 	return new VSPS_Api( $settings['api_token'], $settings['api_endpoint'] );

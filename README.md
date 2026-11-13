@@ -12,7 +12,7 @@ configures its own credentials.
 ## Practice systems (PIMS)
 
 Each platform is an adapter implementing `VSPS_Pims` (`includes/class-vsps-pims.php`):
-`VSPS_Api` for Vetspire, `VSPS_Nectar` for Nectar. The REST layer, the booking flow
+`VSPS_Api` for Vetspire, `VSPS_Nectar` for Nectar, `VSPS_Shepherd` for Shepherd. The REST layer, the booking flow
 (`VSPS_Booking`) and the widget only see the normalized shapes, so they don't know which
 platform is behind them. `VSPS_Pims_Registry` holds the static facts per platform: label,
 booking mode, minimum lead time and which optional booking-form fields it can store.
@@ -40,6 +40,8 @@ forwards only this plugin version's released operations to that clinic's
 Third-Party Services → Vetcelerator in Nectar. Sandbox keeps its own test credentials and talks
 to Nectar directly. `php tests/nectar-e2e.php` with `VSPS_NECTAR_ENV=production
 VSPS_NECTAR_CLINIC=<code>` runs a read-only production check (never books).
+
+**Shepherd is scaffolding, not a live integration.** Settings can select it. It stays on Shepherd's demo API until Production is chosen, and it does not call Shepherd until a public key, a private key, and a clinic UUID are saved. Existing Vetspire and Nectar sites are unchanged. Design, field mapping, and what is still open: `docs/shepherd.md`. `php tests/shepherd-unit.php` uses mocked responses only.
 
 ## How it works
 
