@@ -2,9 +2,10 @@
 /**
  * The practice management systems (PIMS) the scheduler can book into.
  *
- * Every platform adapter (VSPS_Api = Vetspire, VSPS_Nectar = Nectar) implements
- * VSPS_Pims and returns the same normalized shapes, so the REST layer, the
- * booking flow and the widget never need to know which platform is behind them.
+ * Every platform adapter (VSPS_Api = Vetspire, VSPS_Nectar = Nectar,
+ * VSPS_Shepherd = Shepherd) implements VSPS_Pims and returns the same
+ * normalized shapes, so the REST layer, the booking flow and the widget never
+ * need to know which platform is behind them.
  */
 
 if ( ! defined( 'ABSPATH' ) ) {
@@ -13,7 +14,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 
 interface VSPS_Pims {
 
-	/** 'vetspire' | 'nectar' */
+	/** 'vetspire' | 'nectar' | 'shepherd' */
 	public function platform();
 
 	/**
@@ -98,6 +99,17 @@ class VSPS_Pims_Registry {
 			'fields'         => array(
 				'address', 'phone_alt', 'owner_dob', 'breed', 'sex', 'neutered', 'age',
 				'birth_date', 'weight', 'color', 'microchip', 'reason',
+			),
+		),
+		// Scaffolding only. Selecting it does nothing until a clinic id and both
+		// keys are saved, and it never runs for a site still on Vetspire or Nectar.
+		'shepherd' => array(
+			'label'          => 'Shepherd',
+			'booking'        => 'confirm', // create books an upcoming appointment; pending is rejected
+			'min_lead_hours' => 0,
+			'fields'         => array(
+				'address', 'phone_alt', 'referral', 'client_notes', 'breed', 'sex', 'neutered', 'age',
+				'birth_date', 'weight', 'color', 'microchip', 'pet_notes', 'reason',
 			),
 		),
 	);
