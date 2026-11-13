@@ -245,5 +245,26 @@ reset_net( array( 'detail' => str_repeat( 'x', 5000 ) ), 403 );
 $err = VSPS_Nectar::via_hub( 'https://hub.test', $site_key, '', 'America/New_York', '1.29.0' )->request( '{ appointmentTypes { id } }' );
 check( "Nectar's detail is capped", is_wp_error( $err ) && strlen( $err->get_error_message() ) < 300 );
 
+echo "== staff notes stay within the hub's 1000-character variable limit ==\n";
+reset_net( array(
+	'data' => array(
+		'addOnlineAppointment'          => array( 'id' => 'held-1', 'appointmentId' => 'held-1', 'startDatetime' => '2026-05-22T14:30:00+00:00' ),
+		'scheduleAndRequestAppointment' => array( 'id' => 'held-1', 'status' => 'ONLINE_REQUESTED', 'startDatetime' => '2026-05-22T14:30:00+00:00' ),
+	),
+) );
+$booked = ( new VSPS_Nectar( 'id', 'secret', '', 'America/New_York', 'sandbox' ) )->create_booking_appointment( array(
+	'client_id'           => 'c1',
+	'patient_id'          => 'p1',
+	'appointment_type_id' => 't1',
+	'provider_id'         => 'prov',
+	'start'               => '2026-05-22T14:30:00+00:00',
+	'duration'            => 30,
+	'reason'              => 'Vetcelerator booking: ' . str_repeat( 'a', 2000 ),
+) );
+$writes = graphql_calls();
+$notes  = isset( $writes[0]['body']['variables']['input']['staffNotes'] ) ? $writes[0]['body']['variables']['input']['staffNotes'] : '';
+check( 'a long reason is still a Nectar request', ! is_wp_error( $booked ) && 'held-1' === $booked['id'] );
+check( 'staffNotes is clipped to 1000 characters', 1000 === strlen( $notes ) && 0 === strpos( $notes, 'Vetcelerator booking: ' ) );
+
 echo $fails ? "\n$fails FAILED\n" : "\nALL PASS\n";
 exit( $fails ? 1 : 0 );
