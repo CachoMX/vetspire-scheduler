@@ -58,6 +58,7 @@ function vsps_get_settings() { return array( 'cache_ttl' => 60, 'pims' => 'sheph
 
 require __DIR__ . '/../includes/class-vsps-pims.php';
 require __DIR__ . '/../includes/class-vsps-cache.php';
+require __DIR__ . '/../includes/class-vsps-fields.php';
 require __DIR__ . '/../includes/class-vsps-shepherd.php';
 
 $fails = 0;
@@ -154,7 +155,22 @@ check( 'pounds', LBS === VSPS_Shepherd::match_weight_unit_id( array(
 $dob = VSPS_Shepherd::date_of_birth( array( 'birth_date' => '2019-04-12', 'age' => 3 ) );
 check( 'an exact birth date beats age', '2019-04-12T00:00:00Z' === $dob );
 $aged = VSPS_Shepherd::date_of_birth( array( 'birth_date' => '', 'age' => 0 ) );
-check( 'age 0 is a date of birth (under a year), not an error', ! is_wp_error( $aged ) && preg_match( '/^\d{4}-\d{2}-\d{2}T00:00:00Z$/', $aged ) );
+check( 'age 0 is a date of birth (under a year), not an error', ! is_wp_error( $aged ) && preg_match( '/^\d{4}-\d{2}-01T00:00:00Z$/', $aged ) );
+$mid = gmmktime( 15, 0, 0, 11, 16, 2026 ); // Nov 16, 2026
+check( 'years + months: 2 years 3 months → Aug 1, 2024', '2024-08-01T00:00:00Z' === VSPS_Shepherd::date_of_birth( array( 'age' => 2, 'age_months' => 3 ), 'America/Chicago', $mid ) );
+check( 'months only: 6 months → May 1, 2026', '2026-05-01T00:00:00Z' === VSPS_Shepherd::date_of_birth( array( 'age' => '', 'age_months' => 6 ), 'America/Chicago', $mid ) );
+check( 'years only: 3 years → Nov 1, 2023', '2023-11-01T00:00:00Z' === VSPS_Shepherd::date_of_birth( array( 'age' => 3, 'age_months' => '' ), '', $mid ) );
+$edge = gmmktime( 3, 0, 0, 11, 1, 2026 ); // Oct 31, 22:00 in Chicago
+check( 'counted in the clinic timezone (Chicago is still in October)', '2026-04-01T00:00:00Z' === VSPS_Shepherd::date_of_birth( array( 'age' => 0, 'age_months' => 6 ), 'America/Chicago', $edge ) );
+$ahead = gmmktime( 20, 0, 0, 10, 31, 2026 ); // Nov 1 in Tokyo, Oct 31 in UTC
+check( 'never in the future for a clinic ahead of UTC', '2026-10-31T00:00:00Z' === VSPS_Shepherd::date_of_birth( array( 'age' => 0, 'age_months' => 0 ), 'Asia/Tokyo', $ahead ) );
+check( 'visit reason gets the age note', "Vetcelerator booking: itchy ears\nPet's age (owner's estimate): 6 months" === VSPS_Shepherd::visit_reason( array( 'reason' => 'Vetcelerator booking: itchy ears', 'pet_age' => '6 months' ) ) );
+check( 'no age, no note', 'Checkup' === VSPS_Shepherd::visit_reason( array( 'reason' => 'Checkup', 'pet_age' => '' ) ) && 'Checkup' === VSPS_Shepherd::visit_reason( array( 'reason' => 'Checkup' ) ) );
+$long = VSPS_Shepherd::visit_reason( array( 'reason' => str_repeat( 'é', 1200 ), 'pet_age' => '1 year 2 months' ) );
+check( 'a long reason is cut so reason + age note fit 1000 characters', 1000 === mb_strlen( $long, 'UTF-8' ) && false !== strpos( $long, "…\nPet's age (owner's estimate): 1 year 2 months" ) );
+$emoji = VSPS_Shepherd::visit_reason( array( 'reason' => str_repeat( '🐶', 700 ), 'pet_age' => '3 years' ) );
+check( 'an emoji counts twice toward the 1000 limit (UTF-16)', strlen( mb_convert_encoding( $emoji, 'UTF-16LE', 'UTF-8' ) ) / 2 <= 1000 && false !== strpos( $emoji, "…\nPet's age (owner's estimate): 3 years" ) );
+check( 'an empty reason has no leading line break', "Pet's age (owner's estimate): under 1 year" === VSPS_Shepherd::visit_reason( array( 'reason' => '', 'pet_age' => 'under 1 year' ) ) );
 $missing = VSPS_Shepherd::date_of_birth( array( 'birth_date' => '', 'age' => '' ) );
 check( 'neither age nor birth date is an error', is_wp_error( $missing ) && false !== stripos( $missing->get_error_message(), 'date of birth' ) );
 check( 'duration rounds up to a 5-minute boundary', 30 === VSPS_Shepherd::slot_minutes( 30 ) && 15 === VSPS_Shepherd::slot_minutes( 12 ) && 30 === VSPS_Shepherd::slot_minutes( 0 ) );
@@ -366,6 +382,12 @@ $pb = $GLOBALS['vsps_patient_body'];
 check( 'the pet write uses lookup ids and the exact birth date', LAB === $pb['breedId'] && NEUT === $pb['sexId'] && ACTIVE === $pb['statusId'] && '2019-04-12T00:00:00Z' === $pb['dateOfBirth'] );
 check( 'microchip is capped at 15 characters', 15 === strlen( $pb['microchipNumber'] ) );
 check( 'weight is a patientWeight block', 23.4 === $pb['patientWeight']['weight'] && LBS === $pb['patientWeight']['weightUnitId'] );
+$aged_pet = $shepherd->create_booking_patient( array( 'id' => CLIENT, 'familyName' => 'Lovelace' ), array(
+	'clinic_timezone' => 'America/Chicago',
+	'patient'         => array( 'name' => 'Kit', 'species' => 'Canine', 'breed' => 'Labrador Retriever', 'sex' => 'MALE', 'neutered' => 'yes', 'age' => 0, 'age_months' => 6, 'birth_date' => '' ),
+) );
+$expect = VSPS_Fields::age_birth_month( 0, 6, null, 'America/Chicago' );
+check( 'a pet with only an age gets the 1st of the estimated month', ! is_wp_error( $aged_pet ) && sprintf( '%04d-%02d-01T00:00:00Z', $expect['year'], $expect['month'] ) === $GLOBALS['vsps_patient_body']['dateOfBirth'] );
 
 $before = count( $GLOBALS['vsps_sent'] );
 $appt   = $shepherd->create_booking_appointment( array(
@@ -379,8 +401,14 @@ $writes = array_values( array_filter( array_slice( sent_paths(), $before ), func
 check( 'creating an appointment is one write', ! is_wp_error( $appt ) && APPT === $appt['id'] && array( '/pav2/open-api-appointments/write' ) === $writes );
 $ab = $GLOBALS['vsps_appt_body'];
 check( 'the appointment is UTC, on a type, and does not message the client', '2026-06-02T13:00:00Z' === $ab['startDate'] && '2026-06-02T13:30:00Z' === $ab['endDate'] && false === $ab['sendEmailNotification'] && false === $ab['sendSmsNotification'] && false === $ab['sendFormEmailNotification'] );
-check( 'visit reason is clipped to 1000 characters', 1000 === strlen( $ab['visitReason'] ) );
+check( 'visit reason is clipped to 1000 characters', 1000 === mb_strlen( $ab['visitReason'], 'UTF-8' ) );
 check( 'patientIds is a list', array( PET ) === $ab['patientIds'] );
+$shepherd->create_booking_appointment( array(
+	'start' => '2026-06-02T10:00:00-04:00', 'duration' => 30, 'provider_id' => PROV,
+	'appointment_type_id' => TYPE, 'client_id' => CLIENT, 'patient_id' => PET,
+	'reason' => 'Vetcelerator booking: itchy ears', 'pet_age' => '6 months',
+) );
+check( 'the appointment write carries the age note', "Vetcelerator booking: itchy ears\nPet's age (owner's estimate): 6 months" === $GLOBALS['vsps_appt_body']['visitReason'] );
 
 $held = $shepherd->find_client_appointment_at( CLINIC, '2026-06-02T13:00:00Z', 'ada@example.com', TYPE, 'Rex' );
 check( 'a second submit can see the appointment already held (read only)', null === $held || APPT === $held );
@@ -402,7 +430,6 @@ $after  = count( array_filter( sent_paths(), function ( $path ) { return false !
 check( 'the held appointment is found without another create', APPT === $held && $before === $after );
 
 echo "== settings keep Shepherd off Vetspire and Nectar ==\n";
-require __DIR__ . '/../includes/class-vsps-fields.php';
 require __DIR__ . '/../includes/class-vsps-nectar.php';
 class VSPS_Hub {
 	const KEY_PATTERN = '/^vss_[0-9a-f]{48}$/';

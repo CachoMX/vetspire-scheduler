@@ -97,14 +97,14 @@ Widget values are the ones `VSPS_Booking` already passes. Shepherd ids are UUIDs
 | Species | breed's `speciesId` | There is no `speciesId` on the patient. Canine/dog and Feline/cat match the species lookup, then a breed in that species. |
 | Breed | `breedId` | A typed breed must match the clinic breed name. If it does not, the pet is not created (it is not silently filed as Mixed). An empty breed may use Mixed, Mixed Breed, Unknown, or Other. |
 | Sex + spayed/neutered | `sexId` | `Neutered Male` / `Spayed` style names when neutered is yes; otherwise Male / Female. Unknown when sex was not asked. Lookup ids differ by environment. |
-| Age (years) | `dateOfBirth` | UTC today minus that many years, `T00:00:00Z`. Shepherd stores a date and ignores the time. Age 0 is a real answer. |
+| Age (years and months) | `dateOfBirth` | The 1st of the estimated birth month (`YYYY-MM-01T00:00:00Z`), counted back in the clinic's timezone. It is the same month Vetspire gets as `birthYear` + `birthMonth`. Never later than UTC today. Shepherd has no "estimated" flag, so the visit reason says it is the owner's estimate. 0 years is a real answer. |
 | Birth date | `dateOfBirth` | Wins over age. |
 | Neither age nor birth date | — | Error. Shepherd requires `dateOfBirth`. A clinic that wants Shepherd bookings must show Age or Birth date. The scaffold does not invent a birthday. |
 | Color | `color` | Optional on create (Shepherd stores `N/A` if omitted). |
 | Microchip | `microchipNumber` | Clipped to 15 characters (the schema maximum). |
 | Pet notes | `additionalText` | Optional. |
 | Weight | `patientWeight.weight` + `weightUnitId` | lb/lbs or kg from `open-api-weight-units`. |
-| Reason for visit | `visitReason` | `Vetcelerator booking: …`, clipped to 1000 characters. Becomes the SOAP initial complaint. |
+| Reason for visit | `visitReason` | `Vetcelerator booking: …`, plus a line `Pet's age (owner's estimate): 6 months` for a pet created from an age (no birth date). The whole text stays within 1000 characters, counted in UTF-16 units like a .NET max length (an emoji counts twice): a long reason is cut first and ends with "…". Becomes the SOAP initial complaint. |
 | Provider / time | `providerId`, `startDate`, `endDate` | Provider is required. Instants are sent in UTC (`…Z`). End is start plus the type duration. |
 | Pet | `patientIds` | A one-element array. Requires `clientId`. |
 | Notifications | `sendEmailNotification`, `sendSmsNotification`, `sendFormEmailNotification` | All **false**. Shepherd's default is false; the scaffold does not message clients. |

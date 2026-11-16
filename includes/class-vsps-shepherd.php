@@ -22,6 +22,9 @@ class VSPS_Shepherd implements VSPS_Pims {
 	const SANDBOX_BASE    = 'https://demo-open-api.shepherd.vet/pav2';
 	const CLINIC_ID_RE    = '/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i';
 
+	/** AppointmentWriteModel.visitReason limit (characters). */
+	const VISIT_REASON_MAX = 1000;
+
 	/** Windows timezone names Shepherd's clinicSetting.timeZone is documented to use, to IANA. */
 	const WINDOWS_ZONES = array(
 		'Eastern Standard Time'  => 'America/New_York',
@@ -656,7 +659,7 @@ class VSPS_Shepherd implements VSPS_Pims {
 		if ( '' === $status ) {
 			return new WP_Error( 'vsps_patient', 'Shepherd did not return an Active patient status.' );
 		}
-		$dob = self::date_of_birth( $p );
+		$dob = self::date_of_birth( $p, isset( $args['clinic_timezone'] ) ? (string) $args['clinic_timezone'] : '' );
 		if ( is_wp_error( $dob ) ) {
 			return $dob;
 		}
@@ -700,20 +703,28 @@ class VSPS_Shepherd implements VSPS_Pims {
 
 	/**
 	 * PatientWriteModel.dateOfBirth is required and must not be in the future.
-	 * An exact birth date wins. Age becomes UTC today minus that many years
-	 * (Shepherd stores a date and ignores the time). Neither is an error:
-	 * inventing a birthday would be wrong, and the clinic can require Age or
-	 * Birth date on the form.
+	 * An exact birth date wins. Otherwise the owner's age (years, months or
+	 * both) becomes the 1st of the estimated birth month, counted back in the
+	 * clinic's timezone: the same month Vetspire gets. Shepherd has no
+	 * "estimated" flag, so the appointment's visit reason says it is an
+	 * estimate (visit_reason). With neither, it is an error: inventing a
+	 * birthday would be wrong, and the clinic can require Age or Birth date.
 	 *
+	 * @param string   $timezone The clinic's timezone ('' = UTC).
+	 * @param int|null $now      Unix time (tests).
 	 * @return string|WP_Error ISO date-time.
 	 */
-	public static function date_of_birth( array $patient ) {
+	public static function date_of_birth( array $patient, $timezone = '', $now = null ) {
 		if ( ! empty( $patient['birth_date'] ) && preg_match( '/^\d{4}-\d{2}-\d{2}$/', $patient['birth_date'] ) ) {
 			return $patient['birth_date'] . 'T00:00:00Z';
 		}
-		if ( isset( $patient['age'] ) && '' !== $patient['age'] && is_numeric( $patient['age'] ) ) {
-			$dob = ( new DateTimeImmutable( 'today', new DateTimeZone( 'UTC' ) ) )->modify( '-' . (int) $patient['age'] . ' years' );
-			return $dob->format( 'Y-m-d' ) . 'T00:00:00Z';
+		if ( VSPS_Fields::has_age( $patient ) ) {
+			$now  = null === $now ? time() : (int) $now;
+			$born = VSPS_Fields::age_birth_month( isset( $patient['age'] ) ? $patient['age'] : '', isset( $patient['age_months'] ) ? $patient['age_months'] : '', $now, $timezone );
+			$date = sprintf( '%04d-%02d-01', $born['year'], $born['month'] );
+			// A clinic ahead of UTC can already be in a month UTC hasn't reached.
+			$today = gmdate( 'Y-m-d', $now );
+			return ( $date > $today ? $today : $date ) . 'T00:00:00Z';
 		}
 		return new WP_Error( 'vsps_patient', 'Shepherd requires a date of birth. Ask for the pet\'s age or birth date on the booking form.' );
 	}
@@ -817,7 +828,7 @@ class VSPS_Shepherd implements VSPS_Pims {
 			'appointmentTypeId'         => (string) $booking['appointment_type_id'],
 			'clientId'                  => (string) $booking['client_id'],
 			'patientIds'                => array( (string) $booking['patient_id'] ),
-			'visitReason'               => self::clip( (string) $booking['reason'], 1000 ),
+			'visitReason'               => self::visit_reason( $booking ),
 			'sendEmailNotification'     => false,
 			'sendSmsNotification'       => false,
 			'sendFormEmailNotification' => false,
@@ -1072,6 +1083,34 @@ class VSPS_Shepherd implements VSPS_Pims {
 			}
 		}
 		return true;
+	}
+
+	/**
+	 * The visit reason, plus "Pet's age (owner's estimate): 6 months" for a new
+	 * pet whose owner gave an age (its dateOfBirth is only an estimate). A long
+	 * reason is cut so the whole text stays within VISIT_REASON_MAX, counted in
+	 * UTF-16 units like a .NET max length (an emoji counts twice).
+	 */
+	public static function visit_reason( array $booking ) {
+		$age    = isset( $booking['pet_age'] ) ? trim( (string) $booking['pet_age'] ) : '';
+		$reason = isset( $booking['reason'] ) ? (string) $booking['reason'] : '';
+		$note   = '' === $age ? '' : ( '' === $reason ? '' : "\n" ) . "Pet's age (owner's estimate): " . $age;
+		$room   = self::VISIT_REASON_MAX - self::utf16_length( $note );
+		if ( self::utf16_length( $reason ) > $room ) {
+			$cut = self::clip( $reason, $room - 1 );
+			while ( '' !== $cut && self::utf16_length( $cut ) > $room - 1 ) {
+				$cut = function_exists( 'mb_substr' ) ? mb_substr( $cut, 0, -1, 'UTF-8' ) : substr( $cut, 0, -1 );
+			}
+			$reason = $cut . '…';
+		}
+		return $reason . $note;
+	}
+
+	private static function utf16_length( $text ) {
+		if ( function_exists( 'mb_convert_encoding' ) ) {
+			return (int) ( strlen( mb_convert_encoding( (string) $text, 'UTF-16LE', 'UTF-8' ) ) / 2 );
+		}
+		return strlen( (string) $text ); // bytes: never fewer than UTF-16 units, so still within the limit
 	}
 
 	private static function clip( $text, $max ) {
