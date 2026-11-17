@@ -66,11 +66,9 @@ function vsps_get_settings() {
 		'nectar_env'           => 'production', // production (through the hub) | sandbox (own test credentials)
 		'nectar_meta_location' => '', // only for multi-location Nectar clinics
 		'clinic_timezone'      => '', // used when the PIMS does not report an IANA zone
-		// Shepherd (pims = shepherd). Both keys are secret. Empty until Encore issues them.
-		'shepherd_public_key'  => '',
-		'shepherd_private_key' => '',
+		// Shepherd (pims = shepherd): the clinic id only. Its keys and environment are
+		// stored in the Vetcelerator hub, encrypted, never on this site.
 		'shepherd_clinic_id'   => '',
-		'shepherd_env'         => 'sandbox', // sandbox (demo host) | production. Sandbox until a clinic is ready.
 	);
 	$saved = get_option( VSPS_OPTION_KEY, array() );
 	if ( ! is_array( $saved ) ) {
@@ -96,12 +94,6 @@ function vsps_get_settings() {
 	}
 	if ( defined( 'VSPS_NECTAR_CLIENT_SECRET' ) && VSPS_NECTAR_CLIENT_SECRET ) {
 		$settings['nectar_client_secret'] = VSPS_NECTAR_CLIENT_SECRET;
-	}
-	if ( defined( 'VSPS_SHEPHERD_PUBLIC_KEY' ) && VSPS_SHEPHERD_PUBLIC_KEY ) {
-		$settings['shepherd_public_key'] = VSPS_SHEPHERD_PUBLIC_KEY;
-	}
-	if ( defined( 'VSPS_SHEPHERD_PRIVATE_KEY' ) && VSPS_SHEPHERD_PRIVATE_KEY ) {
-		$settings['shepherd_private_key'] = VSPS_SHEPHERD_PRIVATE_KEY;
 	}
 	if ( defined( 'VSPS_SHEPHERD_CLINIC_ID' ) && VSPS_SHEPHERD_CLINIC_ID ) {
 		$settings['shepherd_clinic_id'] = VSPS_SHEPHERD_CLINIC_ID;
@@ -148,10 +140,9 @@ function vsps_api() {
 	}
 	if ( 'shepherd' === $settings['pims'] ) {
 		return new VSPS_Shepherd(
-			$settings['shepherd_public_key'],
-			$settings['shepherd_private_key'],
+			VSPS_HUB_URL,
+			VSPS_Hub::key(),
 			$settings['shepherd_clinic_id'],
-			$settings['shepherd_env'],
 			$settings['clinic_timezone']
 		);
 	}

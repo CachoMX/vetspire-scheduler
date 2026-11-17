@@ -33,24 +33,33 @@ function add_settings_error( $setting, $code, $message, $type ) { $GLOBALS['vsps
 $GLOBALS['vsps_sent']  = array();
 $GLOBALS['vsps_queue'] = array();
 $GLOBALS['vsps_transients'] = array();
+// The plugin posts {path, body} to the hub, which answers with Shepherd's own
+// response plus X-VSPS-Upstream: shepherd (or a hub refusal without it).
 function wp_remote_post( $url, $args ) {
+	$sent = json_decode( $args['body'], true );
 	$GLOBALS['vsps_sent'][] = array(
 		'url'         => $url,
-		'body'        => json_decode( $args['body'], true ),
+		'raw'         => $args['body'],
+		'path'        => isset( $sent['path'] ) ? $sent['path'] : '',
+		'body'        => isset( $sent['body'] ) ? $sent['body'] : array(),
 		'headers'     => $args['headers'],
 		'redirection' => isset( $args['redirection'] ) ? $args['redirection'] : null,
 	);
+	$upstream = array( 'x-vsps-upstream' => 'shepherd' );
 	if ( $GLOBALS['vsps_queue'] ) {
 		$next = array_shift( $GLOBALS['vsps_queue'] );
 		$body = is_string( $next['body'] ) ? $next['body'] : json_encode( $next['body'] );
-		return array( 'response' => array( 'code' => $next['code'] ), 'body' => $body );
+		return array( 'response' => array( 'code' => $next['code'] ), 'body' => $body, 'headers' => empty( $next['hub'] ) ? $upstream : array() );
 	}
-	$path  = parse_url( $url, PHP_URL_PATH );
-	$reply = call_user_func( $GLOBALS['vsps_router'], (string) $path, json_decode( $args['body'], true ) );
-	return array( 'response' => array( 'code' => 200 ), 'body' => json_encode( $reply ) );
+	$reply = call_user_func( $GLOBALS['vsps_router'], '/pav2/' . ( isset( $sent['path'] ) ? $sent['path'] : '' ), isset( $sent['body'] ) ? $sent['body'] : array() );
+	return array( 'response' => array( 'code' => 200 ), 'body' => json_encode( $reply ), 'headers' => $upstream );
 }
 function wp_remote_retrieve_response_code( $r ) { return is_array( $r ) ? $r['response']['code'] : 0; }
 function wp_remote_retrieve_body( $r ) { return is_array( $r ) ? $r['body'] : ''; }
+function wp_remote_retrieve_header( $r, $name ) {
+	$headers = is_array( $r ) && isset( $r['headers'] ) ? $r['headers'] : array();
+	return isset( $headers[ strtolower( $name ) ] ) ? $headers[ strtolower( $name ) ] : '';
+}
 function get_transient( $key ) { return isset( $GLOBALS['vsps_transients'][ $key ] ) ? $GLOBALS['vsps_transients'][ $key ] : false; }
 function set_transient( $key, $value, $ttl ) { $GLOBALS['vsps_transients'][ $key ] = $value; return true; }
 function delete_transient( $key ) { unset( $GLOBALS['vsps_transients'][ $key ] ); return true; }
@@ -92,13 +101,17 @@ const CLIENT = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 const PET    = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
 const APPT   = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
 
-function api( $env = 'sandbox' ) {
-	return new VSPS_Shepherd( 'pub-key-value', 'priv-key-value', CLINIC, $env, 'America/Chicago' );
+const HUB     = 'https://hub.test';
+const HUB_KEY = 'vss_0123456789abcdef0123456789abcdef0123456789abcdef';
+
+function api() {
+	return new VSPS_Shepherd( HUB, HUB_KEY, CLINIC, 'America/Chicago' );
 }
+/** The Shepherd paths the plugin asked the hub for, as /pav2/<path>. */
 function sent_paths() {
 	$out = array();
 	foreach ( $GLOBALS['vsps_sent'] as $call ) {
-		$out[] = parse_url( $call['url'], PHP_URL_PATH );
+		$out[] = '/pav2/' . $call['path'];
 	}
 	return $out;
 }
@@ -110,11 +123,11 @@ check( 'shepherd books on the spot', 'confirm' === VSPS_Pims_Registry::booking_m
 check( 'shepherd stores breed, age, and referral', VSPS_Pims_Registry::supports_field( 'breed', 'shepherd' ) && VSPS_Pims_Registry::supports_field( 'age', 'shepherd' ) && VSPS_Pims_Registry::supports_field( 'referral', 'shepherd' ) );
 check( 'shepherd does not store owner date of birth (not on ClientWriteModel)', ! VSPS_Pims_Registry::supports_field( 'owner_dob', 'shepherd' ) );
 check( 'nectar field list is unchanged', VSPS_Pims_Registry::supports_field( 'owner_dob', 'nectar' ) && ! VSPS_Pims_Registry::supports_field( 'referral', 'nectar' ) );
-check( 'configured needs both keys and a UUID', VSPS_Shepherd::configured( array(
-	'shepherd_public_key' => 'pub', 'shepherd_private_key' => 'priv', 'shepherd_clinic_id' => CLINIC,
+check( 'configured needs the hub key and a UUID, no Shepherd keys', VSPS_Shepherd::configured( array(
+	'hub_key' => HUB_KEY, 'shepherd_clinic_id' => CLINIC,
 ) ) );
-check( 'missing private key is not configured', ! VSPS_Shepherd::configured( array(
-	'shepherd_public_key' => 'pub', 'shepherd_private_key' => '', 'shepherd_clinic_id' => CLINIC,
+check( 'without the hub key it is not configured', ! VSPS_Shepherd::configured( array(
+	'hub_key' => '', 'shepherd_clinic_id' => CLINIC, 'shepherd_public_key' => 'pub', 'shepherd_private_key' => 'priv',
 ) ) );
 check( 'a non-UUID clinic id is refused', ! VSPS_Shepherd::is_clinic_id( 'clinic' ) && ! VSPS_Shepherd::is_clinic_id( '9890662f-52db-4a41-a5c1-b2e300d400b4-extra' ) );
 
@@ -220,26 +233,39 @@ $utc = VSPS_Shepherd::timeslots_to_slots(
 );
 check( 'a UTC range becomes clinic-local (18:00Z is 14:00 in May)', 1 === count( $utc ) && '14:00' === $utc[0]['time'] );
 
-echo "== transport: hosts, headers, no retry on writes ==\n";
+echo "== transport: through the hub, no Shepherd keys on the site ==\n";
 reset_state();
-$none = new VSPS_Shepherd( 'pub-key-value', 'priv-key-value', 'not-a-uuid', 'production', '' );
+$none = new VSPS_Shepherd( HUB, HUB_KEY, 'not-a-uuid', '' );
 $err  = $none->post( 'open-api-clinics', array( 'page' => 1 ) );
 check( 'a bad clinic id never leaves the server', is_wp_error( $err ) && array() === $GLOBALS['vsps_sent'] );
+$nokey = new VSPS_Shepherd( HUB, '', CLINIC, '' );
+$err   = $nokey->post( 'open-api-clinics', array( 'page' => 1 ) );
+check( 'without the hub key nothing is sent', is_wp_error( $err ) && array() === $GLOBALS['vsps_sent'] && false !== stripos( $err->get_error_message(), 'hub connection key' ) );
 
 reset_state();
 $GLOBALS['vsps_queue'] = array( array( 'code' => 200, 'body' => array( 'item' => array(), 'totalRecords' => 0 ) ) );
-$sandbox = api( 'sandbox' );
-$sandbox->post( 'open-api-species', array( 'rpp' => 1 ) );
+api()->post( 'open-api-species', array( 'rpp' => 1 ) );
 $call = $GLOBALS['vsps_sent'][0];
-check( 'sandbox uses the demo host', 'https://demo-open-api.shepherd.vet/pav2/open-api-species' === $call['url'] );
-check( 'both keys and the clinic id are headers', 'pub-key-value' === $call['headers']['X-Integration-Public-Key'] && 'priv-key-value' === $call['headers']['X-Integration-Private-Key'] && CLINIC === $call['headers']['X-Clinic-Id'] );
-check( 'keys are not in the body', false === strpos( json_encode( $call['body'] ), 'priv-key-value' ) );
+check( 'the request goes to the hub proxy', 'https://hub.test/api/wp/v1/scheduler/shepherd' === $call['url'] );
+check( 'it carries the path and body, authenticated by the hub key', 'open-api-species' === $call['path'] && array( 'rpp' => 1 ) === $call['body'] && 'Bearer ' . HUB_KEY === $call['headers']['Authorization'] );
+check( 'no Shepherd key or clinic header is sent by the site', ! isset( $call['headers']['X-Integration-Public-Key'] ) && ! isset( $call['headers']['X-Integration-Private-Key'] ) && ! isset( $call['headers']['X-Clinic-Id'] ) );
 check( 'redirects are disabled', 0 === $call['redirection'] );
+$empty = api();
+reset_state();
+$GLOBALS['vsps_queue'] = array( array( 'code' => 200, 'body' => array() ) );
+$empty->post( 'open-api-clinics', array() );
+check( 'an empty body is sent as a JSON object', false !== strpos( $GLOBALS['vsps_sent'][0]['raw'], '"body":{}' ) );
 
 reset_state();
-$GLOBALS['vsps_queue'] = array( array( 'code' => 200, 'body' => array( 'item' => array() ) ) );
-api( 'production' )->post( 'open-api-clinics', array( 'page' => 1, 'rpp' => 1 ) );
-check( 'production uses the live host only when that environment is selected', 'https://open-api.shepherd.vet/pav2/open-api-clinics' === $GLOBALS['vsps_sent'][0]['url'] );
+$GLOBALS['vsps_queue'] = array( array( 'code' => 409, 'body' => array( 'error' => 'shepherd_not_linked' ), 'hub' => true ) );
+$refused = api()->post( 'open-api-clinics', array() );
+$data    = is_wp_error( $refused ) ? $refused->get_error_data() : array();
+check( "a hub refusal is told apart from Shepherd's answers", is_wp_error( $refused ) && 'shepherd_not_linked' === $data['hub_error'] && false !== stripos( $refused->get_error_message(), 'not linked to a Shepherd clinic' ) );
+
+reset_state();
+$GLOBALS['vsps_queue'] = array( array( 'code' => 200, 'body' => array( 'item' => array() ), 'hub' => true ) );
+$spoof = api()->post( 'open-api-clinics', array() );
+check( 'a 200 without the upstream header is not trusted as Shepherd data', is_wp_error( $spoof ) );
 
 reset_state();
 $GLOBALS['vsps_queue'] = array(
@@ -253,7 +279,7 @@ reset_state();
 $GLOBALS['vsps_queue'] = array( array( 'code' => 500, 'body' => '{"message":"The request is invalid."}' ) );
 $wrote = api()->post( 'open-api-appointments/write', array( 'providerId' => PROV ), true );
 check( 'a create is not retried', is_wp_error( $wrote ) && 1 === count( $GLOBALS['vsps_sent'] ) );
-check( 'the error quotes Shepherd and not the private key', false === strpos( $wrote->get_error_message(), 'priv-key-value' ) && false !== strpos( $wrote->get_error_message(), 'The request is invalid' ) );
+check( "the error quotes Shepherd's message", false !== strpos( $wrote->get_error_message(), 'The request is invalid' ) );
 
 echo "== mocked clinic, types, booking ==\n";
 reset_state();
@@ -349,7 +375,7 @@ $times = $shepherd->get_available_times( CLINIC, TYPE, '2027-06-02' );
 check( 'availability becomes provider slots', ! is_wp_error( $times ) && count( $times ) >= 1 && '09:00' === $times[0]['time'] && 'Dr. Alex Rivera' === $times[0]['provider']['name'] );
 $provider_call = null;
 foreach ( $GLOBALS['vsps_sent'] as $call ) {
-	if ( false !== strpos( $call['url'], 'open-api-providers' ) ) {
+	if ( 'open-api-providers' === $call['path'] ) {
 		$provider_call = $call;
 	}
 }
@@ -456,19 +482,25 @@ function save_settings( array $stored, array $input ) {
 }
 $out = save_settings( array( 'pims' => 'vetspire', 'api_token' => 'vet-token' ), array( 'layout' => 'bar', 'primary_color' => '#112233', 'fields' => array() ) );
 check( 'a Vetspire save does not switch platform', 'vetspire' === $out['pims'] && 'vet-token' === $out['api_token'] );
-check( 'Shepherd stays on sandbox until chosen', 'sandbox' === $out['shepherd_env'] && '' === $out['shepherd_clinic_id'] );
+check( 'a Vetspire save has no Shepherd clinic', '' === $out['shepherd_clinic_id'] );
 
 $out = save_settings( array(), array(
-	'connect_only' => '1', 'pims' => 'shepherd', 'shepherd_env' => 'sandbox',
+	'connect_only' => '1', 'pims' => 'shepherd', 'shepherd_env' => 'production',
 	'shepherd_public_key' => 'pub', 'shepherd_private_key' => 'priv', 'shepherd_clinic_id' => '  ' . strtoupper( CLINIC ) . ' ',
 ) );
-check( 'connect card stores the keys and clinic id', 'shepherd' === $out['pims'] && 'pub' === $out['shepherd_public_key'] && 'priv' === $out['shepherd_private_key'] && strtoupper( CLINIC ) === $out['shepherd_clinic_id'] );
+check( 'the connect card stores the clinic id', 'shepherd' === $out['pims'] && strtoupper( CLINIC ) === $out['shepherd_clinic_id'] );
+check( 'posted Shepherd keys or environment are never stored on the site', ! isset( $out['shepherd_public_key'] ) && ! isset( $out['shepherd_private_key'] ) && ! isset( $out['shepherd_env'] ) );
 check( 'the clinic id becomes the only location', strtoupper( CLINIC ) === $out['default_location'] && strtoupper( CLINIC ) === $out['allowed_locations'] );
 
-$out = save_settings( array( 'pims' => 'shepherd', 'shepherd_clinic_id' => CLINIC, 'shepherd_private_key' => 'priv' ), array(
-	'pims' => 'shepherd', 'shepherd_clinic_id' => 'not-a-uuid', 'shepherd_private_key' => str_repeat( '•', 12 ) . 'priv',
+$out = save_settings( array( 'pims' => 'shepherd', 'shepherd_clinic_id' => CLINIC, 'shepherd_public_key' => 'old-pub', 'shepherd_private_key' => 'old-priv' ), array(
+	'connect_only' => '1', 'pims' => 'shepherd', 'shepherd_clinic_id' => CLINIC,
 ) );
-check( 'an invalid clinic id is kept, and a masked key is kept', CLINIC === $out['shepherd_clinic_id'] && 'priv' === $out['shepherd_private_key'] && in_array( 'vsps_shepherd_clinic', $GLOBALS['vsps_errors'], true ) );
+check( 'keys stored by an older build are removed on the next save', ! isset( $out['shepherd_public_key'] ) && ! isset( $out['shepherd_private_key'] ) );
+
+$out = save_settings( array( 'pims' => 'shepherd', 'shepherd_clinic_id' => CLINIC, 'shepherd_private_key' => 'old-priv' ), array(
+	'pims' => 'shepherd', 'shepherd_clinic_id' => 'not-a-uuid',
+) );
+check( 'an invalid clinic id keeps the stored one; a full save drops old keys', CLINIC === $out['shepherd_clinic_id'] && ! isset( $out['shepherd_private_key'] ) && in_array( 'vsps_shepherd_clinic', $GLOBALS['vsps_errors'], true ) );
 
 echo $fails ? "\n$fails FAILED\n" : "\nALL PASS\n";
 exit( $fails ? 1 : 0 );

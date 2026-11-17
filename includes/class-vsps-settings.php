@@ -93,9 +93,6 @@ class VSPS_Settings {
 		$nectar_env  = isset( $input['nectar_env'] )
 			? ( 'sandbox' === $input['nectar_env'] ? 'sandbox' : 'production' )
 			: ( isset( $current['nectar_env'] ) && 'sandbox' === $current['nectar_env'] ? 'sandbox' : 'production' );
-		$shepherd_env = isset( $input['shepherd_env'] )
-			? ( 'production' === $input['shepherd_env'] ? 'production' : 'sandbox' )
-			: ( isset( $current['shepherd_env'] ) && 'production' === $current['shepherd_env'] ? 'production' : 'sandbox' );
 		$shepherd_clinic = self::sanitize_shepherd_clinic(
 			array_key_exists( 'shepherd_clinic_id', $input ) ? $input['shepherd_clinic_id'] : null,
 			isset( $current['shepherd_clinic_id'] ) ? (string) $current['shepherd_clinic_id'] : ''
@@ -123,8 +120,9 @@ class VSPS_Settings {
 			$merged['clinic_timezone']     = $timezone;
 			$merged['nectar_meta_location'] = $meta;
 			$merged['nectar_env']          = $nectar_env;
-			$merged['shepherd_env']        = $shepherd_env;
 			$merged['shepherd_clinic_id']  = $shepherd_clinic;
+			// Shepherd keys are never stored on the site (an older build could have).
+			unset( $merged['shepherd_public_key'], $merged['shepherd_private_key'], $merged['shepherd_env'] );
 			if ( array_key_exists( 'hub_key', $input ) ) {
 				// The connect card asks for the hub key when Nectar production is chosen.
 				$merged['hub_key'] = self::sanitize_hub_key( $input['hub_key'], isset( $current['hub_key'] ) ? (string) $current['hub_key'] : '' );
@@ -185,7 +183,6 @@ class VSPS_Settings {
 			'clinic_timezone'   => $timezone,
 			'nectar_meta_location' => $meta,
 			'nectar_env'        => $nectar_env,
-			'shepherd_env'      => $shepherd_env,
 			'shepherd_clinic_id' => $shepherd_clinic,
 			'pims_memory'       => $memory,
 		), $credentials );
@@ -446,32 +443,22 @@ class VSPS_Settings {
 			</div>
 		</div>
 		<div class="vsps-pims-fields" data-vsps-pims="shepherd">
-			<p>
-				<label for="vsps_shepherd_env"><strong>Shepherd environment</strong></label><br />
-				<select id="vsps_shepherd_env" name="<?php echo esc_attr( $opt ); ?>[shepherd_env]" style="margin-top:6px;min-width:280px;">
-					<option value="sandbox" <?php selected( isset( $settings['shepherd_env'] ) ? $settings['shepherd_env'] : 'sandbox', 'sandbox' ); ?>>Sandbox (Shepherd's demo API)</option>
-					<option value="production" <?php selected( isset( $settings['shepherd_env'] ) ? $settings['shepherd_env'] : '', 'production' ); ?>>Production (a real clinic)</option>
-				</select>
-			</p>
-			<p>
-				<label for="vsps_shepherd_public"><strong>Shepherd public key</strong></label><br />
-				<input type="password" id="vsps_shepherd_public" name="<?php echo esc_attr( $opt ); ?>[shepherd_public_key]"
-					value="<?php echo esc_attr( $mask( isset( $settings['shepherd_public_key'] ) ? $settings['shepherd_public_key'] : '' ) ); ?>" class="regular-text" style="width:100%;margin-top:6px;"
-					autocomplete="new-password" spellcheck="false" data-vsps-required="1" />
-			</p>
-			<p>
-				<label for="vsps_shepherd_private"><strong>Shepherd private key</strong></label><br />
-				<input type="password" id="vsps_shepherd_private" name="<?php echo esc_attr( $opt ); ?>[shepherd_private_key]"
-					value="<?php echo esc_attr( $mask( isset( $settings['shepherd_private_key'] ) ? $settings['shepherd_private_key'] : '' ) ); ?>" class="regular-text" style="width:100%;margin-top:6px;"
-					autocomplete="new-password" spellcheck="false" data-vsps-required="1" />
-			</p>
+			<?php if ( $first_run ) : ?>
+				<?php $saved_hub_key = isset( $settings['hub_key'] ) ? (string) $settings['hub_key'] : ''; ?>
+				<p>
+					<label for="vsps_shepherd_hub_key"><strong>Hub connection key</strong></label><br />
+					<input type="password" id="vsps_shepherd_hub_key" name="<?php echo esc_attr( $opt ); ?>[hub_key]"
+						value="<?php echo esc_attr( $mask( $saved_hub_key ) ); ?>" class="regular-text" style="width:100%;margin-top:6px;"
+						placeholder="vss_…" autocomplete="new-password" spellcheck="false"<?php echo '' === $saved_hub_key ? ' data-vsps-required="1"' : ''; ?> />
+				</p>
+			<?php endif; ?>
 			<p>
 				<label for="vsps_shepherd_clinic"><strong>Shepherd clinic id</strong></label><br />
 				<input type="text" id="vsps_shepherd_clinic" name="<?php echo esc_attr( $opt ); ?>[shepherd_clinic_id]"
 					value="<?php echo esc_attr( isset( $settings['shepherd_clinic_id'] ) ? $settings['shepherd_clinic_id'] : '' ); ?>" class="regular-text" style="width:100%;margin-top:6px;"
 					placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" autocomplete="off" spellcheck="false" data-vsps-required="1" />
 			</p>
-			<p class="description">Each location's public key, private key, and clinic id come from Encore. Both keys are secrets and stay on the server. Sandbox is the demo host. Production creates real appointments and is not ready for a live clinic until that clinic has been through QC. Nothing is sent until all three are saved.</p>
+			<p class="description">No Shepherd keys go on this site: it reaches Shepherd through the Vetcelerator hub with its hub connection key<?php echo $first_run ? '' : ' (Vetcelerator Hub box below)'; ?>. A Vetcelerator admin enters the clinic's Shepherd keys and environment in the hub (Scheduler Data → Manage sites → Link Shepherd clinic), where they are stored encrypted. The clinic id here must be the same one.</p>
 		</div>
 		<script>
 		(function () {
@@ -911,7 +898,7 @@ class VSPS_Settings {
 	/** Credentials posted by the connect card / "Change connection"; masked or missing values keep the stored ones. */
 	private static function sanitize_credentials( array $input, array $current ) {
 		$out = array();
-		foreach ( array( 'api_token', 'nectar_client_id', 'nectar_client_secret', 'shepherd_public_key', 'shepherd_private_key' ) as $key ) {
+		foreach ( array( 'api_token', 'nectar_client_id', 'nectar_client_secret' ) as $key ) {
 			$value       = isset( $input[ $key ] ) && is_string( $input[ $key ] ) ? trim( $input[ $key ] ) : '';
 			$out[ $key ] = ( '' !== $value && false === strpos( $value, '•' ) )
 				? sanitize_text_field( $value )
@@ -996,9 +983,8 @@ class VSPS_Settings {
 	/** Shepherd options under the location. The adapter is scaffolding until a clinic is keyed and QC'd. */
 	private static function render_shepherd_options( array $settings ) {
 		self::render_clinic_timezone( $settings, "Appointment times are shown in the clinic's local time. Used when Shepherd does not report an IANA timezone." );
-		$env = isset( $settings['shepherd_env'] ) ? $settings['shepherd_env'] : 'sandbox';
 		?>
-		<div class="notice notice-info inline" style="margin-top:12px;"><p>Shepherd books the appointment directly (status upcoming). Only appointment types with direct booking enabled are offered. <?php echo 'production' === $env ? 'This site is set to <strong>Production</strong>: a saved booking creates a real appointment and is not retried.' : 'This site is on <strong>Sandbox</strong> (Shepherd\'s demo API). Switch to Production only after the clinic has a key and has been through QC.'; ?></p></div>
+		<div class="notice notice-info inline" style="margin-top:12px;"><p>Shepherd books the appointment directly (status upcoming). Only appointment types with direct booking enabled are offered. Requests go through the Vetcelerator hub, which holds the clinic's Shepherd keys and chooses Sandbox or Production (Scheduler Data → Manage sites). On Production a saved booking creates a real appointment and is not retried.</p></div>
 		<?php
 	}
 

@@ -2,10 +2,11 @@
 /**
  * Shepherd (shepherd.vet) adapter. Server-side REST client for the Open API.
  *
- * Auth is two secret keys plus the clinic UUID, all sent as headers. They
- * never reach the browser. One saved clinic id is one location: Encore issues
- * a key per location, and this build has no key, so nothing here calls a live
- * clinic unless an admin has saved credentials and then uses the widget.
+ * Requests go through the Vetcelerator hub (POST {hub}/api/wp/v1/scheduler/shepherd
+ * with the site's hub key). The clinic's Shepherd keys and environment are
+ * stored only in the hub, encrypted; the hub adds them and forwards the call,
+ * so this site never holds or sends a Shepherd key. One saved clinic id is one
+ * location (the widget's location id) and must match the clinic the hub links.
  *
  * Schemas: Shepherd Open API 2.246.0.33 (developer.shepherd.vet, Nov 2026).
  * Creates are not retried. Appointment overlap is not rejected by Shepherd,
@@ -18,9 +19,8 @@ if ( ! defined( 'ABSPATH' ) ) {
 
 class VSPS_Shepherd implements VSPS_Pims {
 
-	const PRODUCTION_BASE = 'https://open-api.shepherd.vet/pav2';
-	const SANDBOX_BASE    = 'https://demo-open-api.shepherd.vet/pav2';
-	const CLINIC_ID_RE    = '/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i';
+	const HUB_PROXY_PATH = '/api/wp/v1/scheduler/shepherd';
+	const CLINIC_ID_RE   = '/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i';
 
 	/** AppointmentWriteModel.visitReason limit (characters). */
 	const VISIT_REASON_MAX = 1000;
@@ -36,39 +36,33 @@ class VSPS_Shepherd implements VSPS_Pims {
 		'Hawaiian Standard Time' => 'Pacific/Honolulu',
 	);
 
-	private $public_key;
-	private $private_key;
+	private $hub_url;
+	private $hub_key;
 	private $clinic_id;
-	private $base;
 	private $fallback_timezone;
 
 	/**
-	 * @param string $environment 'sandbox' (demo host) or 'production'. Anything else is sandbox.
+	 * @param string $hub_url The Vetcelerator hub (VSPS_HUB_URL).
+	 * @param string $hub_key This site's hub connection key (vss_...).
 	 */
-	public function __construct( $public_key, $private_key, $clinic_id, $environment = 'sandbox', $fallback_timezone = '' ) {
-		$this->public_key         = (string) $public_key;
-		$this->private_key        = (string) $private_key;
-		$this->clinic_id          = trim( (string) $clinic_id );
-		$this->base               = self::base_url( $environment );
-		$this->fallback_timezone  = (string) $fallback_timezone;
+	public function __construct( $hub_url, $hub_key, $clinic_id, $fallback_timezone = '' ) {
+		$this->hub_url           = rtrim( (string) $hub_url, '/' );
+		$this->hub_key           = (string) $hub_key;
+		$this->clinic_id         = trim( (string) $clinic_id );
+		$this->fallback_timezone = (string) $fallback_timezone;
 	}
 
 	public function platform() {
 		return 'shepherd';
 	}
 
-	public static function base_url( $environment ) {
-		return 'production' === $environment ? self::PRODUCTION_BASE : self::SANDBOX_BASE;
-	}
-
 	public static function is_clinic_id( $value ) {
 		return is_string( $value ) && 1 === preg_match( self::CLINIC_ID_RE, trim( $value ) );
 	}
 
-	/** True when Settings has both keys and a clinic UUID. No network. */
+	/** True when Settings has the hub key and a clinic UUID. No network. */
 	public static function configured( array $settings ) {
-		return '' !== (string) ( isset( $settings['shepherd_public_key'] ) ? $settings['shepherd_public_key'] : '' )
-			&& '' !== (string) ( isset( $settings['shepherd_private_key'] ) ? $settings['shepherd_private_key'] : '' )
+		return '' !== (string) ( isset( $settings['hub_key'] ) ? $settings['hub_key'] : '' )
 			&& self::is_clinic_id( isset( $settings['shepherd_clinic_id'] ) ? $settings['shepherd_clinic_id'] : '' );
 	}
 
@@ -96,29 +90,32 @@ class VSPS_Shepherd implements VSPS_Pims {
 		if ( ! self::is_clinic_id( $this->clinic_id ) ) {
 			return new WP_Error( 'vsps_config', 'Shepherd needs the clinic id from Encore (a UUID) before it can connect.' );
 		}
-		if ( '' === $this->public_key || '' === $this->private_key ) {
-			return new WP_Error( 'vsps_config', 'Shepherd needs both API keys from Encore before it can connect.' );
+		if ( '' === $this->hub_key ) {
+			return new WP_Error( 'vsps_config', 'Add the hub connection key in Settings to connect to Shepherd.' );
 		}
-		$url = $this->base . '/' . ltrim( (string) $path, '/' );
-		$version = defined( 'VSPS_VERSION' ) ? VSPS_VERSION : 'dev';
-		$response = wp_remote_post( $url, array(
-			'timeout'     => 30,
-			'redirection' => 0, // never forward the private key to another host
+		$version  = defined( 'VSPS_VERSION' ) ? VSPS_VERSION : 'dev';
+		$response = wp_remote_post( $this->hub_url . self::HUB_PROXY_PATH, array(
+			'timeout'     => 35, // the hub's own Shepherd timeout is 30 s
+			'redirection' => 0,
 			'headers'     => array(
-				'Content-Type'              => 'application/json',
-				'Accept'                    => 'application/json',
-				'User-Agent'                => 'Vetcelerator-Scheduler/' . $version,
-				'X-Integration-Public-Key'  => $this->public_key,
-				'X-Integration-Private-Key' => $this->private_key,
-				'X-Clinic-Id'               => $this->clinic_id,
+				'Content-Type'   => 'application/json',
+				'Accept'         => 'application/json',
+				'Authorization'  => 'Bearer ' . $this->hub_key,
+				'User-Agent'     => 'Vetcelerator-Scheduler/' . $version,
+				'X-VSPS-Version' => $version,
 			),
-			'body'        => wp_json_encode( $body ),
+			'body'        => wp_json_encode( array( 'path' => ltrim( (string) $path, '/' ), 'body' => (object) $body ) ),
 		) );
 		if ( is_wp_error( $response ) ) {
 			return $response;
 		}
 		$code = (int) wp_remote_retrieve_response_code( $response );
 		$raw  = (string) wp_remote_retrieve_body( $response );
+		// Without this header the answer is the hub's own (a refused site key,
+		// no Shepherd link, a rate limit), not Shepherd's.
+		if ( 'shepherd' !== strtolower( (string) wp_remote_retrieve_header( $response, 'x-vsps-upstream' ) ) ) {
+			return self::hub_error( $code, $raw );
+		}
 		if ( $code >= 200 && $code < 300 ) {
 			if ( '' === trim( $raw ) ) {
 				return array();
@@ -132,6 +129,25 @@ class VSPS_Shepherd implements VSPS_Pims {
 		return new WP_Error( 'vsps_http', $this->error_text( $code, $raw ), array( 'status' => $code ) );
 	}
 
+	/** The hub refused or could not complete the call: a readable reason for the admin and the log. */
+	public static function hub_error( $code, $raw ) {
+		$json  = json_decode( (string) $raw, true );
+		$error = is_array( $json ) && isset( $json['error'] ) && is_string( $json['error'] ) ? $json['error'] : '';
+		$texts = array(
+			'missing_site_key'        => 'Add the hub connection key in Settings to connect to Shepherd.',
+			'invalid_site_key'        => "The Vetcelerator hub did not accept this site's hub connection key.",
+			'shepherd_not_linked'     => 'This site is not linked to a Shepherd clinic in the Vetcelerator hub yet.',
+			'rate_limited'            => 'Too many Shepherd requests from this site right now. Please try again in a minute.',
+			'operation_not_allowed'   => 'The Vetcelerator hub does not allow this Shepherd request.',
+			'variables_not_allowed'   => 'The Vetcelerator hub does not allow this Shepherd request.',
+			'shepherd_upstream_auth'  => "Shepherd did not accept the clinic's keys stored in the Vetcelerator hub.",
+			'shepherd_unreachable'    => 'Shepherd did not answer. Please try again later.',
+			'credentials_unavailable' => "The Vetcelerator hub could not read this clinic's Shepherd keys.",
+		);
+		$text = isset( $texts[ $error ] ) ? $texts[ $error ] : 'The Vetcelerator hub could not reach Shepherd (HTTP ' . (int) $code . ').';
+		return new WP_Error( 'vsps_http', $text, array( 'status' => (int) $code, 'hub_error' => $error ) );
+	}
+
 	private function error_text( $code, $raw ) {
 		$parsed = json_decode( $raw, true );
 		if ( is_string( $parsed ) && '' !== $parsed ) {
@@ -143,11 +159,6 @@ class VSPS_Shepherd implements VSPS_Pims {
 		}
 		if ( '' === $text ) {
 			$text = 'HTTP ' . (int) $code;
-		}
-		foreach ( array( $this->public_key, $this->private_key ) as $secret ) {
-			if ( strlen( $secret ) >= 8 ) {
-				$text = str_replace( $secret, '[redacted]', $text );
-			}
 		}
 		$text = preg_replace( '/[^\s@]+@[^\s@]+/', '[email]', $text );
 		$text = 'Shepherd: ' . $text . ' (HTTP ' . (int) $code . ')';
@@ -176,7 +187,7 @@ class VSPS_Shepherd implements VSPS_Pims {
 	/* ---------- clinic ---------- */
 
 	private function clinic() {
-		$data = VSPS_Cache::remember( array( 'shepherd-clinic', md5( $this->clinic_id . '|' . $this->base ) ), function () {
+		$data = VSPS_Cache::remember( array( 'shepherd-clinic', md5( $this->clinic_id . '|' . $this->hub_url ) ), function () {
 			return $this->post( 'open-api-clinics', array(
 				'ids'   => $this->clinic_id,
 				'rpp'   => 1,
@@ -437,7 +448,7 @@ class VSPS_Shepherd implements VSPS_Pims {
 	}
 
 	private function type_duration( $type_id ) {
-		$types = VSPS_Cache::remember( array( 'shepherd-types', md5( $this->clinic_id . '|' . $this->base ) ), function () {
+		$types = VSPS_Cache::remember( array( 'shepherd-types', md5( $this->clinic_id . '|' . $this->hub_url ) ), function () {
 			return $this->get_bookable_types( $this->clinic_id );
 		}, HOUR_IN_SECONDS );
 		if ( is_wp_error( $types ) ) {
@@ -948,7 +959,7 @@ class VSPS_Shepherd implements VSPS_Pims {
 	}
 
 	private function cached_lookup( $name, $path, array $body ) {
-		return VSPS_Cache::remember( array( 'shepherd-' . $name, md5( $this->base ) ), function () use ( $path, $body ) {
+		return VSPS_Cache::remember( array( 'shepherd-' . $name, md5( $this->clinic_id . '|' . $this->hub_url ) ), function () use ( $path, $body ) {
 			return $this->collection( $path, $body );
 		}, 12 * HOUR_IN_SECONDS );
 	}

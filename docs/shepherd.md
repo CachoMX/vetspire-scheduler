@@ -13,39 +13,32 @@ Same pattern as Nectar:
 | `VSPS_Pims` | The only surface the widget, REST layer, and `VSPS_Booking` use |
 | `VSPS_Pims_Registry` | Label, `confirm` booking mode, lead time 0, which form fields Shepherd can store |
 | `VSPS_Shepherd` | REST adapter. Selected only when Settings → Practice management system is Shepherd |
-| Settings | Public key, private key, clinic UUID, sandbox (default) or production |
+| Settings | Clinic UUID only (plus the site's hub connection key). No Shepherd keys. |
+| Hub (vetcelerator-platform) | Stores the clinic's key pair and environment **encrypted**, and forwards the site's requests to Shepherd |
 
-A site saved as Vetspire or Nectar never constructs this client. `vsps_api()` returns null until both keys and a UUID are present, so an empty Shepherd selection does not call the API. Sandbox is the default environment (`https://demo-open-api.shepherd.vet/pav2`). Production (`https://open-api.shepherd.vet/pav2`) is an explicit choice. There is no free-form base URL, so a saved key cannot be pointed at an arbitrary host.
+## Keys live only in the hub
 
-## Auth and per-location keys
+The plugin never holds a Shepherd key. Every request goes to the Vetcelerator hub:
 
-Every request sends:
+`POST {VSPS_HUB_URL}/api/wp/v1/scheduler/shepherd` with `Authorization: Bearer <hub key>` and body `{"path": "open-api-…", "body": {…}}`.
 
-| Header | Value |
-|---|---|
-| `X-Integration-Public-Key` | Secret. Shepherd compares it case-sensitively. Not a publishable client id. |
-| `X-Integration-Private-Key` | Secret. Never logged, never sent to the browser. |
-| `X-Clinic-Id` | Clinic UUID. Required on every endpoint except the clinic list. A malformed value is a `500` on Shepherd's side, so the plugin refuses a non-UUID locally and does not send the request. |
-| `Content-Type` | `application/json` |
-| `User-Agent` | `Vetcelerator-Scheduler/<version>` |
+The hub (vetcelerator-platform, migration `20261117000001`):
 
-There is no OAuth refresh. Both keys can be set in `wp-config.php` as `VSPS_SHEPHERD_PUBLIC_KEY`, `VSPS_SHEPHERD_PRIVATE_KEY`, and `VSPS_SHEPHERD_CLINIC_ID` so they need not live in the database.
+- authenticates the site by its hub key (`vss_…`);
+- reads the clinic's keys from `scheduler_sites`, where they are stored encrypted with AES-256-GCM (`WP_CREDENTIALS_KEY`), and adds `X-Integration-Public-Key`, `X-Integration-Private-Key` and `X-Clinic-Id` itself;
+- picks the host from the environment saved with the keys (sandbox `demo-open-api.shepherd.vet/pav2`, production `open-api.shepherd.vet/pav2`); there is no free-form base URL;
+- forwards only the 18 `POST /pav2/open-api-…` paths this adapter uses, with per-site rate limits; a client search must be one exact email (and its answer is filtered to that email), a pet lookup one client id;
+- never follows redirects, so the keys can't be forwarded to another host;
+- answers with Shepherd's own status and body plus `X-VSPS-Upstream: shepherd`. Without that header the answer is the hub's own refusal (`shepherd_not_linked`, `invalid_site_key`, `rate_limited`, …) and the plugin reports it as such;
+- logs every call in `pims_api_calls`: site, path, HTTP status, duration, the hub's error code. Never bodies, keys or pet-owner details. Kept 90 days.
 
-Encore issues a key per clinic location. This build stores that location's keys on the WordPress site, the same way a Vetspire API token is stored, and treats the clinic UUID as the widget's single location id. Redirects are disabled so the private key is not forwarded.
+An admin or manager enters the keys in the hub: Scheduler Data → Manage sites → **Link Shepherd clinic** (clinic id, environment, public key, private key). The keys are write-only there: they are never shown again, only when they were last set. The clinic id in the plugin's Settings must be the same clinic: it is the widget's single location id.
 
-### Does this need a hub proxy?
+This works whether Encore issues a key per location (one link per site) or one partner key for many clinics (the same key pair saved on each linked site).
 
-Not for this model. Nectar's proxy exists because **one** client id/secret is shared by every clinic and must not sit on a clinic's WordPress site. The hub (`POST /api/wp/v1/scheduler/nectar/graphql`, vetcelerator-platform PR #240) logs in and forwards an allowlisted GraphQL document.
+A site saved as Vetspire or Nectar never constructs this client. `vsps_api()` returns null until the hub key and a UUID are present, so an empty Shepherd selection does not call anything. A malformed clinic id is a `500` on Shepherd's side, so the plugin refuses a non-UUID locally and the hub validates it again.
 
-Shepherd's documented partner model can also be one integration key granted many clinics, with `X-Clinic-Id` selecting the clinic. If Encore instead gives Vetcelerator **one** partner key for every Shepherd clinic, that key must not be copied onto each site, and the hub needs a **new** REST proxy. It cannot reuse the Nectar GraphQL allowlist. That proxy would:
-
-- authenticate the site with its existing hub key (`vss_…`)
-- hold the Shepherd key pair in the hub
-- forward only an allowlisted set of `POST /pav2/open-api-…` paths
-- never retry a `/write` (creates are not idempotent)
-- keep the private key out of plugin logs
-
-Until Encore says the key is shared, the plugin talks to Shepherd directly and **no vetcelerator-platform change is required to try the scaffold**. A platform change **is** required before a live Shepherd booking is reported to the hub (below).
+Reads of HTTP 502/503 are tried once more. Creates (`/write`) are never retried.
 
 ## Endpoints the adapter uses
 
