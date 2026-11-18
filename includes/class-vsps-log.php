@@ -208,6 +208,9 @@ class VSPS_Log {
 			'client_id'      => isset( $result['client_id'] ) ? (string) $result['client_id'] : '',
 			'patient_id'     => isset( $result['patient_id'] ) ? (string) $result['patient_id'] : '',
 			'client_type'    => ! empty( $result['existing_client'] ) ? 'existing' : 'new',
+			// What happened in the PIMS, not what the form claimed: a pet already
+			// on file that the booking matched by name is not a new pet.
+			'pet_is_new'     => array_key_exists( 'pet_created', $result ) ? ( $result['pet_created'] ? 1 : 0 ) : ( ! empty( $args['pet_is_new'] ) ? 1 : 0 ),
 			// The PIMS's own name for the pet when an existing one was matched (the
 			// visitor's typed spelling/casing would otherwise look "edited" on the
 			// very first sync even though nobody touched the PIMS).

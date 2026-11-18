@@ -271,6 +271,7 @@ if ( $booked ) {
 		check( 'client reused (existing_client=true)', true === $result2['existing_client'] );
 		check( 'same client id', $result2['client_id'] === $result['client_id'] );
 		check( 'patient reused by name', $result2['patient_id'] === $result['patient_id'] );
+		check( 'reused pet reported as not created (log says not a new pet)', false === $result2['pet_created'], detail( $result2 ) );
 	}
 
 	echo "== 9. Cleanup: delete test appointments ==\n";

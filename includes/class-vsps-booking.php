@@ -147,7 +147,8 @@ class VSPS_Booking {
 				return new WP_Error( 'vsps_verify', 'We could not verify that this account is yours. Please use the phone number the clinic has on file, or call the clinic to add a new pet.' );
 			}
 		}
-		$pet_age = '';
+		$pet_age     = '';
+		$pet_created = false;
 		if ( null === $patient_id ) {
 			$p = $args['patient'];
 			// The age the owner gave for the pet being created, for platforms that
@@ -164,7 +165,8 @@ class VSPS_Booking {
 			if ( empty( $patient['id'] ) ) {
 				return new WP_Error( 'vsps_patient', 'Could not create the patient in the practice system.' );
 			}
-			$patient_id = $patient['id'];
+			$patient_id  = $patient['id'];
+			$pet_created = true;
 		}
 
 		// 3. Create the appointment on the selected slot.
@@ -198,6 +200,10 @@ class VSPS_Booking {
 			// typed name is only canonical for a brand-new patient we just created.
 			'patient_name'    => $matched_patient ? $matched_patient['name'] : $args['patient']['name'],
 			'existing_client' => $existing_client,
+			// Whether THIS booking created the pet. The form's own pet_is_new only
+			// says which form was used: "I'm new" with a pet already on file books
+			// that pet, and must not be reported as a new pet (QC 2026-11-06).
+			'pet_created'     => $pet_created,
 			'type_name'       => isset( $type['name'] ) ? $type['name'] : '',
 			'provider_name'   => isset( $slot['provider']['name'] ) ? $slot['provider']['name'] : '',
 			// true = the clinic still has to confirm it (request-based platforms).
