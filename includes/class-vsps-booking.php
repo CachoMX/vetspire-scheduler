@@ -187,6 +187,8 @@ class VSPS_Booking {
 			return new WP_Error( 'vsps_appointment', 'Could not create the appointment in the practice system.' );
 		}
 
+		self::fill_missing_address( $api, $client, $args, $existing_client );
+
 		return array(
 			'appointment_id'  => $appointment['id'],
 			'start'           => $appointment['start'],
@@ -201,6 +203,50 @@ class VSPS_Booking {
 			// true = the clinic still has to confirm it (request-based platforms).
 			'request'         => 'request' === VSPS_Pims_Registry::booking_mode( $api->platform() ),
 		);
+	}
+
+	/**
+	 * A client already on file who used the new-client form typed an address
+	 * we would otherwise drop. Saved only when the FULL phone typed on the form
+	 * matches one on file (stricter than the last-4 proof for adding a pet: a
+	 * real owner types their own number whole) and the platform supports it;
+	 * the adapter never replaces an address on file.
+	 * Best effort, after the appointment exists: a failure never costs the
+	 * visitor their booking.
+	 */
+	private static function fill_missing_address( VSPS_Pims $api, $client, array $args, $existing_client ) {
+		if ( ! $existing_client || ( isset( $args['client_type'] ) && 'existing' === $args['client_type'] ) ) {
+			return;
+		}
+		if ( ! method_exists( $api, 'fill_missing_client_address' ) || empty( $args['client']['address'] ) ) {
+			return;
+		}
+		if ( ! self::full_phone_matches( $client, isset( $args['client']['phone'] ) ? (string) $args['client']['phone'] : '' ) ) {
+			return;
+		}
+		$result = $api->fill_missing_client_address( $client, $args );
+		if ( is_wp_error( $result ) ) {
+			error_log( '[vetspire-scheduler] could not add the address to client ' . ( isset( $client['id'] ) ? $client['id'] : '?' ) . ': ' . $result->get_error_code() );
+		}
+	}
+
+	/**
+	 * True when the typed phone is one on file, comparing the last 10 digits
+	 * (so "+1 (865) 855-9494" equals "865.855.9494"). Fewer than 7 digits on
+	 * either side never matches.
+	 */
+	private static function full_phone_matches( $client, $typed ) {
+		$typed = substr( preg_replace( '/\D/', '', (string) $typed ), -10 );
+		if ( strlen( $typed ) < 7 || empty( $client['phoneNumbers'] ) || ! is_array( $client['phoneNumbers'] ) ) {
+			return false;
+		}
+		foreach ( $client['phoneNumbers'] as $phone ) {
+			$digits = substr( preg_replace( '/\D/', '', isset( $phone['value'] ) ? (string) $phone['value'] : '' ), -10 );
+			if ( strlen( $digits ) >= 7 && $digits === $typed ) {
+				return true;
+			}
+		}
+		return false;
 	}
 
 	/** True when the client's phone(s) on file end with the given 4 digits. */

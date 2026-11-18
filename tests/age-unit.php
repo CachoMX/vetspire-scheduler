@@ -1,8 +1,8 @@
 <?php
 /**
  * Offline checks for v1.30.0: the pet's age in whole years and months (call
- * with Nicole and Abi, 2026-10-30). Vetspire gets an estimated birth year and
- * month (never a day); Nectar, which can't store an estimated age, gets it in
+ * with Nicole and Abi, 2026-10-30). Vetspire gets an estimated birth year,
+ * month and day (today's day: without one its Info page has no birth date); Nectar, which can't store an estimated age, gets it in
  * the appointment notes instead of an invented birthday. No WordPress, no network.
  *
  * php tests/age-unit.php
@@ -92,6 +92,22 @@ check( 'clinic timezone: 6 months on Oct 31 (Chicago) → April, not May', array
 check( 'no timezone: UTC month (May)', array( 'year' => 2026, 'month' => 5 ) === VSPS_Fields::age_birth_month( 0, 6, $edge ) );
 check( 'invalid timezone: falls back to UTC', array( 'year' => 2026, 'month' => 5 ) === VSPS_Fields::age_birth_month( 0, 6, $edge, 'Not/AZone' ) );
 
+echo "== estimated birth date (day) ==\n";
+$at = function ( $y, $m, $d ) { return gmmktime( 15, 0, 0, $m, $d, $y ); };
+$cases = array(
+	array( 3, 7, $at( 2026, 11, 17 ), '', array( 2023, 4, 17 ), 'QC case: 3y 7m on Nov 17 → 2023-04-17' ),
+	array( 0, 1, $at( 2026, 3, 31 ), '', array( 2026, 2, 28 ), '1 month on Mar 31 → Feb 28 (short month)' ),
+	array( 2, 1, $at( 2026, 3, 31 ), '', array( 2024, 2, 29 ), '2y 1m on Mar 31 → Feb 29 2024 (leap year)' ),
+	array( 0, 6, $at( 2026, 12, 31 ), '', array( 2026, 6, 30 ), '6 months on Dec 31 → Jun 30' ),
+	array( 1, '', $at( 2026, 1, 15 ), '', array( 2025, 1, 15 ), '1 year (months empty) → same day last year' ),
+	array( 0, 6, gmmktime( 2, 0, 0, 11, 1, 2026 ), 'America/Chicago', array( 2026, 4, 30 ), 'Oct 31 9 pm Chicago (Nov 1 UTC) → the clinic\'s day: Apr 30' ),
+	array( 0, 6, gmmktime( 2, 0, 0, 11, 1, 2026 ), 'Not/AZone', array( 2026, 5, 1 ), 'invalid timezone → UTC (May 1)' ),
+);
+foreach ( $cases as $c ) {
+	$got = VSPS_Fields::age_birth_date( $c[0], $c[1], $c[2], $c[3] );
+	check( $c[5], array( 'year' => $c[4][0], 'month' => $c[4][1], 'day' => $c[4][2] ) === $got, $got );
+}
+
 echo "== phrase for notes ==\n";
 foreach ( array( array( 3, '', '3 years' ), array( '', 6, '6 months' ), array( 1, 2, '1 year 2 months' ), array( 0, 1, '1 month' ), array( 2, 0, '2 years' ), array( 0, 0, '0 months' ), array( 0, '', 'under 1 year' ) ) as $p ) {
 	check( json_encode( $p[0] ) . ' + ' . json_encode( $p[1] ) . ' → "' . $p[2] . '"', $p[2] === VSPS_Fields::age_phrase( $p[0], $p[1] ) );
@@ -143,7 +159,7 @@ VSPS_Fields::enforce( $a, resolved( array( 'age' => false ) ) );
 check( 'existing pet: age not sent', '' === $a['patient']['age'] && '' === $a['patient']['age_months'] );
 check( 'Settings label', 'Age (years and months)' === VSPS_Fields::REGISTRY['age'][1] );
 
-/* ---------- Vetspire: year + month, estimated, no day ---------- */
+/* ---------- Vetspire: year + month + day, estimated ---------- */
 
 echo "== Vetspire ==\n";
 class Capture_Api extends VSPS_Api {
@@ -161,14 +177,15 @@ function vetspire_patient( array $patient ) {
 $now  = VSPS_Fields::age_birth_month( 3, 0 );
 $sent = vetspire_patient( array( 'age' => 3 ) );
 check( '3 years → birthYear + birthMonth, estimated', $now['year'] === $sent['birthYear'] && $now['month'] === $sent['birthMonth'] && true === $sent['isEstimatedAge'], $sent );
-check( '3 years → no birth day or date invented', ! isset( $sent['birthDay'] ) && ! isset( $sent['birthDate'] ) );
+$day  = VSPS_Fields::age_birth_date( 3, 0 );
+check( '3 years → today\'s day of the month too, so Vetspire fills the birth date (Info page)', $day['day'] === $sent['birthDay'] && $day['month'] === $sent['birthMonth'] && ! isset( $sent['birthDate'] ), $sent );
 $kit  = VSPS_Fields::age_birth_month( 0, 6 );
 $sent = vetspire_patient( array( 'age_months' => 6 ) );
 check( '6 months (years empty) → that month, estimated', $kit['year'] === $sent['birthYear'] && $kit['month'] === $sent['birthMonth'] && true === $sent['isEstimatedAge'], $sent );
 $sent = vetspire_patient( array( 'age' => 3, 'birth_date' => '2023-04-12' ) );
-check( 'a real birth date wins: no estimated year/month', '2023-04-12' === $sent['birthDate'] && false === $sent['isEstimatedAge'] && ! isset( $sent['birthYear'] ) && ! isset( $sent['birthMonth'] ), $sent );
+check( 'a real birth date wins: no estimated year/month/day', '2023-04-12' === $sent['birthDate'] && false === $sent['isEstimatedAge'] && ! isset( $sent['birthYear'] ) && ! isset( $sent['birthMonth'] ) && ! isset( $sent['birthDay'] ), $sent );
 $sent = vetspire_patient( array() );
-check( 'no age → nothing about age sent', ! isset( $sent['birthYear'] ) && ! isset( $sent['birthMonth'] ) && ! isset( $sent['isEstimatedAge'] ), $sent );
+check( 'no age → nothing about age sent', ! isset( $sent['birthYear'] ) && ! isset( $sent['birthMonth'] ) && ! isset( $sent['birthDay'] ) && ! isset( $sent['isEstimatedAge'] ), $sent );
 
 /* ---------- Nectar: no invented birthday; age in the notes ---------- */
 

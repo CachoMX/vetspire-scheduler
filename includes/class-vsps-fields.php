@@ -106,6 +106,32 @@ class VSPS_Fields {
 		return array( 'year' => intdiv( $index, 12 ), 'month' => $index % 12 + 1 );
 	}
 
+	/**
+	 * The estimated birth date for an age of $years + $months: the same month
+	 * as age_birth_month() and today's day of the month in the clinic's
+	 * timezone (the month's last day when it is shorter, e.g. 31 → 28 Feb).
+	 * The PIMS then shows exactly the age the owner gave ("3 years 7 months",
+	 * "0 weeks") and fills its birth date fields, still flagged as estimated.
+	 *
+	 * @return array{year:int,month:int,day:int}
+	 */
+	public static function age_birth_date( $years, $months, $now = null, $timezone = '' ) {
+		$now   = null === $now ? time() : (int) $now;
+		$born  = self::age_birth_month( $years, $months, $now, $timezone );
+		try {
+			$zone = new DateTimeZone( '' !== (string) $timezone ? (string) $timezone : 'UTC' );
+		} catch ( Exception $e ) {
+			$zone = new DateTimeZone( 'UTC' );
+		}
+		$today = (int) ( new DateTimeImmutable( '@' . $now ) )->setTimezone( $zone )->format( 'j' );
+		$last  = (int) ( new DateTimeImmutable( sprintf( '%04d-%02d-01', $born['year'], $born['month'] ), new DateTimeZone( 'UTC' ) ) )->format( 't' );
+		return array(
+			'year'  => $born['year'],
+			'month' => $born['month'],
+			'day'   => min( $today, $last ),
+		);
+	}
+
 	/** "3 years", "6 months", "1 year 2 months"; "under 1 year" for 0 years and no months (for staff notes). */
 	public static function age_phrase( $years, $months ) {
 		if ( 0 === $years && '' === $months ) {

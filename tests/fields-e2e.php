@@ -185,24 +185,54 @@ check( 'pet note saved', false !== strpos( (string) ( $p['notes'] ?? '' ), 'nerv
 check( 'weight recorded (23.4 LB)', isset( $p['latestWeight']['value'] ) && abs( (float) $p['latestWeight']['value'] - 23.4 ) < 0.01 && 'LB' === strtoupper( (string) $p['latestWeight']['unit'] ), json_encode( $p['latestWeight'] ?? null ) );
 check( 'reason for visit in the appointment', ! is_wp_error( $a ) && 'Vetcelerator booking: AUTOMATED FIELDS TEST — safe to delete' === $a['appointment']['reason'], json_encode( $a ) );
 
-// v1.30.0: an age in years + months (no birth date) is an estimated year and
-// month, so Vetspire shows exactly the age the owner gave. A second pet on the
-// same test client (deactivated with it in cleanup).
+// An age in years + months (no birth date) is an estimated year, month and day
+// (today's, in the clinic's timezone), so Vetspire shows exactly the age the
+// owner gave AND fills the birth date on the patient's Info page (QC
+// 2026-11-17: without a day birthDate stayed null). A second pet on the same
+// test client (deactivated with it in cleanup).
 $aged = $api->create_booking_patient(
 	array( 'id' => (string) $res['client_id'] ),
-	array( 'patient' => array_merge( $booking['patient'], array( 'name' => 'AgePet', 'age' => 2, 'age_months' => 3, 'birth_date' => '', 'weight' => 0 ) ) )
+	array( 'clinic_timezone' => 'America/New_York', 'patient' => array_merge( $booking['patient'], array( 'name' => 'AgePet', 'age' => 2, 'age_months' => 3, 'birth_date' => '', 'weight' => 0 ) ) )
 );
+$want = VSPS_Fields::age_birth_date( 2, 3, null, 'America/New_York' );
 $ap = ! is_wp_error( $aged ) && ! empty( $aged['id'] )
 	? $api->request( 'query ($id: ID!) { patient(id: $id) { age birthYear birthMonth birthDay birthDate isEstimatedAge } }', array( 'id' => (string) $aged['id'] ) )
 	: $aged;
 check( 'age 2 years 3 months shown as "2 years 3 months old", estimated', ! is_wp_error( $ap ) && '2 years 3 months old' === ( $ap['patient']['age'] ?? '' ) && true === ( $ap['patient']['isEstimatedAge'] ?? null ), json_encode( $ap ) );
-check( 'age: no birth day or date invented', ! is_wp_error( $ap ) && array_key_exists( 'birthDay', $ap['patient'] ) && null === $ap['patient']['birthDay'] && null === $ap['patient']['birthDate'], json_encode( $ap ) );
+check( 'age: estimated birth date filled (Info page), still flagged estimated', ! is_wp_error( $ap ) && sprintf( '%04d-%02d-%02d', $want['year'], $want['month'], $want['day'] ) === ( $ap['patient']['birthDate'] ?? '' ), json_encode( $ap ) );
+
+// A client already on file with no address, who used the new-client form with
+// the phone on file, gets the typed address; an address on file is never
+// replaced. Its own bare client, deactivated in cleanup.
+$bare_email = 'zz-test-addr-' . time() . '@vetcelerator.com';
+$bare       = $api->create_client( array(
+	'givenName'         => 'zz-AddrTest',
+	'familyName'        => 'zz-Test',
+	'email'             => $bare_email,
+	'primaryLocationId' => TEST_LOCATION,
+	'phoneNumbers'      => array( array( 'value' => '555 010 0123', 'preferred' => true ) ),
+) );
+$found = ! is_wp_error( $bare ) && ! empty( $bare['id'] ) ? $api->find_client_by_email( $bare_email ) : $bare;
+check( 'lookup returns the (empty) address list', is_array( $found ) && array() === ( $found['addresses'] ?? null ), json_encode( $found ) );
+$typed = array( 'client' => array( 'address' => array( 'line1' => '123 Test Rd', 'line2' => '', 'city' => 'Testtown', 'state' => 'TN', 'postal' => '37923' ) ) );
+check( 'no address on file → added', is_array( $found ) && 'added' === $api->fill_missing_client_address( $found, $typed ) );
+$again = is_array( $found ) ? $api->find_client_by_email( $bare_email ) : null;
+$addr  = is_array( $again ) && ! empty( $again['id'] ) ? $api->request( 'query ($id: ID!) { client(id: $id) { addresses { line1 city state postalCode isPrimary use } } }', array( 'id' => (string) $again['id'] ) ) : null;
+check( 'address saved as the primary home address', ! is_wp_error( $addr ) && array( array( 'city' => 'Testtown', 'isPrimary' => true, 'line1' => '123 Test Rd', 'postalCode' => '37923', 'state' => 'TN', 'use' => 'HOME' ) ) === ( $addr['client']['addresses'] ?? null ), json_encode( $addr ) );
+$moved = array( 'client' => array( 'address' => array( 'line1' => '9 Other St', 'line2' => '', 'city' => 'Elsewhere', 'state' => 'TX', 'postal' => '77449' ) ) );
+check( 'address on file → kept, not replaced', is_array( $again ) && 'kept' === $api->fill_missing_client_address( $again, $moved ) );
+$addr = is_array( $again ) && ! empty( $again['id'] ) ? $api->request( 'query ($id: ID!) { client(id: $id) { addresses { line1 } } }', array( 'id' => (string) $again['id'] ) ) : null;
+check( 'still one address after a second booking', ! is_wp_error( $addr ) && 1 === count( $addr['client']['addresses'] ?? array() ), json_encode( $addr ) );
 
 echo "== 4. Cleanup ==\n";
 $del = $api->request( 'mutation ($id: ID!) { deleteAppointment(id: $id) { id deleted } }', array( 'id' => (string) $res['appointment_id'] ) );
 check( 'test appointment deleted', ! is_wp_error( $del ) && ! empty( $del['deleteAppointment']['deleted'] ), json_encode( $del ) );
 $off = $api->request( 'mutation ($id: ID!) { updateClient(id: $id, input: { isActive: false }) { id isActive } }', array( 'id' => (string) $res['client_id'] ) );
 check( 'test client deactivated', ! is_wp_error( $off ) && false === $off['updateClient']['isActive'], json_encode( $off ) );
+if ( ! is_wp_error( $bare ) && ! empty( $bare['id'] ) ) {
+	$off = $api->request( 'mutation ($id: ID!) { updateClient(id: $id, input: { isActive: false }) { id isActive } }', array( 'id' => (string) $bare['id'] ) );
+	check( 'address test client deactivated', ! is_wp_error( $off ) && false === $off['updateClient']['isActive'], json_encode( $off ) );
+}
 
 echo "\n==== RESULT: $pass passed, $fail failed ====\n";
 exit( $fail > 0 ? 1 : 0 );

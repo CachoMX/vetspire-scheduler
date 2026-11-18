@@ -1,7 +1,18 @@
 {
+    "mutation( $clientId:ID!, $input:AddressInput ){ addClientAddress( clientId:$clientId, input:$input ){ id } }": {
+        "input": [
+            "city",
+            "isPrimary",
+            "line1",
+            "postalCode",
+            "state",
+            "use"
+        ]
+    },
     "mutation( $clientId:ID!, $input:PatientInput ){ createPatient( clientId:$clientId, input:$input ){ id name } }": {
         "input": [
             "birthDate",
+            "birthDay",
             "birthMonth",
             "birthYear",
             "breed",

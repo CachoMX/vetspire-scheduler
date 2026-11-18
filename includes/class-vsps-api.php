@@ -52,13 +52,16 @@ class VSPS_Api implements VSPS_Pims {
 			$input['sex'] = $p['sex'];
 		}
 		if ( VSPS_Fields::has_age( $p ) ) {
-			// Year + month, no day: Vetspire then shows the age the owner gave
-			// ("3 years old", "6 months old") as an estimate. A year alone
-			// reads as January ("3 years 10 months" in late October).
+			// Year, month AND day, flagged as estimated. Without a day Vetspire
+			// keeps birthDate null: the header shows the age, but the patient's
+			// Info page shows today's date with empty years/months/weeks boxes
+			// and a "Missing DOB" badge (QC 2026-11-17). Today's day of the
+			// month makes the estimate read exactly as given ("3 years 7 months").
 			$tz                      = isset( $args['clinic_timezone'] ) ? $args['clinic_timezone'] : '';
-			$born                    = VSPS_Fields::age_birth_month( isset( $p['age'] ) ? $p['age'] : '', isset( $p['age_months'] ) ? $p['age_months'] : '', null, $tz );
+			$born                    = VSPS_Fields::age_birth_date( isset( $p['age'] ) ? $p['age'] : '', isset( $p['age_months'] ) ? $p['age_months'] : '', null, $tz );
 			$input['birthYear']      = $born['year'];
 			$input['birthMonth']     = $born['month'];
+			$input['birthDay']       = $born['day'];
 			$input['isEstimatedAge'] = true;
 		}
 		if ( ! empty( $p['neutered'] ) ) {
@@ -66,7 +69,7 @@ class VSPS_Api implements VSPS_Pims {
 		}
 		$input = array_merge( $input, self::patient_extras( $p ) );
 		if ( isset( $input['birthDate'] ) ) {
-			unset( $input['birthYear'], $input['birthMonth'] );
+			unset( $input['birthYear'], $input['birthMonth'], $input['birthDay'] );
 		}
 		$patient = $this->create_patient( $client['id'], $input );
 		if ( is_wp_error( $patient ) || empty( $patient['id'] ) ) {
@@ -123,20 +126,9 @@ Notes from the client: " . $c['notes'];
 			'primaryLocationId' => (string) $args['location_id'],
 			'notes'             => $notes,
 		);
-		$a = isset( $c['address'] ) ? $c['address'] : array();
-		// Only a complete address (an optional one can be half filled in).
-		if ( ! empty( $a['line1'] ) && ! empty( $a['city'] ) && ! empty( $a['state'] ) && ! empty( $a['postal'] ) ) {
-			$input['addresses'] = array( array_filter( array(
-				'line1'      => $a['line1'],
-				'line2'      => $a['line2'],
-				'city'       => $a['city'],
-				'state'      => $a['state'],
-				'postalCode' => $a['postal'],
-				'isPrimary'  => true,
-				'use'        => 'HOME',
-			), function ( $v ) {
-				return '' !== $v;
-			} ) );
+		$address = self::address_input( isset( $c['address'] ) ? $c['address'] : array() );
+		if ( null !== $address ) {
+			$input['addresses'] = array( $address );
 		}
 		$map = array(
 			'email_secondary' => 'secondaryEmail',
@@ -152,6 +144,60 @@ Notes from the client: " . $c['notes'];
 			}
 		}
 		return $input;
+	}
+
+	/**
+	 * AddressInput for the visitor's address, or null when it is incomplete
+	 * (an optional address can be half filled in).
+	 */
+	private static function address_input( $a ) {
+		$a = is_array( $a ) ? $a : array();
+		foreach ( array( 'line1', 'city', 'state', 'postal' ) as $key ) {
+			if ( empty( $a[ $key ] ) ) {
+				return null;
+			}
+		}
+		return array_filter( array(
+			'line1'      => (string) $a['line1'],
+			'line2'      => isset( $a['line2'] ) ? (string) $a['line2'] : '',
+			'city'       => (string) $a['city'],
+			'state'      => (string) $a['state'],
+			'postalCode' => (string) $a['postal'],
+			'isPrimary'  => true,
+			'use'        => 'HOME',
+		), function ( $v ) {
+			return '' !== $v;
+		} );
+	}
+
+	/**
+	 * Gives an existing client the address typed on the new-client form, but
+	 * only when the client has NO address on file: an address already there is
+	 * never replaced from the website (the clinic keeps that decision).
+	 * The caller must have verified the phone on file first.
+	 *
+	 * @return string|WP_Error 'added', 'kept' (one on file) or 'none' (no complete address typed).
+	 */
+	public function fill_missing_client_address( array $client, array $args ) {
+		$address = self::address_input( isset( $args['client']['address'] ) ? $args['client']['address'] : array() );
+		if ( null === $address || empty( $client['id'] ) ) {
+			return 'none';
+		}
+		if ( ! isset( $client['addresses'] ) || ! is_array( $client['addresses'] ) ) {
+			// Unknown (the lookup did not say): never risk a duplicate.
+			return 'kept';
+		}
+		if ( ! empty( $client['addresses'] ) ) {
+			return 'kept';
+		}
+		$data = $this->request(
+			'mutation ($clientId: ID!, $input: AddressInput) { addClientAddress(clientId: $clientId, input: $input) { id } }',
+			array(
+				'clientId' => (string) $client['id'],
+				'input'    => $address,
+			)
+		);
+		return is_wp_error( $data ) ? $data : 'added';
 	}
 
 	/** createPatient extras beyond name/species/breed/sex/age/neutered. */
@@ -337,6 +383,7 @@ Notes from the client: " . $c['notes'];
 				clients(filters: { email: $email }, limit: 5) {
 					id email givenName familyName
 					phoneNumbers { value }
+					addresses { id }
 					patients { id name isActive isDeceased }
 				}
 			}',

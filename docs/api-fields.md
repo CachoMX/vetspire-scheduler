@@ -49,8 +49,10 @@ collects, and what else is available to add.
 ### Currently collected by the plugin
 - Pet name, species (required in our form)
 - With the **"Ask for extended pet details"** toggle enabled (all optional, same single screen):
-  `breed`, `sex` (MALE / FEMALE), age in whole years and months (since 1.30.0 stored as an estimated
-  `birthYear` + `birthMonth` with `isEstimatedAge`, no day, so Vetspire shows "3 years old" / "6 months old";
+  `breed`, `sex` (MALE / FEMALE), age in whole years and months (stored as an estimated
+  `birthYear` + `birthMonth` + `birthDay` with `isEstimatedAge`; the day is today's in the clinic's timezone, so
+  Vetspire shows exactly "3 years 7 months old" and its Info page has a birth date. Without a day (1.30.0)
+  `birthDate` stayed null;
   Nectar has no estimated age, so there it goes in the appointment's staff notes), `neutered`
 
 ### Available but NOT collected (candidates to add)
