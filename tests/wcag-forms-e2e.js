@@ -273,7 +273,7 @@ async function toChoice(page) {
   expectError('confirm step, empty reason', e, /reason/i);
   check('confirm step: nothing is sent while a field is invalid', bookCalls === 0, bookCalls);
   // A server error shows in the form box; the next failed check must hide it.
-  bookReply = { status: 502, body: { code: 'vsps_booking', message: 'We could not complete the booking. Please try another time or call the clinic.', data: { status: 502 } } };
+  bookReply = { status: 424, body: { code: 'vsps_booking', message: 'We could not complete the booking. Please try another time or call the clinic.', data: { status: 424 } } };
   await setVal(v, 'notes', 'Checkup');
   await submit(v); await wait(800);
   const formBox = () => v.evaluate(() => { const b = document.querySelector('.vsps-overlay:last-of-type .vsps-error'); return !!(b && b.offsetWidth); });

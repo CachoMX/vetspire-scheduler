@@ -160,6 +160,8 @@ class VSPS_Shortcode {
 				'cancel'         => __( 'Cancel', 'vetspire-scheduler' ),
 				'confirm'        => __( 'Confirm Booking', 'vetspire-scheduler' ),
 				'booking'        => __( 'Booking…', 'vetspire-scheduler' ),
+				'sending'        => __( 'Sending… this can take a few seconds.', 'vetspire-scheduler' ),
+				'serverError'    => __( 'Something went wrong on our side. Please try again in a moment, or call the clinic.', 'vetspire-scheduler' ),
 				'requested'      => __( '✅ Request sent!', 'vetspire-scheduler' ),
 				'requestedNote'  => __( 'The clinic will confirm your appointment by email or phone.', 'vetspire-scheduler' ),
 				'booked'         => __( "✅ You're booked!", 'vetspire-scheduler' ),
@@ -178,10 +180,10 @@ class VSPS_Shortcode {
 				'nextAvailable'  => __( 'Next Available Appointment', 'vetspire-scheduler' ),
 				/* translators: %s: appointment type name, e.g. "Wellness Appointment". */
 				'nextAvailableType' => __( 'Next Available %s', 'vetspire-scheduler' ),
-				/* translators: %s: "a wellness appointment". */
-				'typeConfirmText' => __( 'The time you have selected is for %s. Please confirm the type of appointment, or select another:', 'vetspire-scheduler' ),
-				/* translators: %s: "a wellness appointment". */
-				'typeConfirmYes' => __( 'Yes, I need %s', 'vetspire-scheduler' ),
+				/* translators: %s: the appointment type's name, e.g. "Wellness". */
+				'typeConfirmText' => __( 'The time you have selected is for the following appointment type: %s. Please confirm this choice or select another:', 'vetspire-scheduler' ),
+				/* translators: %s: the appointment type's name, e.g. "Wellness". */
+				'typeConfirmYes' => __( 'Yes, book %s', 'vetspire-scheduler' ),
 				'typeChooseAnother' => __( 'Choose another appointment type', 'vetspire-scheduler' ),
 				'chooseAnother'  => __( 'Choose Another Time', 'vetspire-scheduler' ),
 				'slotGoneMessage' => __( 'The appointment time you selected is no longer available. Please choose another.', 'vetspire-scheduler' ),

@@ -11,6 +11,13 @@ if ( ! defined( 'ABSPATH' ) ) {
 
 class VSPS_Rest {
 
+	/**
+	 * The practice system failed. Not a 5xx on purpose: Cloudflare swaps an
+	 * origin 502/504 for its own HTML error page, so the widget got HTML
+	 * instead of our JSON message ("Unexpected token '<'", QC 2026-11-19).
+	 */
+	const UPSTREAM_STATUS = 424;
+
 	const NS              = 'vetspire/v1';
 	const BOOK_RATE_LIMIT = 5;      // bookings per IP...
 	const BOOK_RATE_TTL   = 3600;   // ...per hour.
@@ -165,7 +172,7 @@ class VSPS_Rest {
 			return $api->get_bookable_types( $location_id );
 		}, 3600 );
 		if ( is_wp_error( $types ) ) {
-			return new WP_Error( 'vsps_upstream', 'Could not load appointment types.', array( 'status' => 502 ) );
+			return new WP_Error( 'vsps_upstream', 'Could not load appointment types.', array( 'status' => self::UPSTREAM_STATUS ) );
 		}
 		return rest_ensure_response( array( 'types' => $types ) );
 	}
@@ -231,7 +238,7 @@ class VSPS_Rest {
 			return $api->get_location_info( $location_id );
 		}, 300 );
 		if ( is_wp_error( $info ) || null === $info ) {
-			return new WP_Error( 'vsps_upstream', 'Could not load location info.', array( 'status' => 502 ) );
+			return new WP_Error( 'vsps_upstream', 'Could not load location info.', array( 'status' => self::UPSTREAM_STATUS ) );
 		}
 
 		$hours  = isset( $info['locationHours'] ) ? $info['locationHours'] : null;
@@ -362,7 +369,7 @@ class VSPS_Rest {
 
 		$client = $api->find_client_by_email( $email );
 		if ( is_wp_error( $client ) ) {
-			return new WP_Error( 'vsps_upstream', 'Lookup failed. Please continue as a new client.', array( 'status' => 502 ) );
+			return new WP_Error( 'vsps_upstream', 'Lookup failed. Please continue as a new client.', array( 'status' => self::UPSTREAM_STATUS ) );
 		}
 		$pets = array();
 		if ( $client && ! empty( $client['patients'] ) ) {
@@ -430,7 +437,7 @@ class VSPS_Rest {
 				}
 				return new WP_Error( $code, $result->get_error_message(), $data );
 			}
-			return new WP_Error( 'vsps_booking', 'We could not complete the booking. Please try another time or call the clinic.', array( 'status' => 502 ) );
+			return new WP_Error( 'vsps_booking', 'We could not complete the booking. Please try another time or call the clinic.', array( 'status' => self::UPSTREAM_STATUS ) );
 		}
 
 		// The just-booked slot is gone: refresh this day's cached availability.

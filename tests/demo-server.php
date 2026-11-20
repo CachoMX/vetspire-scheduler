@@ -97,7 +97,7 @@ if ( '/assets/css/scheduler.css' === $uri ) {
 /* REST proxy */
 if ( '/wp-json/vetspire/v1/types' === $uri ) {
 	$types = $api->get_bookable_types( isset( $q['location_id'] ) ? $q['location_id'] : $location );
-	if ( is_wp_error( $types ) ) { respond_json( array( 'message' => $types->get_error_message() ), 502 ); }
+	if ( is_wp_error( $types ) ) { respond_json( array( 'message' => $types->get_error_message() ), 424 ); }
 	respond_json( array( 'types' => $types ) );
 }
 if ( '/wp-json/vetspire/v1/availability' === $uri ) {
@@ -123,7 +123,7 @@ if ( '/wp-json/vetspire/v1/lookup' === $uri && 'POST' === $_SERVER['REQUEST_METH
 	$email   = isset( $payload['email'] ) ? trim( (string) $payload['email'] ) : '';
 	if ( ! filter_var( $email, FILTER_VALIDATE_EMAIL ) ) { respond_json( array( 'message' => 'A valid email is required.' ), 400 ); }
 	$client = $api->find_client_by_email( $email );
-	if ( is_wp_error( $client ) ) { respond_json( array( 'message' => 'Lookup failed. Please continue as a new client.' ), 502 ); }
+	if ( is_wp_error( $client ) ) { respond_json( array( 'message' => 'Lookup failed. Please continue as a new client.' ), 424 ); }
 	$pets = array();
 	if ( $client && ! empty( $client['patients'] ) ) {
 		foreach ( $client['patients'] as $patient ) {
@@ -165,7 +165,7 @@ if ( '/wp-json/vetspire/v1/book' === $uri && 'POST' === $_SERVER['REQUEST_METHOD
 		),
 	);
 	$result = VSPS_Booking::book( $api, $args );
-	if ( is_wp_error( $result ) ) { respond_json( array( 'message' => $result->get_error_message() ), 502 ); }
+	if ( is_wp_error( $result ) ) { respond_json( array( 'message' => $result->get_error_message() ), 424 ); }
 	respond_json( array( 'success' => true, 'appointment_id' => $result['appointment_id'], 'start' => $result['start'] ) );
 }
 

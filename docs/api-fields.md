@@ -53,7 +53,9 @@ collects, and what else is available to add.
   `birthYear` + `birthMonth` + `birthDay` with `isEstimatedAge`; the day is today's in the clinic's timezone, so
   Vetspire shows exactly "3 years 7 months old" and its Info page has a birth date. Without a day (1.30.0)
   `birthDate` stayed null;
-  Nectar has no estimated age, so there it goes in the appointment's staff notes), `neutered`
+  Nectar has no estimated age field, so since 1.30.3 Nectar sites don't ask for the age at all; the pet's birth
+  date field feeds Nectar's `dateOfBirth` instead), `neutered`. The address state is sent as its 2-letter code
+  ("Tenn" → TN); Nectar gets no state at all when the answer isn't a US code.
 
 ### Available but NOT collected (candidates to add)
 | Field | What it is |

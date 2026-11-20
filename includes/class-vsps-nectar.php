@@ -612,11 +612,15 @@ class VSPS_Nectar implements VSPS_Pims {
 			'phoneW' => ! empty( $c['phone_alt'] ) ? self::digits( $c['phone_alt'] ) : '',
 			'dob'    => ! empty( $c['owner_dob'] ) ? self::date_time( $c['owner_dob'] ) : '',
 		);
-		// Only a complete address (an optional one can be half filled in).
-		if ( ! empty( $a['line1'] ) && ! empty( $a['city'] ) && ! empty( $a['state'] ) && ! empty( $a['postal'] ) ) {
+		// Only a complete address (an optional one can be half filled in). The
+		// state must be a 2-letter code: Nectar saves "Tenn" but then refuses to
+		// return that client at all, so every later lookup and booking for that
+		// email fails. A state that isn't a code is left out; the rest is kept.
+		if ( ! empty( $a['line1'] ) && ! empty( $a['city'] ) && ! empty( $a['postal'] ) ) {
+			$state              = VSPS_Fields::us_state( isset( $a['state'] ) ? $a['state'] : '' );
 			$optional['street'] = trim( $a['line1'] . ( ! empty( $a['line2'] ) ? ' ' . $a['line2'] : '' ) );
 			$optional['city']   = $a['city'];
-			$optional['state']  = $a['state'];
+			$optional['state']  = preg_match( '/^[A-Z]{2}$/', $state ) ? $state : '';
 			$optional['zip']    = $a['postal'];
 		}
 		$vars = array_merge( $vars, array_filter( $optional, function ( $v ) {

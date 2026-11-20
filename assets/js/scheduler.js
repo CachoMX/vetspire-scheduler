@@ -86,8 +86,10 @@
 		back: '‹ Back',
 		nextAvailable: 'Next Available Appointment',
 		nextAvailableType: 'Next Available %s',
-		typeConfirmText: 'The time you have selected is for %s. Please confirm the type of appointment, or select another:',
-		typeConfirmYes: 'Yes, I need %s',
+		typeConfirmText: 'The time you have selected is for the following appointment type: %s. Please confirm this choice or select another:',
+		typeConfirmYes: 'Yes, book %s',
+		sending: 'Sending\u2026 this can take a few seconds.',
+		serverError: 'Something went wrong on our side. Please try again in a moment, or call the clinic.',
 		typeChooseAnother: 'Choose another appointment type',
 		chooseAnother: 'Choose Another Time',
 		slotGoneMessage: 'The appointment time you selected is no longer available. Please choose another.',
@@ -744,9 +746,13 @@
 			options.headers['X-WP-Nonce'] = CFG.nonce;
 		}
 		return window.fetch(url, options).then(function (res) {
-			return res.json().then(function (json) {
-				if (!res.ok) {
-					var err = new Error((json && json.message) || 'Request failed');
+			return res.text().then(function (text) {
+				// A reply that isn't JSON (a proxy or server error page) must not reach
+				// the visitor as "Unexpected token '<'": show a plain message instead.
+				var json = null;
+				try { json = text ? JSON.parse(text) : null; } catch (e) { json = null; }
+				if (!res.ok || null === json) {
+					var err = new Error((json && json.message) || I18N.serverError);
 					err.status = res.status;
 					err.code = (json && json.code) || '';
 					err.data = (json && json.data) || {};
@@ -755,6 +761,40 @@
 				return json;
 			});
 		});
+	}
+
+	/**
+	 * While a booking is sending, the form is locked and says so. The button is
+	 * NOT disabled: disabling the focused button drops focus to <body>, and the
+	 * popup's focus safety net then jumps to the first field, scrolling the form
+	 * to the top while the visitor waits (QC 2026-11-19). aria-disabled + the
+	 * bk.submitting guard stop a second submission instead.
+	 */
+	function setFormBusy(form, btn, busy) {
+		form.classList.toggle('vsps-busy', busy);
+		form.setAttribute('aria-busy', busy ? 'true' : 'false');
+		// Read-only, not disabled (disabled would drop focus too): an edit typed
+		// while sending would be silently ignored, the request is already built.
+		form.querySelectorAll('input, textarea').forEach(function (f) {
+			if (busy) {
+				if (!f.readOnly) { f.readOnly = true; f.setAttribute('data-vsps-busy-ro', '1'); }
+			} else if (f.hasAttribute('data-vsps-busy-ro')) {
+				f.readOnly = false;
+				f.removeAttribute('data-vsps-busy-ro');
+			}
+		});
+		btn.setAttribute('aria-disabled', busy ? 'true' : 'false');
+		btn.disabled = false;
+		btn.textContent = busy ? I18N.booking : I18N.confirm;
+		var note = form.querySelector('.vsps-sending');
+		if (busy && !note) {
+			note = el('p', 'vsps-sending', I18N.sending);
+			note.setAttribute('role', 'status');
+			var actions = form.querySelector('.vsps-actions');
+			form.insertBefore(note, actions ? actions.nextSibling : null);
+		} else if (!busy && note) {
+			note.remove();
+		}
 	}
 
 	function dateFromIso(iso) {
@@ -776,21 +816,6 @@
 		return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
 	}
 
-	/**
-	 * "Wellness Appointment" -> "a wellness appointment" for mid-sentence use.
-	 * All-caps words (acronyms like "TPLO") keep their casing.
-	 */
-	function typePhrase(name) {
-		function isAcronym(part) { return /[A-Z]{2,}/.test(part) && part === part.toUpperCase(); }
-		var words = String(name).split(' ');
-		var soft = words.map(function (w) {
-			return w.split('-').map(function (p) { return isAcronym(p) ? p : p.toLowerCase(); }).join('-');
-		}).join(' ');
-		// Acronyms are read letter by letter: "an MRI scan", "a UTI recheck".
-		var first = words[0].split('-')[0];
-		var vowelSound = isAcronym(first) ? /^[AEFHILMNORSX]/.test(first) : /^[aeiou]/i.test(soft);
-		return (vowelSound ? 'an ' : 'a ') + soft;
-	}
 
 	function formatDateLabel(iso) {
 		var d = dateFromIso(iso);
@@ -1708,7 +1733,9 @@
 	Widget.prototype.openTypeConfirm = function (date, slot) {
 		var self = this;
 		var type = this.currentType();
-		var phrase = typePhrase(type.name);
+		// The type's own name, as the clinic wrote it ("Wellness", "Wellness Exam -
+		// Established Clients"): no article or lower-casing guessed around it.
+		var phrase = String(type.name).trim();
 		var opener = document.activeElement;
 		var primary = '';
 		try {
@@ -1734,9 +1761,9 @@
 		closeBtn.setAttribute('aria-label', I18N.close);
 		closeBtn.addEventListener('click', function () { close(); });
 		modal.appendChild(closeBtn);
-		modal.appendChild(el('p', 'vsps-step-q', I18N.typeConfirmText.replace('%s', phrase)));
+		modal.appendChild(el('p', 'vsps-step-q', I18N.typeConfirmText.replace('%s', function () { return phrase; })));
 
-		var yes = el('button', 'vsps-btn-primary vsps-btn-block', I18N.typeConfirmYes.replace('%s', phrase));
+		var yes = el('button', 'vsps-btn-primary vsps-btn-block', I18N.typeConfirmYes.replace('%s', function () { return phrase; }));
 		yes.type = 'button';
 		yes.addEventListener('click', function () {
 			close();
@@ -2146,6 +2173,7 @@
 
 		form.addEventListener('submit', function (e) {
 			e.preventDefault();
+			if (self._bk && self._bk.submitting) { return; } // a booking is already sending
 			if (!validateForm(form)) { return; }
 			var email = form.querySelector('[name="lookup_email"]').value.trim();
 			var errorEl = form.querySelector('.vsps-error');
@@ -2226,6 +2254,7 @@
 		this.focusStep();
 		form.addEventListener('submit', function (e) {
 			e.preventDefault();
+			if (self._bk && self._bk.submitting) { return; } // a booking is already sending
 			if (!validateForm(form)) { return; }
 			self.submitBooking(form, {
 				client_type: 'existing',
@@ -2694,6 +2723,7 @@
 		step.appendChild(fallback);
 		form.addEventListener('submit', function (e) {
 			e.preventDefault();
+			if (self._bk && self._bk.submitting) { return; } // a booking is already sending
 			if (!validateForm(form)) { return; }
 			var fd = new FormData(form);
 			self.submitBooking(form, {
@@ -2734,6 +2764,7 @@
 		form.querySelector('.vsps-btn-secondary').addEventListener('click', this._bk.close);
 		form.addEventListener('submit', function (e) {
 			e.preventDefault();
+			if (self._bk && self._bk.submitting) { return; } // a booking is already sending
 			if (!validateForm(form)) { return; }
 			var fd = new FormData(form);
 			self.submitBooking(form, {
@@ -2753,9 +2784,9 @@
 		var bk = this._bk;
 		var errorEl = form.querySelector('.vsps-error');
 		var submitBtn = form.querySelector('.vsps-btn-primary');
+		if (bk.submitting) { return; } // a second click or Enter while sending
 		errorEl.style.display = 'none';
-		submitBtn.disabled = true;
-		submitBtn.textContent = I18N.booking;
+		setFormBusy(form, submitBtn, true);
 		// One submission at a time: freeze back-navigation and tag the request
 		// so a stale response can never overwrite a newer screen.
 		var reqToken = (bk.reqToken = (bk.reqToken || 0) + 1);
@@ -2838,10 +2869,9 @@
 			var slotGone = 'vsps_slot' === err.code;
 			var message  = slotGone ? I18N.slotGoneMessage : ( err.message || I18N.bookingFailed );
 			bk.step.querySelectorAll('.vsps-back').forEach(function (b) { b.disabled = false; b.style.opacity = ''; });
+			setFormBusy(form, submitBtn, false);
 			// A field the server rejected (e.g. the phone-on-file check) is shown at that field.
 			if (!slotGone && showServerFieldErrors(form, err)) {
-				submitBtn.disabled = false;
-				submitBtn.textContent = I18N.confirm;
 				return;
 			}
 			showFormError(errorEl, message);

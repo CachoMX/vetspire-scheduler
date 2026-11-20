@@ -99,7 +99,7 @@ class VSPS_Pims_Registry {
 			'booking'        => 'request', // ONLINE_REQUESTED: the clinic confirms it
 			'min_lead_hours' => 24,        // Nectar's default booking window (Harris, 2026-10-06)
 			'fields'         => array(
-				'address', 'phone_alt', 'owner_dob', 'breed', 'sex', 'neutered', 'age',
+				'address', 'phone_alt', 'owner_dob', 'breed', 'sex', 'neutered',
 				'birth_date', 'weight', 'color', 'microchip', 'reason',
 			),
 		),

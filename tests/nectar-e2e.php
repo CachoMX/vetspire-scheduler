@@ -39,7 +39,14 @@ function wp_remote_post( $url, $args ) {
 		'method' => 'POST', 'header' => $header_lines, 'content' => $args['body'],
 		'timeout' => isset( $args['timeout'] ) ? $args['timeout'] : 20, 'ignore_errors' => true,
 	) ) );
+	$t0   = microtime( true );
 	$body = @file_get_contents( $url, false, $ctx );
+	if ( getenv( 'VSPS_TIMING' ) ) {
+		// VSPS_TIMING=1: how long each Nectar call takes (slow-booking checks).
+		$op = preg_match( '/(?:mutation|query)[^{]*\{\s*(\w+)/', (string) ( json_decode( $args['body'], true )['query'] ?? '' ), $m ) ? $m[1] : parse_url( $url, PHP_URL_PATH );
+		fwrite( STDERR, sprintf( "    [timing] %-34s %5d ms
+", $op, round( ( microtime( true ) - $t0 ) * 1000 ) ) );
+	}
 	if ( false === $body ) {
 		return new WP_Error( 'http_request_failed', 'stream request failed' );
 	}

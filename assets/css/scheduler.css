@@ -429,6 +429,22 @@
 	color: #555; /* 7.4:1 on white */
 }
 
+/* A booking is sending: the fields are locked and the form says so
+   (setFormBusy). Cancel stays clickable; Confirm ignores clicks (guarded). */
+.vsps-overlay .vsps-busy .vsps-field {
+	opacity: 0.6;
+	pointer-events: none;
+}
+.vsps-overlay .vsps-busy .vsps-btn-primary {
+	cursor: progress;
+	opacity: 0.8;
+}
+.vsps-overlay .vsps-sending {
+	margin: 8px 0 0;
+	font-size: 0.9em;
+	color: #333;
+}
+
 .vsps-overlay .vsps-error {
 	color: #b00020;
 	margin: 4px 0 8px;

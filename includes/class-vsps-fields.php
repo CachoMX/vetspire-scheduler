@@ -132,6 +132,61 @@ class VSPS_Fields {
 		);
 	}
 
+	/** US states (+ DC and territories): name → USPS code. */
+	const US_STATES = array(
+		'alabama' => 'AL', 'alaska' => 'AK', 'arizona' => 'AZ', 'arkansas' => 'AR', 'california' => 'CA',
+		'colorado' => 'CO', 'connecticut' => 'CT', 'delaware' => 'DE', 'district of columbia' => 'DC',
+		'florida' => 'FL', 'georgia' => 'GA', 'hawaii' => 'HI', 'idaho' => 'ID', 'illinois' => 'IL',
+		'indiana' => 'IN', 'iowa' => 'IA', 'kansas' => 'KS', 'kentucky' => 'KY', 'louisiana' => 'LA',
+		'maine' => 'ME', 'maryland' => 'MD', 'massachusetts' => 'MA', 'michigan' => 'MI', 'minnesota' => 'MN',
+		'mississippi' => 'MS', 'missouri' => 'MO', 'montana' => 'MT', 'nebraska' => 'NE', 'nevada' => 'NV',
+		'new hampshire' => 'NH', 'new jersey' => 'NJ', 'new mexico' => 'NM', 'new york' => 'NY',
+		'north carolina' => 'NC', 'north dakota' => 'ND', 'ohio' => 'OH', 'oklahoma' => 'OK', 'oregon' => 'OR',
+		'pennsylvania' => 'PA', 'rhode island' => 'RI', 'south carolina' => 'SC', 'south dakota' => 'SD',
+		'tennessee' => 'TN', 'texas' => 'TX', 'utah' => 'UT', 'vermont' => 'VT', 'virginia' => 'VA',
+		'washington' => 'WA', 'west virginia' => 'WV', 'wisconsin' => 'WI', 'wyoming' => 'WY',
+		'puerto rico' => 'PR', 'guam' => 'GU', 'us virgin islands' => 'VI', 'virgin islands' => 'VI',
+		'american samoa' => 'AS', 'northern mariana islands' => 'MP',
+	);
+
+	/** Common written abbreviations (AP style and the like) → USPS code. */
+	const US_STATE_SHORT = array(
+		'ala' => 'AL', 'ariz' => 'AZ', 'ark' => 'AR', 'calif' => 'CA', 'cal' => 'CA', 'colo' => 'CO',
+		'conn' => 'CT', 'del' => 'DE', 'fla' => 'FL', 'ill' => 'IL', 'ind' => 'IN', 'kan' => 'KS',
+		'kans' => 'KS', 'mass' => 'MA', 'mich' => 'MI', 'minn' => 'MN', 'miss' => 'MS', 'mont' => 'MT',
+		'neb' => 'NE', 'nebr' => 'NE', 'nev' => 'NV', 'okla' => 'OK', 'ore' => 'OR', 'oreg' => 'OR',
+		'penn' => 'PA', 'penna' => 'PA', 'tenn' => 'TN', 'tex' => 'TX', 'wash' => 'WA', 'wis' => 'WI',
+		'wisc' => 'WI', 'wyo' => 'WY', 'n h' => 'NH', 'n j' => 'NJ', 'n m' => 'NM', 'n y' => 'NY',
+		'n c' => 'NC', 'n d' => 'ND', 'r i' => 'RI', 's c' => 'SC', 's d' => 'SD', 'w va' => 'WV',
+		'd c' => 'DC', 'wva' => 'WV', 'washington dc' => 'DC', 'washington d c' => 'DC',
+		'dist of columbia' => 'DC', 'dist columbia' => 'DC',
+	);
+
+	/**
+	 * The USPS code for a typed US state ("Tenn", "tennessee", "tn", "N.Y."),
+	 * or the text as typed when it isn't one. Nectar refuses anything but two
+	 * letters, and a client saved with "Tenn" broke every later lookup of that
+	 * client (QC 2026-11-19), so the form's answer is normalized here.
+	 */
+	public static function us_state( $value ) {
+		$value = trim( (string) $value );
+		$key   = trim( preg_replace( '/\s+/', ' ', str_replace( array( '.', ',' ), ' ', strtolower( $value ) ) ) );
+		if ( '' === $key ) {
+			return '';
+		}
+		$codes = array_values( self::US_STATES );
+		if ( 2 === strlen( $key ) && in_array( strtoupper( $key ), $codes, true ) ) {
+			return strtoupper( $key );
+		}
+		if ( isset( self::US_STATES[ $key ] ) ) {
+			return self::US_STATES[ $key ];
+		}
+		if ( isset( self::US_STATE_SHORT[ $key ] ) ) {
+			return self::US_STATE_SHORT[ $key ];
+		}
+		return $value;
+	}
+
 	/** "3 years", "6 months", "1 year 2 months"; "under 1 year" for 0 years and no months (for staff notes). */
 	public static function age_phrase( $years, $months ) {
 		if ( 0 === $years && '' === $months ) {
@@ -254,7 +309,7 @@ class VSPS_Fields {
 					'line1'  => $text( $addr, 'line1', 120 ),
 					'line2'  => $text( $addr, 'line2', 120 ),
 					'city'   => $text( $addr, 'city', 80 ),
-					'state'  => $text( $addr, 'state', 40 ),
+					'state'  => self::us_state( $text( $addr, 'state', 40 ) ),
 					'postal' => $text( $addr, 'postal', 12 ),
 				),
 				'phone_alt'       => substr( preg_replace( '/[^0-9+\-\s().]/', '', isset( $client['phone_alt'] ) && is_scalar( $client['phone_alt'] ) ? (string) $client['phone_alt'] : '' ), 0, 30 ),
