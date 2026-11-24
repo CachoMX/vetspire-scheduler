@@ -14,6 +14,7 @@
 
 	var I18N_DEFAULTS = {
 		loading: 'Loading available times…',
+		lookingUp: 'Looking up your account…',
 		noOptions: 'Online booking is not available right now. Please call the clinic.',
 		loadFailed: 'Could not load booking options. Please call the clinic.',
 		timesFailed: 'Could not load times. Please try again later.',
@@ -38,13 +39,16 @@
 		errorPrefix: 'Error:',
 		errRequired: 'Please fill in {label}.',
 		errChoose: 'Please choose an option for {label}.',
+		errSex: "Please choose your pet's sex from the dropdown options.",
 		errEmailRequired: 'Please enter your email address.',
 		errEmail: 'Please enter a valid email address, like name@example.com.',
-		errPhone: 'Please enter a phone number with at least 7 digits, like 555-123-4567.',
-		errLast4: 'Please enter the last 4 digits of the phone number the clinic has on file, using numbers only.',
+		errPhone: 'Please enter a valid 10-digit phone number, beginning with the area code.',
+		errLast4: 'Please enter the last 4 digits of the primary phone number the clinic has on file, using numbers only.',
 		errNumber: 'Please enter a number from {min} to {max} for {label}.',
 		errDate: 'Please enter a complete date for {label}.',
 		errDateFuture: 'Please enter a date that is not in the future for {label}.',
+		errDateRange: 'Please enter a valid date for {label}.',
+		errBirthDate: "Please enter a valid date for your pet's birth.",
 		errFormat: 'Please check the format of {label}.',
 		errWhole: 'Please enter a whole number for {label}, like 3.',
 		errAge: "Please enter your pet's age in years, months or both. A best guess is fine.",
@@ -53,7 +57,7 @@
 		city: 'City',
 		state: 'State',
 		zip: 'ZIP code',
-		phoneAlt: 'Alternate phone',
+		phoneAlt: 'Emergency phone',
 		emailSecondary: 'Secondary email',
 		referral: 'How did you hear about us?',
 		title: 'Title',
@@ -127,7 +131,7 @@
 		aNewPet: '+ A new pet',
 		bookingFor: 'Booking for',
 		addingPetTo: 'Adding a new pet to the account for',
-		last4Label: 'Last 4 digits of the phone on file',
+		last4Label: 'Last 4 digits of the primary phone on file',
 		cantVerify: "Can't verify? Book with the full form instead"
 	};
 	var I18N = {};
@@ -2180,7 +2184,7 @@
 			var btn = form.querySelector('.vsps-btn-primary');
 			errorEl.style.display = 'none';
 			btn.disabled = true;
-			btn.textContent = I18N.loading;
+			btn.textContent = I18N.lookingUp;
 			fetchJson(CFG.restUrl + '/lookup', {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
@@ -2304,11 +2308,23 @@
 		return fieldWrap(text, flag, html + '</select>');
 	}
 
-	function fieldDate(name, text, flag, extra) {
+	function fieldDate(name, text, flag, extra, maxYears) {
 		// The visitor's own calendar day (toISOString() would be the UTC day).
 		var now = new Date();
-		var today = now.getFullYear() + '-' + ('0' + (now.getMonth() + 1)).slice(-2) + '-' + ('0' + now.getDate()).slice(-2);
-		return fieldInput(name, text, flag, 'date', ' max="' + today + '"' + (extra || ''));
+		var md = '-' + ('0' + (now.getMonth() + 1)).slice(-2) + '-' + ('0' + now.getDate()).slice(-2);
+		var today = now.getFullYear() + md;
+		// Oldest date the server accepts (VSPS_Fields::valid_past_date); one day
+		// of slack so a timezone difference never refuses a date the server takes.
+		var floor = new Date(now.getFullYear() - maxYears, now.getMonth(), now.getDate() + 1);
+		var min = ('000' + floor.getFullYear()).slice(-4) + '-' + ('0' + (floor.getMonth() + 1)).slice(-2) + '-' + ('0' + floor.getDate()).slice(-2);
+		return fieldInput(name, text, flag, 'date', ' min="' + min + '" max="' + today + '"' + (extra || ''));
+	}
+
+	/** Ten digits, with or without a leading US country code (1 / +1). */
+	function isTenDigitPhone(value) {
+		var digits = String(value || '').replace(/\D/g, '');
+		if (11 === digits.length && '1' === digits.charAt(0)) { digits = digits.slice(1); }
+		return 10 === digits.length;
 	}
 
 	/**
@@ -2447,15 +2463,15 @@
 		}
 		if (!value && !bad) {
 			if (!control.required) { return ''; }
-			if ('SELECT' === control.tagName) { return fill(I18N.errChoose, { label: label }); }
+			if ('SELECT' === control.tagName) { return 'sex' === control.name ? I18N.errSex : fill(I18N.errChoose, { label: label }); }
 			if ('email' === control.type) { return I18N.errEmailRequired; }
 			if ('phone_last4' === control.name) { return I18N.errLast4; }
 			return fill(I18N.errRequired, { label: label });
 		}
 		if ('email' === control.type && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)) { return I18N.errEmail; }
-		// Only a required phone must be dialable; an optional one ("Alternate
+		// Only a required phone must be dialable; an optional one ("Emergency
 		// phone") may hold an extension or "N/A" without blocking the booking.
-		if ('tel' === control.type && control.required && value.replace(/\D/g, '').length < 7) { return I18N.errPhone; }
+		if ('tel' === control.type && control.required && !isTenDigitPhone(value)) { return I18N.errPhone; }
 		if ('number' === control.type) {
 			var num = Number(value);
 			var min = control.getAttribute('min');
@@ -2465,8 +2481,15 @@
 			}
 		}
 		if ('date' === control.type) {
-			if (bad) { return fill(I18N.errDate, { label: label }); }
-			if (control.getAttribute('max') && value > control.getAttribute('max')) { return fill(I18N.errDateFuture, { label: label }); }
+			// The pet's birth date has one message for every unusable date
+			// (incomplete, in the future, or 01/01/0001; QC 2026-11-24).
+			var isPetBirth = 'birth_date' === control.name;
+			if (bad) { return isPetBirth ? I18N.errBirthDate : fill(I18N.errDate, { label: label }); }
+			if (control.getAttribute('max') && value > control.getAttribute('max')) { return isPetBirth ? I18N.errBirthDate : fill(I18N.errDateFuture, { label: label }); }
+			// The server refuses older dates; say so here instead of "please fill in".
+			if (!/^\d{4}-\d{2}-\d{2}$/.test(value) || (control.getAttribute('min') && value < control.getAttribute('min'))) {
+				return isPetBirth ? I18N.errBirthDate : fill(I18N.errDateRange, { label: label });
+			}
 		}
 		var pattern = control.getAttribute('pattern');
 		if (pattern && !new RegExp('^(?:' + pattern + ')$').test(value)) {
@@ -2617,7 +2640,7 @@
 		}
 		if (f.pronouns) { items.push({ html: fieldSelect('pronouns', I18N.pronouns, f.pronouns, choices.pronouns || []) }); }
 		if (f.business_name) { items.push({ html: fieldInput('business_name', I18N.businessName, f.business_name, 'text', ' autocomplete="organization"') }); }
-		if (f.owner_dob) { items.push({ html: fieldDate('owner_dob', I18N.ownerDob, f.owner_dob, ' autocomplete="bday"') }); }
+		if (f.owner_dob) { items.push({ html: fieldDate('owner_dob', I18N.ownerDob, f.owner_dob, ' autocomplete="bday"', 120) }); }
 		if (f.client_notes) { items.push({ wide: true, html: fieldTextarea('client_notes', I18N.clientNotes, f.client_notes) }); }
 		return fieldRows(items);
 	};
@@ -2640,15 +2663,14 @@
 		}
 		if (f.color) { items.push({ html: fieldInput('color', I18N.color, f.color) }); }
 		if (f.microchip) { items.push({ html: fieldInput('microchip', I18N.microchip, f.microchip, 'text', ' inputmode="numeric"') }); }
-		if (f.birth_date) { items.push({ html: fieldDate('birth_date', I18N.birthDate, f.birth_date) }); }
+		if (f.birth_date) { items.push({ html: fieldDate('birth_date', I18N.birthDate, f.birth_date, '', 40) }); }
 		if (f.pet_notes) { items.push({ wide: true, html: fieldTextarea('pet_notes', I18N.petNotes, f.pet_notes) }); }
 		return fieldRows(items);
 	};
 
-	/** Reason for visit: always shown; required when the clinic says so. */
+	/** Reason for visit: always shown and always required (QC 2026-11-24). */
 	Widget.prototype.reasonHtml = function () {
-		var flag = this.fieldFlags().reason;
-		return '<div class="vsps-row">' + fieldTextarea('notes', I18N.reason, flag === 2 ? 2 : 1) + '</div>';
+		return '<div class="vsps-row">' + fieldTextarea('notes', I18N.reason, 2) + '</div>';
 	};
 
 	/** Focus the first control of the current booking step (WCAG 2.4.3: where the visitor starts, never ×). */

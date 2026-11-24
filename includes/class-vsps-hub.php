@@ -926,22 +926,25 @@ class VSPS_Hub {
 	/* ---------- clinic timezone (no Vetspire call per push) ---------- */
 
 	/**
-	 * IANA timezone of the configured Vetspire location. Order: the value
-	 * remembered in an option → the location data the plugin already caches
-	 * (admin screen / booking path) → (admin/cron only) the hourly-cached
-	 * location lookup. Returns '' when none of those is available: the WordPress
-	 * site timezone is NOT a substitute (often left at UTC), so the caller omits
-	 * the field and the hub keeps what it has.
+	 * IANA timezone of the configured location. Order: the location data the
+	 * plugin already caches (admin screen / booking path) → (admin/cron only)
+	 * the hourly-cached location lookup → the value remembered in an option.
+	 * The remembered value comes LAST: a clinic's zone can change after it was
+	 * first saved (Nectar's Settings fallback replaced by the clinic's own
+	 * zone), and the hub kept showing appointments in the old one (QC 2026-11-24).
+	 * Returns '' when none of those is available: the WordPress site timezone
+	 * is NOT a substitute (often left at UTC), so the caller omits the field
+	 * and the hub keeps what it has.
 	 */
 	public static function clinic_timezone( $allow_api = false ) {
 		$location_id = VSPS_Pims_Registry::sanitize_id( vsps_get_settings()['default_location'] );
 		if ( '' === $location_id ) {
 			return '';
 		}
-		$saved = get_option( self::TZ_OPTION, array() );
-		if ( is_array( $saved ) && isset( $saved['loc'], $saved['tz'] ) && (string) $saved['loc'] === $location_id && self::valid_tz( $saved['tz'] ) ) {
-			return $saved['tz'];
-		}
+		$saved    = get_option( self::TZ_OPTION, array() );
+		$saved_tz = is_array( $saved ) && isset( $saved['loc'], $saved['tz'] ) && (string) $saved['loc'] === $location_id && self::valid_tz( $saved['tz'] )
+			? (string) $saved['tz']
+			: '';
 		$tz = '';
 		foreach ( array( array( 'admin-loc', $location_id ), array( 'locinfo', $location_id ) ) as $parts ) {
 			$cached = get_transient( VSPS_Cache::PREFIX . md5( wp_json_encode( $parts ) ) );
@@ -953,7 +956,7 @@ class VSPS_Hub {
 		if ( '' === $tz && $allow_api ) {
 			$api = vsps_api();
 			if ( null !== $api ) {
-				// Cached for an hour so cron/admin pushes don't call Vetspire each time.
+				// Cached for an hour so cron/admin pushes don't call the PIMS each time.
 				$location = VSPS_Cache::remember( array( 'admin-loc', $location_id ), function () use ( $api, $location_id ) {
 					return $api->get_location( $location_id );
 				}, 3600 );
@@ -963,10 +966,12 @@ class VSPS_Hub {
 			}
 		}
 		if ( '' !== $tz && self::valid_tz( $tz ) ) {
-			update_option( self::TZ_OPTION, array( 'loc' => $location_id, 'tz' => $tz ), false );
+			if ( $tz !== $saved_tz ) {
+				update_option( self::TZ_OPTION, array( 'loc' => $location_id, 'tz' => $tz ), false );
+			}
 			return $tz;
 		}
-		return '';
+		return $saved_tz;
 	}
 
 	private static function valid_tz( $tz ) {

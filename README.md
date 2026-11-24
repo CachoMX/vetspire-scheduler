@@ -199,6 +199,8 @@ org's TESTING LOCATION that is deleted afterwards:
 php tests/harness.php            # 22 checks: connectivity, types, slots, cache, dedupe, guardrails, booking, cleanup
 php tests/nectar-e2e.php         # 37 checks: Nectar sandbox reads, slot logic, booking flow (mocked writes), fields
 php tests/errors-unit.php        # offline: required-field errors name their fields
+php tests/qc-1124-unit.php       # offline: primary-phone check for adding a pet, required reason, 10-digit phone, hub timezone
+php tests/schema-probe.php       # read-only introspection: species, phone and update fields in Vetspire and Nectar
 NODE_PATH=… AXE_JS=…/axe.min.js VSPS_AUTOLOGIN=… node tests/wcag-forms-e2e.js   # local WP: labels, errors, axe, scroll lock
 php -S 127.0.0.1:8737 tests/demo-server.php   # visual demo at http://127.0.0.1:8737
 node <scratchpad>/visual-test.js # puppeteer: renders, books, checks dataLayer events

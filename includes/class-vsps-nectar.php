@@ -563,9 +563,18 @@ class VSPS_Nectar implements VSPS_Pims {
 		$phones   = array();
 		$patients = array();
 		foreach ( array_slice( $matches, 0, 5 ) as $node ) {
+			// phoneH is the owner's Primary number, phoneW the Emergency one. Each
+			// number keeps the owner record it is on: a pet is only added to the
+			// record whose PRIMARY number the visitor proved (VSPS_Booking).
 			foreach ( array( 'phoneH', 'phoneW' ) as $phone_field ) {
 				if ( ! empty( $node[ $phone_field ] ) ) {
-					$phones[] = array( 'value' => (string) $node[ $phone_field ] );
+					$phones[] = array(
+						'value'      => (string) $node[ $phone_field ],
+						'primary'    => 'phoneH' === $phone_field,
+						'clientId'   => (string) $node['id'],
+						'familyId'   => isset( $node['clientInfo']['familyId'] ) ? (string) $node['clientInfo']['familyId'] : '',
+						'familyName' => isset( $node['lastName'] ) ? (string) $node['lastName'] : '',
+					);
 				}
 			}
 			$data = $this->request(

@@ -111,7 +111,7 @@ class VSPS_Api implements VSPS_Pims {
 		$c      = $args['client'];
 		$phones = array( array( 'value' => $c['phone'], 'preferred' => true ) );
 		if ( ! empty( $c['phone_alt'] ) ) {
-			$phones[] = array( 'value' => $c['phone_alt'], 'name' => 'Alternate' );
+			$phones[] = array( 'value' => $c['phone_alt'], 'name' => 'Emergency' ); // Nectar's name for it (QC 2026-11-24)
 		}
 		$notes = 'Created via website online scheduler.';
 		if ( ! empty( $c['notes'] ) ) {
@@ -397,6 +397,41 @@ Notes from the client: " . $c['notes'];
 			if ( isset( $client['email'] ) && 0 === strcasecmp( $client['email'], $email ) ) {
 				return $client;
 			}
+		}
+		return null;
+	}
+
+	/**
+	 * The client's preferred ("primary") phone(s), for the ownership check
+	 * before a pet is added. Asked on its own, and only then, so a refusal of
+	 * this query can never break the email lookup every booking depends on.
+	 * Null when Vetspire doesn't say (error, or no number flagged): the caller
+	 * then accepts any number on file, as before.
+	 *
+	 * @return array|null [ { value } ]
+	 */
+	public function primary_phones( array $client ) {
+		if ( empty( $client['email'] ) || empty( $client['id'] ) ) {
+			return null;
+		}
+		$data = $this->request(
+			'query ($email: String) { clients(filters: { email: $email }, limit: 5) { id phoneNumbers { value preferred } } }',
+			array( 'email' => (string) $client['email'] )
+		);
+		if ( is_wp_error( $data ) || empty( $data['clients'] ) || ! is_array( $data['clients'] ) ) {
+			return null;
+		}
+		foreach ( $data['clients'] as $row ) {
+			if ( ! isset( $row['id'] ) || (string) $row['id'] !== (string) $client['id'] ) {
+				continue;
+			}
+			$primary = array();
+			foreach ( isset( $row['phoneNumbers'] ) && is_array( $row['phoneNumbers'] ) ? $row['phoneNumbers'] : array() as $phone ) {
+				if ( ! empty( $phone['preferred'] ) && isset( $phone['value'] ) ) {
+					$primary[] = array( 'value' => (string) $phone['value'] );
+				}
+			}
+			return $primary ? $primary : null;
 		}
 		return null;
 	}

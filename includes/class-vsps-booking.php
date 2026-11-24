@@ -134,8 +134,12 @@ class VSPS_Booking {
 				return new WP_Error( 'vsps_pet_missing', 'We could not find that pet on your account. Please pick again or add it as a new pet.' );
 			}
 			// Creating a pet on an account that already exists requires proving
-			// ownership of the phone on file: the explicit last-4 field (returning
-			// flow) or the last 4 of the full phone typed on the new-client form.
+			// ownership of the PRIMARY phone on file: the explicit last-4 field
+			// (returning flow) or the last 4 of the full phone typed on the
+			// new-client form. An emergency / second number does not count, nor
+			// does the phone of another owner record sharing the email unless
+			// the pet goes to THAT record (QC 2026-11-24: "Radio" was added with
+			// the emergency number).
 			// FAIL CLOSED: if the digits don't match — including when the account
 			// has NO phone on file to verify against — we refuse and tell them to
 			// call the clinic, so a stranger who only knows the email can never
@@ -143,8 +147,14 @@ class VSPS_Booking {
 			$claim = isset( $args['phone_last4'] ) && '' !== $args['phone_last4']
 				? $args['phone_last4']
 				: substr( preg_replace( '/\D/', '', $args['client']['phone'] ), -4 );
-			if ( ! self::phone_last4_matches( $client, $claim ) ) {
-				return new WP_Error( 'vsps_verify', 'We could not verify that this account is yours. Please use the phone number the clinic has on file, or call the clinic to add a new pet.' );
+			$owner = self::verified_owner( $api, $client, $claim );
+			if ( null !== $owner ) {
+				// The record that was verified is the one that gets the pet.
+				$client    = $owner;
+				$client_id = $client['id'];
+			}
+			if ( null === $owner ) {
+				return new WP_Error( 'vsps_verify', 'We could not verify that this account is yours. Please enter the last 4 digits of the primary phone number the clinic has on file, or call the clinic to add a new pet.' );
 			}
 		}
 		$pet_age     = '';
@@ -255,18 +265,56 @@ class VSPS_Booking {
 		return false;
 	}
 
-	/** True when the client's phone(s) on file end with the given 4 digits. */
-	private static function phone_last4_matches( $client, $last4 ) {
-		if ( ! preg_match( '/^\d{4}$/', (string) $last4 ) || empty( $client['phoneNumbers'] ) || ! is_array( $client['phoneNumbers'] ) ) {
-			return false;
+	/**
+	 * The primary phone(s) on file, each { value, clientId?, familyId?, familyName? }.
+	 * A platform says which number is primary either on the lookup itself
+	 * (a `primary` flag on each number: Nectar) or through primary_phones()
+	 * (Vetspire). When it can't say, every number on file counts, as before.
+	 */
+	private static function primary_phones( VSPS_Pims $api, $client ) {
+		$all = isset( $client['phoneNumbers'] ) && is_array( $client['phoneNumbers'] ) ? $client['phoneNumbers'] : array();
+		if ( method_exists( $api, 'primary_phones' ) ) {
+			$primary = $api->primary_phones( $client );
+			return is_array( $primary ) && $primary ? $primary : $all;
 		}
-		foreach ( $client['phoneNumbers'] as $phone ) {
-			$digits = preg_replace( '/\D/', '', isset( $phone['value'] ) ? $phone['value'] : '' );
-			if ( strlen( $digits ) >= 4 && substr( $digits, -4 ) === $last4 ) {
-				return true;
+		$flagged = false;
+		$primary = array();
+		foreach ( $all as $phone ) {
+			if ( is_array( $phone ) && array_key_exists( 'primary', $phone ) ) {
+				$flagged = true;
+				if ( $phone['primary'] ) {
+					$primary[] = $phone;
+				}
 			}
 		}
-		return false;
+		return $flagged ? $primary : $all;
+	}
+
+	/**
+	 * The owner record whose PRIMARY phone ends with $last4, or null. With one
+	 * email on several owner records (Nectar), the result is the record that
+	 * number belongs to: its id and family replace the first match's.
+	 */
+	private static function verified_owner( VSPS_Pims $api, $client, $last4 ) {
+		if ( ! preg_match( '/^\d{4}$/', (string) $last4 ) || ! is_array( $client ) ) {
+			return null;
+		}
+		foreach ( self::primary_phones( $api, $client ) as $phone ) {
+			$digits = preg_replace( '/\D/', '', isset( $phone['value'] ) ? (string) $phone['value'] : '' );
+			if ( strlen( $digits ) < 4 || substr( $digits, -4 ) !== $last4 ) {
+				continue;
+			}
+			if ( ! empty( $phone['clientId'] ) ) {
+				$client['id'] = (string) $phone['clientId'];
+				foreach ( array( 'familyId', 'familyName' ) as $key ) {
+					if ( isset( $phone[ $key ] ) ) {
+						$client[ $key ] = (string) $phone[ $key ];
+					}
+				}
+			}
+			return $client;
+		}
+		return null;
 	}
 
 	/** Case-insensitive match of an active patient by name on an existing client. */
