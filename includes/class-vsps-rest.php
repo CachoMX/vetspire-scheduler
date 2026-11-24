@@ -573,6 +573,18 @@ class VSPS_Rest {
 		if ( ! is_email( $args['client']['email'] ) ) {
 			return new WP_Error( 'vsps_invalid', 'A valid email is required.', array( 'status' => 400, 'fields' => array( 'email' ) ) );
 		}
+		// With the clinic's own species list on, a pet being created must be
+		// one of them, spelled as the PIMS has it (the form's own check can be
+		// bypassed).
+		if ( '' !== $args['patient']['species'] && ( 'new' === $client_type || $args['pet_is_new'] ) ) {
+			$allowed = VSPS_Fields::species_options();
+			if ( $allowed ) {
+				$args['patient']['species'] = VSPS_Fields::match_species( $args['patient']['species'], $allowed );
+				if ( '' === $args['patient']['species'] ) {
+					return new WP_Error( 'vsps_invalid', 'Please choose a pet type from the list.', array( 'status' => 400, 'fields' => array( 'species' ) ) );
+				}
+			}
+		}
 		if ( 'existing' === $client_type ) {
 			// Returning clients only need email + pet; name/phone are on file.
 			if ( '' === $args['patient']['name'] ) {

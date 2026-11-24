@@ -10,6 +10,28 @@ Close the ten edits from Nicole's QC round of 2026-11-24 for the booking widget
 Users: pet owners booking on clinic sites (mostly on phones), clinic staff who
 read the records in the PIMS, and Vetcelerator staff who read Scheduler Data.
 
+## Status (2026-11-24)
+
+Built and covered by offline tests: M1 to M5, M7, M8, and M6 for Nectar. Every
+operation in `contracts/` validates against the Vetspire and Nectar schemas
+the hub stores.
+
+Open:
+
+- M6 on Vetspire. The org's species restriction is an org preference read by
+  name (`org { preferences(fields: [...]) }`), and the name is not in the
+  schema. It needs one look at a live org. Until then Vetspire keeps
+  Dog / Cat / Other and its Settings screen has no species checkbox.
+- M7 on Vetspire does not add the emergency phone: an update replaces the
+  client's whole phone list, and the numbers on file must not be at risk.
+- Not run here: the live API suites (no credentials on this machine) and the
+  browser suites. The mobile CSS has not been seen on an iPhone.
+- Nectar `publicSettings` (species) and the `client` / `patient` reads have not
+  been called with a server token. A refusal falls back to Dog / Cat / Other,
+  and the blanks are simply not filled.
+- Release order: deploy the hub change first (it must accept the new Nectar
+  operations), then release the plugin.
+
 ## Decisions already made (Carlos, 2026-11-24)
 
 - A pet created by a booking whose appointment step then fails is kept; the

@@ -781,6 +781,133 @@ class VSPS_Nectar implements VSPS_Pims {
 		return array(); // Nectar has no "how did you hear about us" list
 	}
 
+	/**
+	 * Saves what an owner already on file typed on the new-client form, only
+	 * where the record has nothing: the owner's emergency phone, date of
+	 * birth and address (a whole address or none), and for a pet that was on
+	 * file its sex, spay/neuter, birth date, color, microchip and weight.
+	 * Each record is read first; a field with a value is left alone.
+	 * The caller must have verified the primary phone first.
+	 *
+	 * @param string $patient_id '' when the pet was created by this booking.
+	 * @return string|WP_Error 'filled' or 'none'.
+	 */
+	public function fill_missing_details( $client_id, $patient_id, array $args ) {
+		$c      = isset( $args['client'] ) ? $args['client'] : array();
+		$p      = isset( $args['patient'] ) ? $args['patient'] : array();
+		$a      = isset( $c['address'] ) && is_array( $c['address'] ) ? $c['address'] : array();
+		$filled = false;
+
+		$state   = VSPS_Fields::us_state( isset( $a['state'] ) ? $a['state'] : '' );
+		$address = ! empty( $a['line1'] ) && ! empty( $a['city'] ) && ! empty( $a['postal'] ) && preg_match( '/^[A-Z]{2}$/', $state );
+		$typed   = array_filter( array(
+			'phoneW'      => ! empty( $c['phone_alt'] ) ? self::digits( $c['phone_alt'] ) : '',
+			'dateOfBirth' => ! empty( $c['owner_dob'] ) ? self::date_time( $c['owner_dob'] ) : '',
+		), 'strlen' );
+		if ( $typed || $address ) {
+			$data = $this->request(
+				'query ($id: ID!) { client(id: $id) { id phoneW dateOfBirth street city state zipCode } }',
+				array( 'id' => (string) $client_id )
+			);
+			if ( is_wp_error( $data ) ) {
+				return $data;
+			}
+			$on_file = isset( $data['client'] ) && is_array( $data['client'] ) ? $data['client'] : array();
+			$input   = array();
+			foreach ( $typed as $field => $value ) {
+				if ( empty( $on_file[ $field ] ) ) {
+					$input[ $field ] = $value;
+				}
+			}
+			if ( $address && empty( $on_file['street'] ) && empty( $on_file['city'] ) && empty( $on_file['state'] ) && empty( $on_file['zipCode'] ) ) {
+				$input['street']  = trim( $a['line1'] . ( ! empty( $a['line2'] ) ? ' ' . $a['line2'] : '' ) );
+				$input['city']    = (string) $a['city'];
+				$input['state']   = $state;
+				$input['zipCode'] = (string) $a['postal'];
+			}
+			if ( $input && ! empty( $on_file['id'] ) ) {
+				$saved = $this->request(
+					'mutation ($input: ClientUpdateSchema!) { updateClient(input: $input) { id } }',
+					array( 'input' => array_merge( array( 'id' => (string) $client_id ), $input ) )
+				);
+				if ( is_wp_error( $saved ) ) {
+					return $saved;
+				}
+				$filled = true;
+			}
+		}
+
+		$typed = array();
+		if ( isset( $p['sex'] ) && in_array( $p['sex'], array( 'MALE', 'FEMALE' ), true ) ) {
+			$typed['gender'] = $p['sex'];
+		}
+		if ( isset( $p['neutered'] ) && in_array( $p['neutered'], array( 'yes', 'no' ), true ) ) {
+			$typed['spayNeuter'] = 'yes' === $p['neutered'];
+		}
+		if ( ! empty( $p['birth_date'] ) ) {
+			$typed['dateOfBirth'] = self::date_time( $p['birth_date'] );
+		}
+		foreach ( array( 'color', 'microchip' ) as $field ) {
+			if ( ! empty( $p[ $field ] ) ) {
+				$typed[ $field ] = (string) $p[ $field ];
+			}
+		}
+		$weight = ! empty( $p['weight'] ) ? (float) $p['weight'] : 0;
+		if ( '' === (string) $patient_id || ( ! $typed && ! $weight ) ) {
+			return $filled ? 'filled' : 'none';
+		}
+		$data = $this->request(
+			'query ($id: ID!) { patient(patientId: $id) { id gender spayNeuter dateOfBirth color microchip weightLbs weightKg } }',
+			array( 'id' => (string) $patient_id )
+		);
+		if ( is_wp_error( $data ) ) {
+			return $data;
+		}
+		$on_file = isset( $data['patient'] ) && is_array( $data['patient'] ) ? $data['patient'] : array();
+		if ( empty( $on_file['id'] ) ) {
+			return $filled ? 'filled' : 'none';
+		}
+		$input = array();
+		foreach ( $typed as $field => $value ) {
+			$current = isset( $on_file[ $field ] ) ? $on_file[ $field ] : null;
+			if ( null === $current || '' === $current || ( 'gender' === $field && 'UNKNOWN' === $current ) ) {
+				$input[ $field ] = $value;
+			}
+		}
+		if ( $weight && empty( $on_file['weightLbs'] ) && empty( $on_file['weightKg'] ) ) {
+			$input[ isset( $p['weight_unit'] ) && 'KG' === $p['weight_unit'] ? 'weightKg' : 'weightLbs' ] = $weight;
+		}
+		if ( $input ) {
+			$saved = $this->request(
+				'mutation ($input: PatientUpdateSchema!) { updatePatient(input: $input) { id } }',
+				array( 'input' => array_merge( array( 'patientId' => (string) $patient_id ), $input ) )
+			);
+			if ( is_wp_error( $saved ) ) {
+				return $saved;
+			}
+			$filled = true;
+		}
+		return $filled ? 'filled' : 'none';
+	}
+
+	/**
+	 * The species this clinic takes online: Settings → Direct Online Booking →
+	 * Species Allowed. Names exactly as the clinic typed them.
+	 *
+	 * @return array|WP_Error
+	 */
+	public function get_species() {
+		$data = $this->request(
+			'query ($meta: String) { publicSettings(metaLocation: $meta) { directOnlineSchedulingOptions { speciesAllowed } } }',
+			'' !== $this->meta_location ? array( 'meta' => $this->meta_location ) : array()
+		);
+		if ( is_wp_error( $data ) ) {
+			return $data;
+		}
+		$list = isset( $data['publicSettings']['directOnlineSchedulingOptions']['speciesAllowed'] ) ? $data['publicSettings']['directOnlineSchedulingOptions']['speciesAllowed'] : array();
+		return is_array( $list ) ? array_values( array_filter( array_map( 'strval', $list ), 'strlen' ) ) : array();
+	}
+
 	/* ---------- helpers ---------- */
 
 	private static function digits( $phone ) {

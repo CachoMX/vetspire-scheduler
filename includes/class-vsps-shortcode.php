@@ -98,6 +98,8 @@ class VSPS_Shortcode {
 			'booking'   => VSPS_Pims_Registry::booking_mode( $settings['pims'] ),
 			'choices'   => array(
 				'referral' => $referral,
+				// Empty = the widget's own Dog / Cat / Other.
+				'species'  => VSPS_Fields::species_options(),
 				'titles'   => VSPS_Fields::TITLES,
 				'pronouns' => $pronouns,
 			),

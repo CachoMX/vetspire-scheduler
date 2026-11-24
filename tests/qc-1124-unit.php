@@ -7,7 +7,10 @@
  *  - a failed check writes nothing;
  *  - Reason for visit is always required;
  *  - a required phone has ten digits;
- *  - the hub is told the clinic's CURRENT timezone, not the first one saved.
+ *  - the hub is told the clinic's CURRENT timezone, not the first one saved;
+ *  - "Pet type" can come from the clinic's own species list;
+ *  - a client already on file gets the blanks of their record filled, never
+ *    a value replaced.
  * No WordPress, no network.
  *
  * php tests/qc-1124-unit.php
@@ -45,11 +48,14 @@ $GLOBALS['vsps_transients'] = array();
 function get_transient( $key ) { return isset( $GLOBALS['vsps_transients'][ $key ] ) ? $GLOBALS['vsps_transients'][ $key ] : false; }
 function set_transient( $key, $value, $ttl ) { $GLOBALS['vsps_transients'][ $key ] = $value; return true; }
 function delete_transient( $key ) { unset( $GLOBALS['vsps_transients'][ $key ] ); return true; }
-function vsps_get_settings() { return array( 'cache_ttl' => 60, 'pims' => 'nectar', 'default_location' => 'clinic' ); }
+define( 'MINUTE_IN_SECONDS', 60 );
+$GLOBALS['vsps_settings'] = array( 'cache_ttl' => 60, 'pims' => 'nectar', 'default_location' => 'clinic' );
+$GLOBALS['vsps_test_api'] = null;
+function vsps_get_settings() { return $GLOBALS['vsps_settings']; }
 $GLOBALS['vsps_options'] = array();
 function get_option( $key, $default = false ) { return isset( $GLOBALS['vsps_options'][ $key ] ) ? $GLOBALS['vsps_options'][ $key ] : $default; }
 function update_option( $key, $value, $autoload = null ) { $GLOBALS['vsps_options'][ $key ] = $value; return true; }
-function vsps_api() { return null; }
+function vsps_api() { return $GLOBALS['vsps_test_api']; }
 
 require __DIR__ . '/../includes/class-vsps-pims.php';
 require __DIR__ . '/../includes/class-vsps-cache.php';
@@ -260,6 +266,109 @@ foreach ( array( '8658559494', '(865) 855-9494', '865.855.9494', '+1 865 855 949
 foreach ( array( '', 'a', '855-9494', '858559494', '86585594945', '+44 20 7946 0958 1' ) as $bad ) {
 	check( 'refused: ' . ( '' === $bad ? '(empty)' : $bad ), ! VSPS_Fields::phone_ok( $bad ) );
 }
+
+echo "== pet type from the PIMS ==\n";
+check( 'the same species typed twice is offered once, not in capitals', array( 'Feline', 'Canine', 'Mouse', 'Bovine' ) === VSPS_Fields::clean_species( array( 'FELINE', 'Canine', 'Mouse', 'Feline', ' ', 'Bovine', 'canine' ) ) );
+check( 'a species is matched to the PIMS spelling', 'Feline' === VSPS_Fields::match_species( ' feline ', array( 'Canine', 'Feline' ) ) && '' === VSPS_Fields::match_species( 'Dragon', array( 'Canine', 'Feline' ) ) );
+
+$GLOBALS['vsps_sent']    = array();
+$GLOBALS['vsps_replies'] = array( array( 'data' => array( 'publicSettings' => array( 'directOnlineSchedulingOptions' => array( 'speciesAllowed' => array( 'FELINE', 'Canine', 'Mouse', 'Feline', 'Bovine' ) ) ) ) ) );
+$list                    = $nectar->get_species();
+check( 'Nectar: Direct Online Booking → Species Allowed', array( 'FELINE', 'Canine', 'Mouse', 'Feline', 'Bovine' ) === $list && false !== strpos( $GLOBALS['vsps_sent'][0]['query'], 'publicSettings' ), $list );
+
+check( 'Vetspire has no species list yet: its form keeps Dog / Cat / Other', ! method_exists( $api, 'get_species' ) );
+
+$GLOBALS['vsps_test_api'] = $nectar;
+$GLOBALS['vsps_replies']  = array( array( 'data' => array( 'publicSettings' => array( 'directOnlineSchedulingOptions' => array( 'speciesAllowed' => array( 'Canine' ) ) ) ) ) );
+check( 'setting off: Dog / Cat / Other, the PIMS is not asked', array() === VSPS_Fields::species_options() && 1 === count( $GLOBALS['vsps_replies'] ) );
+$GLOBALS['vsps_settings']['species_from_pims'] = 1;
+check( 'setting on: the clinic list', array( 'Canine' ) === VSPS_Fields::species_options() );
+check( 'cached: a second page view does not ask again', array( 'Canine' ) === VSPS_Fields::species_options() && 0 === count( $GLOBALS['vsps_replies'] ) );
+// Forget the cached list, keep the sign-in.
+$GLOBALS['vsps_transients'] = array_filter( $GLOBALS['vsps_transients'], function ( $k ) { return false !== strpos( $k, 'nectar_tok_' ); }, ARRAY_FILTER_USE_KEY );
+$GLOBALS['vsps_replies']    = array( array( 'errors' => array( array( 'message' => '{"status_code":403,"context":"Forbidden"}' ) ) ) );
+check( 'the PIMS refuses: the form falls back to Dog / Cat / Other', array() === VSPS_Fields::species_options() );
+$GLOBALS['vsps_settings']['species_from_pims'] = 0;
+$GLOBALS['vsps_test_api']                      = null;
+
+echo "== blanks filled for a client already on file ==\n";
+class Fake_Filler extends Fake_Pims {
+	public $fills = array();
+	public function fill_missing_details( $client_id, $patient_id, array $args ) {
+		$this->fills[] = $client_id . ':' . $patient_id;
+		return 'filled';
+	}
+}
+$with_pet             = $three_owners;
+$with_pet['patients'] = array( array( 'id' => 'petB', 'name' => 'Match', 'isActive' => true, 'isDeceased' => false, 'clientId' => 'ownerB' ) );
+$book_match           = function ( $client_type, $phone, $pet = 'match' ) use ( $with_pet ) {
+	$fake         = new Fake_Filler();
+	$fake->client = $with_pet;
+	$args         = add_pet_args( '', $client_type, $phone );
+	$args['patient']['name'] = $pet;
+	if ( 'existing' === $client_type ) {
+		$args['pet_is_new'] = false;
+	}
+	$res = VSPS_Booking::book( $fake, $args );
+	return array( is_wp_error( $res ) ? $res->get_error_code() : 'booked', $fake->fills );
+};
+check( "full form, the pet owner's primary phone: that owner and that pet", array( 'booked', array( 'ownerB:petB' ) ) === $book_match( 'new', '(862) 855-1111' ), $book_match( 'new', '(862) 855-1111' ) );
+check( "another owner's primary phone: booked, nothing filled", array( 'booked', array() ) === $book_match( 'new', '865-855-9493' ) );
+check( 'an emergency phone: booked, nothing filled', array( 'booked', array() ) === $book_match( 'new', '865-855-9494' ) );
+check( 'returning-client flow (no details typed): nothing filled', array( 'booked', array() ) === $book_match( 'existing', '' ) );
+check( 'a pet this booking created is not "filled" (it was just written whole)', array( 'booked', array( 'ownerA:' ) ) === $book_match( 'new', '865-855-9493', 'Radio' ) );
+
+$typed = array(
+	'client'  => array( 'phone_alt' => '(865) 855-9493', 'owner_dob' => '1999-09-09', 'address' => array( 'line1' => '1 Main St', 'line2' => '', 'city' => 'Estero', 'state' => 'Florida', 'postal' => '33928' ) ),
+	'patient' => array( 'sex' => 'MALE', 'neutered' => 'yes', 'birth_date' => '2020-05-06', 'color' => 'Black', 'microchip' => '', 'weight' => 20.5, 'weight_unit' => 'LB' ),
+);
+$sent_inputs = function () {
+	$out = array();
+	foreach ( $GLOBALS['vsps_sent'] as $call ) {
+		if ( 0 === strpos( ltrim( $call['query'] ), 'mutation' ) ) {
+			$out[] = $call['variables'];
+		}
+	}
+	return $out;
+};
+
+$GLOBALS['vsps_sent']    = array();
+$GLOBALS['vsps_replies'] = array(
+	array( 'data' => array( 'client' => array( 'id' => 'ownerB', 'phoneW' => '', 'dateOfBirth' => '1980-01-01T12:00:00+00:00', 'street' => null, 'city' => null, 'state' => null, 'zipCode' => null ) ) ),
+	array( 'data' => array( 'updateClient' => array( 'id' => 'ownerB' ) ) ),
+	array( 'data' => array( 'patient' => array( 'id' => 'petB', 'gender' => 'UNKNOWN', 'spayNeuter' => null, 'dateOfBirth' => '2019-01-01T12:00:00+00:00', 'color' => '', 'microchip' => null, 'weightLbs' => null, 'weightKg' => null ) ) ),
+	array( 'data' => array( 'updatePatient' => array( 'id' => 'petB' ) ) ),
+);
+$result = $nectar->fill_missing_details( 'ownerB', 'petB', $typed );
+$writes = $sent_inputs();
+check( 'Nectar: blanks are filled', 'filled' === $result && 2 === count( $writes ), $writes );
+check( 'Nectar client: emergency phone and address added, the birth date on file kept', isset( $writes[0]['input'] ) && array( 'id' => 'ownerB', 'phoneW' => '8658559493', 'street' => '1 Main St', 'city' => 'Estero', 'state' => 'FL', 'zipCode' => '33928' ) === $writes[0]['input'], $writes );
+check( 'Nectar pet: sex, neuter, color, weight added, the birth date on file kept', isset( $writes[1]['input'] ) && array( 'patientId' => 'petB', 'gender' => 'MALE', 'spayNeuter' => true, 'color' => 'Black', 'weightLbs' => 20.5 ) === $writes[1]['input'], $writes );
+
+$GLOBALS['vsps_sent']    = array();
+$GLOBALS['vsps_replies'] = array(
+	array( 'data' => array( 'client' => array( 'id' => 'ownerB', 'phoneW' => '5550100000', 'dateOfBirth' => '1980-01-01T12:00:00+00:00', 'street' => '9 Old Rd', 'city' => null, 'state' => null, 'zipCode' => null ) ) ),
+	array( 'data' => array( 'patient' => array( 'id' => 'petB', 'gender' => 'FEMALE', 'spayNeuter' => false, 'dateOfBirth' => '2019-01-01T12:00:00+00:00', 'color' => 'White', 'microchip' => null, 'weightLbs' => 12.0, 'weightKg' => null ) ) ),
+);
+$result = $nectar->fill_missing_details( 'ownerB', 'petB', $typed );
+check( 'Nectar: a record with every value on file gets no write at all', 'none' === $result && array() === $sent_inputs(), $sent_inputs() );
+
+$GLOBALS['vsps_sent']    = array();
+$GLOBALS['vsps_replies'] = array(
+	array( 'data' => array( 'client' => array( 'id' => '77', 'dateOfBirth' => null ) ) ),
+	array( 'data' => array( 'updateClient' => array( 'id' => '77' ) ) ),
+	array( 'data' => array( 'patient' => array( 'id' => '9', 'sex' => 'FEMALE', 'neutered' => null, 'birthDate' => null, 'color' => 'White', 'microchip' => '', 'latestWeight' => null ) ) ),
+	array( 'data' => array( 'updatePatient' => array( 'id' => '9' ) ) ),
+	array( 'data' => array( 'recordPatientWeight' => array( 'id' => '1' ) ) ),
+);
+$result = $api->fill_missing_details( '77', '9', $typed );
+$writes = $sent_inputs();
+check( 'Vetspire: owner birth date added', 'filled' === $result && isset( $writes[0] ) && array( 'id' => '77', 'input' => array( 'dateOfBirth' => '1999-09-09' ) ) === $writes[0], $writes );
+check( 'Vetspire pet: neuter and birth date added; sex and color on file kept', isset( $writes[1] ) && array( 'id' => '9', 'input' => array( 'neutered' => true, 'birthDate' => '2020-05-06' ) ) === $writes[1], $writes );
+check( 'Vetspire pet: a first weight is recorded', isset( $writes[2]['weight'] ) && '20.5' === $writes[2]['weight'] && 3 === count( $writes ), $writes );
+$GLOBALS['vsps_sent']    = array();
+$GLOBALS['vsps_replies'] = array( array( 'errors' => array( array( 'message' => 'down' ) ) ) );
+check( 'a PIMS error comes back as an error, nothing written', is_wp_error( $api->fill_missing_details( '77', '9', $typed ) ) && array() === $sent_inputs() );
 
 echo "== the hub gets the clinic's current timezone ==\n";
 $locinfo = VSPS_Cache::PREFIX . md5( wp_json_encode( array( 'locinfo', 'clinic' ) ) );

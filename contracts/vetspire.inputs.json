@@ -27,6 +27,20 @@
             "species"
         ]
     },
+    "mutation( $id:ID!, $input:ClientInput! ){ updateClient( id:$id, input:$input ){ id } }": {
+        "input": [
+            "dateOfBirth"
+        ]
+    },
+    "mutation( $id:ID!, $input:PatientInput! ){ updatePatient( id:$id, input:$input ){ id } }": {
+        "input": [
+            "birthDate",
+            "color",
+            "microchip",
+            "neutered",
+            "sex"
+        ]
+    },
     "mutation( $input:AppointmentInput! ){ createAppointment( input:$input ){ id start status patient{ id name } } }": {
         "input": [
             "appointmentTypeId",

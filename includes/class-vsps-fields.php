@@ -464,6 +464,64 @@ class VSPS_Fields {
 		return null;
 	}
 
+	/* ---------- species ("Pet type") ---------- */
+
+	/**
+	 * One entry per species: trimmed, no blanks, and "FELINE" + "Feline" (the
+	 * same species typed twice in the PIMS) offered once, as the spelling that
+	 * is not all capitals.
+	 */
+	public static function clean_species( array $names ) {
+		$out = array();
+		foreach ( $names as $name ) {
+			$name = is_scalar( $name ) ? self::cut( trim( (string) $name ), 60 ) : '';
+			if ( '' === $name ) {
+				continue;
+			}
+			$key = strtolower( $name );
+			if ( ! isset( $out[ $key ] ) || ( strtoupper( $out[ $key ] ) === $out[ $key ] && strtoupper( $name ) !== $name ) ) {
+				$out[ $key ] = $name;
+			}
+		}
+		return array_slice( array_values( $out ), 0, 40 );
+	}
+
+	/**
+	 * The "Pet type" choices from the clinic's PIMS (cached 1 h), or an empty
+	 * list: the setting is off, the PIMS has no list, or it could not be read.
+	 * Empty always means "offer Dog / Cat / Other".
+	 */
+	public static function species_options() {
+		$settings = vsps_get_settings();
+		$api      = empty( $settings['species_from_pims'] ) ? null : vsps_api();
+		if ( null === $api || ! method_exists( $api, 'get_species' ) ) {
+			return array();
+		}
+		if ( get_transient( VSPS_Cache::PREFIX . 'species_fail' ) ) {
+			return array();
+		}
+		$list = VSPS_Cache::remember( array( 'species', isset( $settings['default_location'] ) ? (string) $settings['default_location'] : '' ), function () use ( $api ) {
+			return $api->get_species();
+		}, HOUR_IN_SECONDS );
+		if ( ! is_array( $list ) ) {
+			// Errors are never cached by VSPS_Cache; remembered briefly so every
+			// page view doesn't retry a slow or failing PIMS.
+			set_transient( VSPS_Cache::PREFIX . 'species_fail', 1, 5 * MINUTE_IN_SECONDS );
+			return array();
+		}
+		return self::clean_species( $list );
+	}
+
+	/** $species as the clinic's list spells it, or '' when it is not on the list. */
+	public static function match_species( $species, array $allowed ) {
+		foreach ( $allowed as $name ) {
+			if ( 0 === strcasecmp( (string) $name, trim( (string) $species ) ) ) {
+				return (string) $name;
+			}
+		}
+		return '';
+	}
+
 	/**
 	 * The clinic's own "how did you hear about us" list from the PIMS (cached
 	 * 12 h). Empty on failure: the widget then hides the question instead of

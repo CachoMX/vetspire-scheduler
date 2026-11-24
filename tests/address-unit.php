@@ -54,9 +54,13 @@ class Recording_Api extends VSPS_Api {
 		$this->calls[] = array( 'query' => $query, 'variables' => $variables );
 		return $this->fail ? new WP_Error( 'vsps_http', 'down' ) : array( 'addClientAddress' => array( 'id' => '1' ) );
 	}
+	// These checks are about the address only: Vetspire does not say which
+	// number is preferred, and nothing else is typed on the form.
+	public function primary_phones( array $client ) { return null; }
+	public function fill_missing_details( $client_id, $patient_id, array $args ) { return 'none'; }
 }
 
-$fill = new ReflectionMethod( 'VSPS_Booking', 'fill_missing_address' );
+$fill = new ReflectionMethod( 'VSPS_Booking', 'fill_blanks' );
 $fill->setAccessible( true );
 
 const ADDRESS = array( 'line1' => '123 Test Rd', 'line2' => '', 'city' => 'Testtown', 'state' => 'TN', 'postal' => '37923' );
@@ -78,7 +82,7 @@ function form_args( array $over = array(), array $client_over = array() ) {
 function run_fill( $fill, $client, $args, $existing = true, $fail = false ) {
 	$api       = new Recording_Api( 'tok', 'https://api.test/graphql' );
 	$api->fail = $fail;
-	$fill->invoke( null, $api, $client, $args, $existing );
+	$fill->invoke( null, $api, $client, $client['id'], '', $args, $existing );
 	return $api->calls;
 }
 
@@ -110,7 +114,7 @@ ini_set( 'error_log', $log );
 $calls = run_fill( $fill, client_on_file(), form_args(), true, true );
 $logged = (string) file_get_contents( $log );
 @unlink( $log );
-check( 'a Vetspire error is logged, never thrown (the booking already exists)', 1 === count( $calls ) && false !== strpos( $logged, 'could not add the address to client 200' ) );
+check( 'a Vetspire error is logged, never thrown (the booking already exists)', 1 === count( $calls ) && false !== strpos( $logged, 'could not add missing details to client 200' ) );
 check( 'the log never carries the address', false === strpos( $logged, 'Test Rd' ) );
 
 echo "== new client: unchanged ==\n";
