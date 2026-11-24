@@ -170,6 +170,8 @@ class VSPS_Settings {
 			'nectar_meta_location' => $meta,
 			'nectar_env'        => $nectar_env,
 			'pims_memory'       => $memory,
+			// Only the Nectar screen has this checkbox: another platform's save keeps the stored choice.
+			'species_from_pims' => 'nectar' === $was_platform ? ( empty( $input['species_from_pims'] ) ? 0 : 1 ) : ( empty( $current['species_from_pims'] ) ? 0 : 1 ),
 		), $credentials );
 
 		$clean['hub_key'] = self::sanitize_hub_key(
@@ -616,6 +618,15 @@ class VSPS_Settings {
 								<p style="margin-top:0;">Choose which fields the booking form shows and which ones the pet owner must fill in. Grayed-out fields are always on: <?php echo esc_html( $pims_label ); ?> needs them to book. Owner fields are only asked of new clients; pet fields only when a new pet is added. Fewer fields convert better.</p>
 								<?php self::render_fields_table( $settings ); ?>
 								<p class="description" style="margin-bottom:0;">Every field is saved to its own place in <?php echo esc_html( $pims_label ); ?>; only the fields <?php echo esc_html( $pims_label ); ?> can store are listed. A/B test: add <code>variant="a"</code> (only the always-on fields) or <code>variant="b"</code> (the fields checked here) to two copies of the shortcode.</p>
+								<?php if ( 'nectar' === $settings['pims'] ) : ?>
+								<p style="margin-bottom:0;">
+									<label>
+										<input type="checkbox" name="<?php echo esc_attr( $opt ); ?>[species_from_pims]" value="1" <?php checked( ! empty( $settings['species_from_pims'] ) ); ?> />
+										<strong>Pet type: use the species this clinic allows for online booking in Nectar</strong>
+									</label><br />
+									<span class="description">Off: Dog / Cat / Other. On: the clinic's own list (Nectar → Direct Online Booking → Species Allowed). When that list is empty or can't be read, the form still shows Dog / Cat / Other.</span>
+								</p>
+								<?php endif; ?>
 							</div>
 						</div>
 

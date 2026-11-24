@@ -2645,12 +2645,29 @@
 		return fieldRows(items);
 	};
 
+	/**
+	 * "Pet type": the clinic's own species list from its PIMS when the site
+	 * sends one (nothing preselected, so no pet is booked as the first entry
+	 * by accident), otherwise Dog / Cat / Other. Canine and Feline are shown
+	 * as Dog and Cat; the value sent is always the PIMS's own name.
+	 */
+	function speciesField() {
+		var list = (CFG.choices || {}).species;
+		if (!list || !list.length) {
+			return fieldSelect('species', I18N.species, 2, [{ id: 'Canine', name: I18N.dog }, { id: 'Feline', name: I18N.cat }, { id: 'Other', name: I18N.other }], true);
+		}
+		var friendly = { canine: I18N.dog, feline: I18N.cat };
+		return fieldSelect('species', I18N.species, 2, list.map(function (name) {
+			return { id: name, name: friendly[String(name).toLowerCase()] || name };
+		}));
+	}
+
 	/** Pet name + species (always) and the optional pet questions. */
 	Widget.prototype.petFieldsHtml = function () {
 		var f = this.fieldFlags();
 		var items = [
 			{ html: fieldInput('pet_name', I18N.petName, 2) },
-			{ html: fieldSelect('species', I18N.species, 2, [{ id: 'Canine', name: I18N.dog }, { id: 'Feline', name: I18N.cat }, { id: 'Other', name: I18N.other }], true) }
+			{ html: speciesField() }
 		];
 		if (f.breed) { items.push({ html: fieldInput('breed', I18N.breed, f.breed) }); }
 		if (f.mixed) { items.push({ html: fieldSelect('mixed', I18N.mixed, f.mixed, YES_NO()) }); }

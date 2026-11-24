@@ -200,6 +200,90 @@ Notes from the client: " . $c['notes'];
 		return is_wp_error( $data ) ? $data : 'added';
 	}
 
+	/**
+	 * Saves what an owner already on file typed on the new-client form, only
+	 * where the record has nothing: the owner's date of birth, and for a pet
+	 * that was on file its sex, spay/neuter, birth date, color, microchip and
+	 * weight. Each record is read first; a field with a value is left alone.
+	 * The emergency phone is not added here: Vetspire replaces a client's
+	 * whole phone list on update, and the numbers on file must not be at risk.
+	 * The caller must have verified the primary phone first.
+	 *
+	 * @param string $patient_id '' when the pet was created by this booking.
+	 * @return string|WP_Error 'filled' or 'none'.
+	 */
+	public function fill_missing_details( $client_id, $patient_id, array $args ) {
+		$c      = isset( $args['client'] ) ? $args['client'] : array();
+		$p      = isset( $args['patient'] ) ? $args['patient'] : array();
+		$filled = false;
+
+		if ( ! empty( $c['owner_dob'] ) ) {
+			$data = $this->request( 'query ($id: ID!) { client(id: $id) { id dateOfBirth } }', array( 'id' => (string) $client_id ) );
+			if ( is_wp_error( $data ) ) {
+				return $data;
+			}
+			if ( ! empty( $data['client']['id'] ) && empty( $data['client']['dateOfBirth'] ) ) {
+				$saved = $this->request(
+					'mutation ($id: ID!, $input: ClientInput!) { updateClient(id: $id, input: $input) { id } }',
+					array( 'id' => (string) $client_id, 'input' => array( 'dateOfBirth' => (string) $c['owner_dob'] ) )
+				);
+				if ( is_wp_error( $saved ) ) {
+					return $saved;
+				}
+				$filled = true;
+			}
+		}
+
+		$typed = array_filter( array(
+			'sex'       => isset( $p['sex'] ) && in_array( $p['sex'], array( 'MALE', 'FEMALE' ), true ) ? $p['sex'] : '',
+			'neutered'  => isset( $p['neutered'] ) && in_array( $p['neutered'], array( 'yes', 'no' ), true ) ? $p['neutered'] : '',
+			'birthDate' => isset( $p['birth_date'] ) ? (string) $p['birth_date'] : '',
+			'color'     => isset( $p['color'] ) ? (string) $p['color'] : '',
+			'microchip' => isset( $p['microchip'] ) ? (string) $p['microchip'] : '',
+		), 'strlen' );
+		$weight = ! empty( $p['weight'] ) ? $p['weight'] : 0;
+		if ( '' === (string) $patient_id || ( ! $typed && ! $weight ) ) {
+			return $filled ? 'filled' : 'none';
+		}
+		$data = $this->request(
+			'query ($id: ID!) { patient(id: $id) { id sex neutered birthDate color microchip latestWeight { value } } }',
+			array( 'id' => (string) $patient_id )
+		);
+		if ( is_wp_error( $data ) ) {
+			return $data;
+		}
+		$on_file = isset( $data['patient'] ) && is_array( $data['patient'] ) ? $data['patient'] : array();
+		if ( empty( $on_file['id'] ) ) {
+			return $filled ? 'filled' : 'none';
+		}
+		$input = array();
+		foreach ( $typed as $field => $value ) {
+			$current = isset( $on_file[ $field ] ) ? $on_file[ $field ] : null;
+			$blank   = null === $current || '' === $current || ( 'sex' === $field && 'UNKNOWN' === $current );
+			if ( $blank ) {
+				$input[ $field ] = 'neutered' === $field ? 'yes' === $value : $value;
+			}
+		}
+		if ( $input ) {
+			$saved = $this->request(
+				'mutation ($id: ID!, $input: PatientInput!) { updatePatient(id: $id, input: $input) { id } }',
+				array( 'id' => (string) $patient_id, 'input' => $input )
+			);
+			if ( is_wp_error( $saved ) ) {
+				return $saved;
+			}
+			$filled = true;
+		}
+		if ( $weight && empty( $on_file['latestWeight']['value'] ) ) {
+			$weighed = $this->record_patient_weight( $patient_id, $weight, isset( $p['weight_unit'] ) ? $p['weight_unit'] : 'LB' );
+			if ( is_wp_error( $weighed ) ) {
+				return $weighed;
+			}
+			$filled = true;
+		}
+		return $filled ? 'filled' : 'none';
+	}
+
 	/** createPatient extras beyond name/species/breed/sex/age/neutered. */
 	private static function patient_extras( array $p ) {
 		$out = array();

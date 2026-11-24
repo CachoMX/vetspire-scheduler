@@ -65,6 +65,7 @@ function vsps_get_settings() {
 		'nectar_env'           => 'production', // production (through the hub) | sandbox (own test credentials)
 		'nectar_meta_location' => '', // only for multi-location Nectar clinics
 		'clinic_timezone'      => '', // used when Nectar does not report one
+		'species_from_pims'    => 0,  // "Pet type" options from the PIMS instead of Dog / Cat / Other
 	);
 	$saved = get_option( VSPS_OPTION_KEY, array() );
 	if ( ! is_array( $saved ) ) {

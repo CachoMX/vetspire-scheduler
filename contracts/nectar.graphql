@@ -5,13 +5,23 @@ mutation( $familyName:String!, $first:String!, $last:String!, $phone:String!, $e
 
 mutation( $input:AppointmentCreateSchema! ){ addOnlineAppointment( input:$input ){ id appointmentId startDatetime status } }
 
+mutation( $input:ClientUpdateSchema! ){ updateClient( input:$input ){ id } }
+
 mutation( $input:OnlineAppointmentScheduleSchema! ){ scheduleAndRequestAppointment( input:$input ){ id appointmentId status startDatetime } }
 
 mutation( $input:PatientCreateSchema! ){ addPatient( input:$input ){ id firstName } }
 
+mutation( $input:PatientUpdateSchema! ){ updatePatient( input:$input ){ id } }
+
 query( $f:ClinicUserFilterSchema, $p:PaginationInfo ){ clientsPaginated( filter:$f, paginationInfo:$p ){ edges{ node{ id firstName lastName emailH emailW phoneH phoneW clientInfo{ familyId clientStatus } } } } }
 
+query( $id:ID! ){ client( id:$id ){ id phoneW dateOfBirth street city state zipCode } }
+
 query( $id:ID! ){ clientPatients( clientId:$id ){ id firstName status } }
+
+query( $id:ID! ){ patient( patientId:$id ){ id gender spayNeuter dateOfBirth color microchip weightLbs weightKg } }
+
+query( $meta:String ){ publicSettings( metaLocation:$meta ){ directOnlineSchedulingOptions{ speciesAllowed } } }
 
 query( $start:datetime!, $end:datetime!, $type:ID!, $meta:String ){ getAvailableAppointmentSlots( startDatetime:$start, endDatetime:$end, type:$type, metaLocation:$meta ){ type scheduleId startDatetime endDatetime employee{ id firstName lastName } } }
 

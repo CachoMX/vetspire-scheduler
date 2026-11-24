@@ -46,6 +46,7 @@ class VSPS_Fields {
 	public static function resolve() { return array( 'referral' => array( 'show' => false ) ); }
 	public static function for_widget() { return array(); }
 	public static function referral_sources() { return array(); }
+	public static function species_options() { return array(); }
 }
 class VSPS_Hub {
 	public static function key() { return ''; }

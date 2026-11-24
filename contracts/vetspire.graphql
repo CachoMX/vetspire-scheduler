@@ -7,6 +7,10 @@ mutation( $clientId:ID!, $input:PatientInput ){ createPatient( clientId:$clientI
 
 mutation( $id:ID!, $input:AppointmentInput! ){ updateAppointment( id:$id, input:$input ){ id start status isConfirmed } }
 
+mutation( $id:ID!, $input:ClientInput! ){ updateClient( id:$id, input:$input ){ id } }
+
+mutation( $id:ID!, $input:PatientInput! ){ updatePatient( id:$id, input:$input ){ id } }
+
 mutation( $input:AppointmentInput! ){ createAppointment( input:$input ){ id start status patient{ id name } } }
 
 mutation( $input:ClientInput ){ createClient( input:$input ){ id email givenName familyName } }
@@ -17,9 +21,13 @@ query( $email:String ){ clients( filters:{ email:$email }, limit:5 ){ id email g
 
 query( $email:String ){ clients( filters:{ email:$email }, limit:5 ){ id phoneNumbers{ value preferred } } }
 
+query( $id:ID! ){ client( id:$id ){ id dateOfBirth } }
+
 query( $id:ID! ){ location( id:$id ){ id name displayName timezone addressString phoneNumber latitude longitude googleLink url locationHours{ mondayRanges tuesdayRanges wednesdayRanges thursdayRanges fridayRanges saturdayRanges sundayRanges } } }
 
 query( $id:ID! ){ location( id:$id ){ id name timezone } }
+
+query( $id:ID! ){ patient( id:$id ){ id sex neutered birthDate color microchip latestWeight{ value } } }
 
 query( $loc:ID! ){ locationAppointmentTypes( locationId:$loc ){ id name duration canBookOnline } }
 

@@ -199,7 +199,7 @@ class VSPS_Booking {
 			return new WP_Error( 'vsps_appointment', 'Could not create the appointment in the practice system.' );
 		}
 
-		self::fill_missing_address( $api, $client, $args, $existing_client );
+		self::fill_blanks( $api, $client, (string) $client_id, $pet_created ? '' : (string) $patient_id, $args, $existing_client );
 
 		return array(
 			'appointment_id'  => $appointment['id'],
@@ -222,41 +222,59 @@ class VSPS_Booking {
 	}
 
 	/**
-	 * A client already on file who used the new-client form typed an address
-	 * we would otherwise drop. Saved only when the FULL phone typed on the form
-	 * matches one on file (stricter than the last-4 proof for adding a pet: a
-	 * real owner types their own number whole) and the platform supports it;
-	 * the adapter never replaces an address on file.
+	 * A client already on file who used the new-client form typed details we
+	 * would otherwise drop (QC 2026-11-24). They are saved where the record
+	 * has NOTHING yet: a value on file is never replaced from the website.
+	 * Only when the FULL phone typed on the form is the primary phone of the
+	 * owner record booked for (stricter than the last-4 proof for adding a
+	 * pet: a real owner types their own number whole).
 	 * Best effort, after the appointment exists: a failure never costs the
 	 * visitor their booking.
+	 *
+	 * @param string $client_id  The owner record the appointment is on.
+	 * @param string $patient_id A pet that was already on file ('' for one this booking created).
 	 */
-	private static function fill_missing_address( VSPS_Pims $api, $client, array $args, $existing_client ) {
+	private static function fill_blanks( VSPS_Pims $api, $client, $client_id, $patient_id, array $args, $existing_client ) {
 		if ( ! $existing_client || ( isset( $args['client_type'] ) && 'existing' === $args['client_type'] ) ) {
 			return;
 		}
-		if ( ! method_exists( $api, 'fill_missing_client_address' ) || empty( $args['client']['address'] ) ) {
+		$wants_address = method_exists( $api, 'fill_missing_client_address' ) && ! empty( $args['client']['address'] );
+		$wants_details = method_exists( $api, 'fill_missing_details' );
+		if ( ! $wants_address && ! $wants_details ) {
 			return;
 		}
-		if ( ! self::full_phone_matches( $client, isset( $args['client']['phone'] ) ? (string) $args['client']['phone'] : '' ) ) {
+		if ( ! self::full_phone_matches( self::primary_phones( $api, $client ), (string) $client_id, isset( $args['client']['phone'] ) ? (string) $args['client']['phone'] : '' ) ) {
 			return;
 		}
-		$result = $api->fill_missing_client_address( $client, $args );
-		if ( is_wp_error( $result ) ) {
-			error_log( '[vetspire-scheduler] could not add the address to client ' . ( isset( $client['id'] ) ? $client['id'] : '?' ) . ': ' . $result->get_error_code() );
+		$results = array();
+		if ( $wants_address ) {
+			$results[] = $api->fill_missing_client_address( array_merge( $client, array( 'id' => (string) $client_id ) ), $args );
+		}
+		if ( $wants_details ) {
+			$results[] = $api->fill_missing_details( (string) $client_id, (string) $patient_id, $args );
+		}
+		foreach ( $results as $result ) {
+			if ( is_wp_error( $result ) ) {
+				error_log( '[vetspire-scheduler] could not add missing details to client ' . $client_id . ': ' . $result->get_error_code() );
+			}
 		}
 	}
 
 	/**
-	 * True when the typed phone is one on file, comparing the last 10 digits
-	 * (so "+1 (865) 855-9494" equals "865.855.9494"). Fewer than 7 digits on
-	 * either side never matches.
+	 * True when the typed phone is one of $phones, comparing the last 10
+	 * digits (so "+1 (865) 855-9494" equals "865.855.9494"). A number that
+	 * says which owner record it is on only counts for that record. Fewer
+	 * than 7 digits on either side never matches.
 	 */
-	private static function full_phone_matches( $client, $typed ) {
+	private static function full_phone_matches( array $phones, $client_id, $typed ) {
 		$typed = substr( preg_replace( '/\D/', '', (string) $typed ), -10 );
-		if ( strlen( $typed ) < 7 || empty( $client['phoneNumbers'] ) || ! is_array( $client['phoneNumbers'] ) ) {
+		if ( strlen( $typed ) < 7 ) {
 			return false;
 		}
-		foreach ( $client['phoneNumbers'] as $phone ) {
+		foreach ( $phones as $phone ) {
+			if ( ! empty( $phone['clientId'] ) && (string) $phone['clientId'] !== (string) $client_id ) {
+				continue;
+			}
 			$digits = substr( preg_replace( '/\D/', '', isset( $phone['value'] ) ? (string) $phone['value'] : '' ), -10 );
 			if ( strlen( $digits ) >= 7 && $digits === $typed ) {
 				return true;

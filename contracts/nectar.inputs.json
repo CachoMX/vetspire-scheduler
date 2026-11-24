@@ -12,6 +12,17 @@
             "startDatetime"
         ]
     },
+    "mutation( $input:ClientUpdateSchema! ){ updateClient( input:$input ){ id } }": {
+        "input": [
+            "city",
+            "dateOfBirth",
+            "id",
+            "phoneW",
+            "state",
+            "street",
+            "zipCode"
+        ]
+    },
     "mutation( $input:OnlineAppointmentScheduleSchema! ){ scheduleAndRequestAppointment( input:$input ){ id appointmentId status startDatetime } }": {
         "input": [
             "appointmentId"
@@ -25,6 +36,18 @@
             "lastName",
             "species",
             "status"
+        ]
+    },
+    "mutation( $input:PatientUpdateSchema! ){ updatePatient( input:$input ){ id } }": {
+        "input": [
+            "color",
+            "dateOfBirth",
+            "gender",
+            "microchip",
+            "patientId",
+            "spayNeuter",
+            "weightKg",
+            "weightLbs"
         ]
     },
     "query( $f:ClinicUserFilterSchema, $p:PaginationInfo ){ clientsPaginated( filter:$f, paginationInfo:$p ){ edges{ node{ id firstName lastName emailH emailW phoneH phoneW clientInfo{ familyId clientStatus } } } } }": {
