@@ -433,7 +433,9 @@ class VSPS_Rest {
 			if ( in_array( $code, array( 'vsps_slot', 'vsps_type', 'vsps_datetime', 'vsps_client_missing', 'vsps_pet_missing', 'vsps_verify' ), true ) ) {
 				$data = array( 'status' => 409 );
 				if ( 'vsps_verify' === $code ) {
-					$data['fields'] = array( 'phone_last4' ); // the widget shows it at that field
+					// The widget shows it at the field the proof came from: the last-4
+					// box, or the phone typed on the full form.
+					$data['fields'] = array( '' !== $args['phone_last4'] ? 'phone_last4' : 'phone' );
 				}
 				return new WP_Error( $code, $result->get_error_message(), $data );
 			}
@@ -581,7 +583,7 @@ class VSPS_Rest {
 					return new WP_Error( 'vsps_invalid', 'Pet species is required.', array( 'status' => 400, 'fields' => array( 'species' ) ) );
 				}
 				if ( '' === $args['phone_last4'] ) {
-					return new WP_Error( 'vsps_invalid', 'The last 4 digits of the phone on file are required to add a pet.', array( 'status' => 400, 'fields' => array( 'phone_last4' ) ) );
+					return new WP_Error( 'vsps_invalid', 'The last 4 digits of the primary phone on file are required to add a pet.', array( 'status' => 400, 'fields' => array( 'phone_last4' ) ) );
 				}
 			}
 			$required = self::enforce_fields( $request, $args );
@@ -595,8 +597,8 @@ class VSPS_Rest {
 		if ( '' === $args['client']['given_name'] || '' === $args['client']['family_name'] ) {
 			return new WP_Error( 'vsps_invalid', 'First and last name are required.', array( 'status' => 400, 'fields' => array( 'given_name', 'family_name' ) ) );
 		}
-		if ( strlen( preg_replace( '/\D/', '', $args['client']['phone'] ) ) < 7 ) {
-			return new WP_Error( 'vsps_invalid', 'A valid phone number is required.', array( 'status' => 400, 'fields' => array( 'phone' ) ) );
+		if ( ! VSPS_Fields::phone_ok( $args['client']['phone'] ) ) {
+			return new WP_Error( 'vsps_invalid', 'Please enter a valid 10-digit phone number, beginning with the area code.', array( 'status' => 400, 'fields' => array( 'phone' ) ) );
 		}
 		if ( '' === $args['patient']['name'] || '' === $args['patient']['species'] ) {
 			return new WP_Error( 'vsps_invalid', 'Pet name and species are required.', array( 'status' => 400, 'fields' => array( 'pet_name', 'species' ) ) );

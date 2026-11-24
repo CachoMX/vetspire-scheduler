@@ -25,7 +25,7 @@ class VSPS_Fields {
 		'email'           => array( 'client', 'Email', true, true ),
 		'phone'           => array( 'client', 'Phone', true, true ),
 		'address'         => array( 'client', 'Address (street, city, state, ZIP)', false, false ),
-		'phone_alt'       => array( 'client', 'Alternate phone', false, false ),
+		'phone_alt'       => array( 'client', 'Emergency phone', false, false ),
 		'email_secondary' => array( 'client', 'Secondary email', false, false ),
 		'referral'        => array( 'client', 'How did you hear about us?', false, false ),
 		'title'           => array( 'client', 'Title (Mr., Mrs., Dr.…)', false, false ),
@@ -45,7 +45,7 @@ class VSPS_Fields {
 		'color'           => array( 'pet', 'Color', false, false ),
 		'microchip'       => array( 'pet', 'Microchip number', false, false ),
 		'pet_notes'       => array( 'pet', 'Notes about the pet', false, false ),
-		'reason'          => array( 'visit', 'Reason for visit', true, false ),
+		'reason'          => array( 'visit', 'Reason for visit', true, true ), // always required (QC 2026-11-24)
 	);
 
 	/** The four optional pet questions the plugin had before the full list (and variant="b"'s default). */
@@ -79,6 +79,18 @@ class VSPS_Fields {
 			return '';
 		}
 		return min( (int) $max, (int) $m[1] );
+	}
+
+	/**
+	 * A phone the clinic can call back: ten digits, with or without a leading
+	 * US country code ("+1 (865) 855-9494", "865.855.9494"). QC 2026-11-24.
+	 */
+	public static function phone_ok( $phone ) {
+		$digits = preg_replace( '/\D/', '', (string) $phone );
+		if ( 11 === strlen( $digits ) && '1' === $digits[0] ) {
+			$digits = substr( $digits, 1 );
+		}
+		return 10 === strlen( $digits );
 	}
 
 	/** Whether the owner gave an age (years, months or both). */
